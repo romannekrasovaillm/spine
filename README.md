@@ -171,9 +171,12 @@ BMAD, Spec Kit, OpenSpec и др.):
 
 - [`кейсы/`](кейсы/AGENTS.md) — сквозные примеры цикла solution-архитектора,
   подготовленные харнессом: от spine-инвариантов до handoff-пакета кодовому
-  харнессу. Первый кейс — [`sbp-gateway`](кейсы/sbp-gateway/) (платёжный шлюз
+  харнессу. Кейс 001 — [`sbp-gateway`](кейсы/sbp-gateway/) (платёжный шлюз
   СБП, C2B-приём; DeepSeek V4 Flash): spine AD-001…008, solutioning, 7 ADR,
   контракты/NFR/RFP, handoff-пакет с рубрикой и fitness-правилами.
+  Кейс 002 — [`payment-processing-platform`](кейсы/payment-processing-platform/)
+  (процессинг банка: рельсы карты/СБП/SWIFT/БЭСП; GLM-5.2): 27 инвариантов
+  spine, 16 ADR, fitness-констрейнты под Go-код, walking skeleton.
 
 #### Прочее
 
@@ -384,10 +387,13 @@ Theseus, CodeWhale — `.arch-handoff/` packages with invariants, acceptance
 criteria, and a headless JSON contract (`docs/harness_integrations.md`).
 
 **Training cases**: [`кейсы/`](кейсы/AGENTS.md) — end-to-end samples of the
-solution-architect cycle produced with the harness. First case:
+solution-architect cycle produced with the harness. Case 001:
 [`sbp-gateway`](кейсы/sbp-gateway/) (faster-payments C2B gateway; DeepSeek V4
 Flash) — spine invariants, solutioning, 7 ADRs, contracts/NFR/RFP, and a
-handoff package with a rubric and fitness rules.
+handoff package with a rubric and fitness rules. Case 002:
+[`payment-processing-platform`](кейсы/payment-processing-platform/) (bank
+processing rails: cards/SBP/SWIFT; GLM-5.2) — 27 spine invariants, 16 ADRs,
+fitness constraints targeting Go code, walking-skeleton handoff.
 
 **Plus**: beautiful Tokyo Night TUI (markdown chat, mermaid→Unicode diagrams —
 the side panel auto-widens up to 60% of the screen so renders are never

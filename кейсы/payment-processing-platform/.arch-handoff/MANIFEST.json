@@ -1,0 +1,28 @@
+{
+  "created_at": "2026-08-15T16:15:35.750487314+00:00",
+  "task": "Walking Skeleton (H0): реализовать сквозной сценарий внутреннего перевода (intra-bank transfer) от счёта A к счёту B, доказывающий архитектуру до массовой разработки.\n\nСквозной путь:\n1. API Gateway: принять POST /payments с заголовком Idempotency-Key, mTLS, rate limit (AD-22)\n2. Payment Gateway: проверка идемпотентности (Redis, AD-5 уровень 1), валидация схемы, генерация payment_id\n3. Payment Orchestrator: создание саги (AD-1), state machine (AD-4, ADR-006): INITIATED → VALIDATED → FRAUD_PASSED → AML_PASSED → AUTHORIZED → RAIL_SENT → RAIL_CONFIRMED → LEDGER_POSTED → COMPLETED\n4. Authorization: проверка баланса (mock Core Banking), установка холда\n5. Fee Engine (AD-18): расчёт комиссии (mock тариф — 0% для internal)\n6. Ledger: двойная проводка (Debit A / Credit B) в PostgreSQL (AD-3)\n7. Outbox: запись события PaymentCompleted в outbox-таблицу в той же транзакции (AD-2); CDC-ретрансляция в Kafka (или polling publisher как fallback для skeleton)\n8. Notification: идемпотентный consumer события (AD-5 уровень 2 — inbox-таблица), mock SMS\n9. Повторный POST с тем же Idempotency-Key → возврат того же payment_id и результата\n\nТехнологии: Go, PostgreSQL, Redis, Kafka, Kubernetes (minikube для локальной разработки).\n\nИнварианты (27 AD в ARCHITECTURE-SPINE.md):\n- AD-1: saga orchestration (не хореография), персистентное состояние\n- AD-2: transactional outbox (запись + событие в одной транзакции)\n- AD-3: database-per-service (PostgreSQL, отдельная БД per context)\n- AD-4: strong consistency, single-writer per payment_id, optimistic locking\n- AD-5: 3-уровневая идемпотентность (Redis + inbox + state machine)\n- AD-7: append-only audit log (payment_events, без UPDATE/DELETE)\n- AD-8: circuit breaker на mock Core Banking\n- AD-9: DLQ-топик для каждого consumer'а\n- AD-10: ретраи в одном слое, backoff+jitter\n- AD-17: queue load leveling (команда через Kafka-топик payments.commands)\n- AD-21: data minimization (минимум ПДн в событиях)\n\nКритерии приёмки:\n- Повторный запрос с тем же Idempotency-Key возвращает тот же payment_id и статус\n- Баланс изменён ровно один раз (проверка: SELECT balance до и после повторного запроса)\n- Событие PaymentCompleted получено consumer'ом ровно один раз (проверка: inbox-таблица processed_messages)\n- Audit log (payment_events) содержит все переходы статусов в порядке state machine\n- Недопустимый переход статуса → 409 Conflict\n- Все 8 состояний пройдены для успешного платежа\n- Poison message (невалидный payment_id) → DLQ после 3 попыток\n- Сборка: go build ./... — OK\n- Тесты: go test ./... -count=1 — OK\n\nПлан отката: skeleton не затрагивает продакшн. Откат = удаление namespace в Kubernetes.",
+  "model": "deepseek",
+  "sources": [
+    "ARCHITECTURE.md",
+    "ARCHITECTURE-SPINE.md",
+    "CONSTRAINTS.yaml",
+    "docs/adr/ADR-001-saga-orchestration.md",
+    "docs/adr/ADR-002-transactional-outbox.md",
+    "docs/adr/ADR-003-database-per-service-postgresql.md",
+    "docs/adr/ADR-004-4.md",
+    "docs/adr/ADR-005-adr.md",
+    "docs/adr/ADR-006-adr.md",
+    "docs/adr/ADR-007-dlq.md",
+    "docs/adr/ADR-008-backoff-jitter.md",
+    "docs/adr/ADR-009-reconciliation.md",
+    "docs/adr/ADR-010-disaster-recovery-active-passive-rto-15min-rpo-0.md",
+    "docs/adr/ADR-011-secrets-management-vault-hsm.md",
+    "docs/adr/ADR-012-api-versioning-backward-compatibility.md",
+    "docs/adr/ADR-013-canary-zero-downtime-db-migrations.md",
+    "docs/adr/ADR-014-async.md",
+    "docs/adr/ADR-015-data-lifecycle-152-vs-append-only-audit.md",
+    "docs/adr/ADR-016-chaos-engineering-game-days.md"
+  ],
+  "epic_context_chars": 6000,
+  "epic_context_tokens": 1500
+}
