@@ -1,7 +1,7 @@
 //! Слэш-команды харнесса.
 //!
 //! КОНТРАКТ (владелец: агент `agent`). Минимальный набор:
-//! `/help` `/model [name]` `/think [on|off|auto]` `/clear` `/quit` `/tools`
+//! `/help` `/model [name]` `/think [on|off|auto]` `/clear` `/new` `/quit` `/tools`
 //! `/prompts [name]` `/mermaid <file|код>` `/adr new <title>` `/spine lint <file>`
 //! `/rubric list|run <name> <file>` `/bench list|run <name>`
 //! `/kb <query>` `/web <query>` `/fetch <url>` `/sites`
@@ -27,6 +27,9 @@ pub enum SlashOutcome {
     /// `/model` без аргумента: UI предлагается открыть пикер моделей
     /// (TUI — модалка; выбор сводится к `/model <name>`).
     PickModel,
+    /// `/new`: новая сессия — сессия уже ротирована исполнителем
+    /// (история пуста, журнал — новый файл); UI очищает блоки диалога.
+    NewSession,
     /// Выход из приложения.
     Quit,
     /// Неизвестная команда.
@@ -69,6 +72,10 @@ pub async fn execute(
         "/clear" => {
             session.clear();
             Ok(SlashOutcome::Handled("контекст очищен".into()))
+        }
+        "/new" => {
+            session.reset();
+            Ok(SlashOutcome::NewSession)
         }
         "/quit" => Ok(SlashOutcome::Quit),
         "/tools" => Ok(SlashOutcome::Handled(tools_text(session))),
@@ -115,6 +122,7 @@ pub fn catalog() -> Vec<(&'static str, &'static str)> {
         ("/model [name]", "сменить модель; без имени — пикер моделей"),
         ("/think [on|off]", "ризонинг-режим модели (thinking)"),
         ("/clear", "очистить контекст"),
+        ("/new", "новая сессия: чистый диалог и журнал"),
         ("/quit", "выход"),
         ("/tools", "список инструментов"),
         ("/prompts [name]", "библиотека промптов / показать шаблон"),
@@ -1038,6 +1046,35 @@ mod tests {
         );
         let ctx = ToolContext::new(dir.to_path_buf(), config);
         (session, ctx)
+    }
+
+    #[tokio::test]
+    async fn new_starts_fresh_session_and_rotates_journal() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let (mut s, ctx) = make_fixture(tmp.path());
+        let old_log = s.log_path().map(|p| p.to_path_buf()).expect("журнал открыт");
+        // Немного истории, чтобы было что очищать.
+        s.send("привет", None).await.expect("ход заглушки");
+        assert!(!s.messages().is_empty());
+
+        match execute("/new", &mut s, &ctx).await.expect("ok") {
+            SlashOutcome::NewSession => {}
+            other => panic!("ожидался NewSession, получено {other:?}"),
+        }
+        assert!(s.messages().is_empty(), "история очищена");
+        let new_log = s.log_path().map(|p| p.to_path_buf()).expect("новый журнал");
+        assert_ne!(old_log, new_log, "журнал ротирован");
+        assert!(old_log.is_file(), "старый журнал остаётся для /sessions");
+        let old = std::fs::read_to_string(&old_log).expect("чтение старого журнала");
+        assert!(old.contains("session_end"), "финальная отметка старого: {old}");
+        let new = std::fs::read_to_string(&new_log).expect("чтение нового журнала");
+        assert!(new.contains("\"system\""), "новый начат с системного: {new}");
+
+        // Два /new подряд (та же секунда) — разные файлы, без перемешивания.
+        execute("/new", &mut s, &ctx).await.expect("ok");
+        let third = s.log_path().map(|p| p.to_path_buf()).expect("третий журнал");
+        assert_ne!(new_log, third, "суффикс разводит коллизию одной секунды");
+        assert!(third.is_file());
     }
 
     #[tokio::test]

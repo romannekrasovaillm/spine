@@ -1057,6 +1057,20 @@ impl App {
                         self.push_block(ChatBlock::System { command, text });
                     }
                     Ok(slash::SlashOutcome::PickModel) => self.open_model_picker(),
+                    Ok(slash::SlashOutcome::NewSession) => {
+                        // /new: чистый лист — блоки, вкладки и скролл сброшены;
+                        // сессия уже ротирована исполнителем (новый журнал).
+                        self.blocks.clear();
+                        self.panels = Panels::default();
+                        self.scroll = 0;
+                        self.stick = true;
+                        self.push_block(ChatBlock::System {
+                            command,
+                            text: "новая сессия: история и панели очищены, \
+                                   журнал начат заново; прошлые сессии — /sessions"
+                                .into(),
+                        });
+                    }
                     Ok(slash::SlashOutcome::Quit) => self.should_quit = true,
                     Ok(slash::SlashOutcome::Unknown(cmd)) => {
                         self.push_block(ChatBlock::Error(format!(
@@ -1610,6 +1624,30 @@ mod tests {
             result: Ok(SlashOutcome::Quit),
         });
         assert!(app.should_quit);
+    }
+
+    #[test]
+    fn slash_new_session_clears_blocks_panels_and_scroll() {
+        let mut app = test_app();
+        app.push_block(ChatBlock::User("старое сообщение".into()));
+        app.panels.mermaid = "старый арт".into();
+        app.scroll_by(3);
+        let session = app.session.take().expect("сессия есть");
+        app.handle_message(AppMessage::SlashFinished {
+            session,
+            result: Ok(SlashOutcome::NewSession),
+        });
+        assert_eq!(app.blocks.len(), 1, "осталась только системная заметка");
+        match app.blocks.last() {
+            Some(ChatBlock::System { text, .. }) => {
+                assert!(text.contains("новая сессия"), "{text}")
+            }
+            other => panic!("ожидался system-блок, получено: {other:?}"),
+        }
+        assert!(app.panels.mermaid.is_empty(), "вкладки очищены");
+        assert_eq!(app.scroll, 0);
+        assert!(app.stick, "прилипание к дну восстановлено");
+        assert_eq!(app.history_tokens(), 0, "индикатор контекста сброшен");
     }
 
     #[test]

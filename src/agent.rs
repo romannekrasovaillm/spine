@@ -509,6 +509,35 @@ impl AgentSession {
         self.log_event("event", serde_json::json!({ "event": "clear" }));
     }
 
+    /// Начать новую сессию на месте текущей (`/new`): история, детекторы
+    /// и L3-флаг сброшены, журнал — НОВЫЙ файл (старый остаётся на диске
+    /// для `/sessions` и `/resume`). В старый журнал пишется `session_end`,
+    /// в новый — системный промпт и хук `SessionStart`. Модель и
+    /// переключатель ризонинга — пользовательские настройки, сохраняются.
+    pub fn reset(&mut self) {
+        self.log_event(
+            "event",
+            serde_json::json!({ "event": "session_end", "reason": "new" }),
+        );
+        match open_journal(&self.config.paths.sessions_dir) {
+            Ok((path, file)) => {
+                self.log_path = Some(path);
+                self.log_file = Some(file);
+            }
+            Err(e) => {
+                tracing::warn!("журнал новой сессии недоступен: {e}");
+                self.log_path = None;
+                self.log_file = None;
+            }
+        }
+        self.history.clear();
+        self.detectors.reset();
+        self.l3_futile = false;
+        let prompt = self.system_prompt.clone();
+        self.log_event("system", serde_json::json!({ "content": prompt }));
+        self.fire_hook(crate::hooks::HookEvent::SessionStart, None, "{}");
+    }
+
     /// Эмит служебной заметки: событие в канал (если есть) + запись в журнал.
     fn emit_note(&mut self, events: &Option<mpsc::Sender<AgentEvent>>, text: String) {
         self.log_event("event", serde_json::json!({ "event": "note", "text": text }));
@@ -904,23 +933,41 @@ impl Drop for AgentSession {
     }
 }
 
-/// Открывает append-only журнал `session-<yyyymmdd-hhmmss>-<pid>.jsonl` в
-/// `dir`. Суффикс pid защищает от коллизии двух сессий, стартовавших
-/// в одну секунду (иначе журналы перемешивались бы).
+/// Открывает append-only журнал `session-<yyyymmdd-hhmmss>-<pid>[-n].jsonl` в
+/// `dir`. Суффикс pid защищает от коллизии двух процессов, а счётчик `-n` —
+/// от повторного открытия в ту же секунду внутри одного процесса
+/// (`/new` ротирует журнал): журналы сессий никогда не перемешиваются.
 fn open_journal(dir: &Path) -> Result<(PathBuf, std::fs::File)> {
     std::fs::create_dir_all(dir).map_err(|e| HarnessError::io(dir, e))?;
-    let name = format!(
-        "session-{}-{}.jsonl",
+    let base = format!(
+        "session-{}-{}",
         chrono::Local::now().format("%Y%m%d-%H%M%S"),
         std::process::id()
     );
-    let path = dir.join(name);
-    let file = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)
-        .map_err(|e| HarnessError::io(&path, e))?;
-    Ok((path, file))
+    for seq in 0..100u32 {
+        let name = if seq == 0 {
+            format!("{base}.jsonl")
+        } else {
+            format!("{base}-{seq}.jsonl")
+        };
+        let path = dir.join(&name);
+        match std::fs::OpenOptions::new()
+            .create_new(true)
+            .append(true)
+            .open(&path)
+        {
+            Ok(file) => return Ok((path, file)),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(HarnessError::io(&path, e)),
+        }
+    }
+    Err(HarnessError::io(
+        dir,
+        std::io::Error::new(
+            std::io::ErrorKind::AlreadyExists,
+            "слишком много журналов за одну секунду",
+        ),
+    ))
 }
 
 /// Текущее время в ISO 8601 с миллисекундами (для журнала).
