@@ -28,6 +28,8 @@ const MAX_BLOCKS: usize = 500;
 const AGENT_EVENTS_CAP: usize = 64;
 /// Максимум записей в истории ввода.
 const MAX_HISTORY: usize = 100;
+/// Максимум сообщений в очереди ожидания (пока агент занят).
+const MAX_QUEUE: usize = 32;
 /// Кадры спиннера ожидания модели (брайлевская анимация).
 pub(crate) const SPINNER: [&str; 10] = ["⠋", "⠙", "⠚", "⠞", "⠖", "⠦", "⠴", "⠲", "⠳", "⠓"];
 
@@ -426,8 +428,11 @@ pub(crate) struct App {
     pub(crate) panels: Panels,
     /// Доп. сообщение в статус-баре (например, ошибка MCP).
     status_extra: Option<String>,
-    /// Идёт фоновый ход (модель/команда) — ввод заблокирован.
+    /// Идёт фоновый ход (модель/команда) — ввод складывается в очередь.
     thinking: bool,
+    /// Очередь сообщений, набранных во время хода агента (FIFO;
+    /// срочные — в начало через Alt+Enter или префикс «!!»).
+    pub(crate) queue: VecDeque<String>,
     /// Кадр спиннера.
     spinner: usize,
     /// Команда, ожидающая результата (для привязки вывода к вкладкам).
@@ -539,6 +544,7 @@ impl App {
             panels: Panels::default(),
             status_extra,
             thinking: false,
+            queue: VecDeque::new(),
             spinner: 0,
             pending_slash: None,
             should_quit: false,
@@ -714,7 +720,14 @@ impl App {
             KeyCode::F(2) => self.right_tab = RightTab::Rubric,
             KeyCode::F(3) => self.right_tab = RightTab::Knowledge,
             KeyCode::F(4) => self.toggle_viewer(),
-            _ if self.thinking => {} // во время хода ввод заблокирован
+            // Во время хода ввод НЕ блокируется: Enter — сообщение в очередь
+            // (FIFO), Alt+Enter — срочно в начало (выполнится следующим).
+            KeyCode::Enter
+                if self.thinking && key.modifiers.contains(KeyModifiers::ALT) =>
+            {
+                self.enqueue_typed(true);
+            }
+            KeyCode::Enter if self.thinking => self.enqueue_typed(false),
             KeyCode::Enter => self.submit(),
             KeyCode::Tab => {
                 if !self.input.complete_tab() {
@@ -738,6 +751,33 @@ impl App {
                 self.input.insert_char(c);
             }
             _ => {}
+        }
+    }
+
+    /// Enter во время хода: набранный текст — в очередь (`front` — в начало,
+    /// срочное). Префикс «!!» — срочно даже без Alt (терминали без Alt+Enter).
+    fn enqueue_typed(&mut self, front: bool) {
+        let input = self.input.submit();
+        if input.is_empty() {
+            return;
+        }
+        let (front, input) = match input.strip_prefix("!!") {
+            Some(rest) => (true, rest.trim_start().to_string()),
+            None => (front, input),
+        };
+        if input.is_empty() {
+            return;
+        }
+        if self.queue.len() >= MAX_QUEUE {
+            self.push_block(ChatBlock::Error(format!(
+                "очередь полна ({MAX_QUEUE}) — дождитесь завершения хода"
+            )));
+            return;
+        }
+        if front {
+            self.queue.push_front(input);
+        } else {
+            self.queue.push_back(input);
         }
     }
 
@@ -857,6 +897,8 @@ impl App {
                 }
             }
         }
+        // Модалка могла задержать очередь — запускаем, если свободны.
+        self.maybe_start_queued();
     }
 
     /// F4: открыть/закрыть полноэкранный просмотр активной вкладки.
@@ -908,12 +950,25 @@ impl App {
         self.viewer = Some(v);
     }
 
-    /// Enter: отправка ввода — слэш-команде или модели.
+    /// Enter: отправка ввода — слэш-команде или модели; во время хода —
+    /// постановка в очередь (см. [`App::enqueue_typed`]).
     fn submit(&mut self) {
         let input = self.input.submit();
         if input.is_empty() {
             return;
         }
+        if self.thinking {
+            // Гонка отрисовки: ход уже начался — в конец очереди.
+            if self.queue.len() < MAX_QUEUE {
+                self.queue.push_back(input);
+            }
+            return;
+        }
+        self.submit_text(input);
+    }
+
+    /// Немедленный запуск сообщения: блок пользователя + ход/слэш/export.
+    fn submit_text(&mut self, input: String) {
         self.scroll_to_bottom();
         self.push_block(ChatBlock::User(input.clone()));
         // `/export` перехватывается здесь: блоки диалога видны только TUI,
@@ -924,6 +979,17 @@ impl App {
             self.start_slash(input);
         } else {
             self.start_turn(input);
+        }
+    }
+
+    /// Запуск первого сообщения из очереди (после завершения хода/команды).
+    /// Ждёт, если открыта модалка выбора (ответ пользователя важнее).
+    fn maybe_start_queued(&mut self) {
+        if self.thinking || self.ask.is_some() || self.viewer.is_some() {
+            return;
+        }
+        if let Some(next) = self.queue.pop_front() {
+            self.submit_text(next);
         }
     }
 
@@ -1046,6 +1112,8 @@ impl App {
                         "ход завершился ошибкой: {e}"
                     ))),
                 }
+                // Очередь: следующее набранное во время хода сообщение.
+                self.maybe_start_queued();
             }
             AppMessage::SlashFinished { session, result } => {
                 self.thinking = false;
@@ -1087,6 +1155,8 @@ impl App {
                         "команда не удалась: {e}"
                     ))),
                 }
+                // Очередь: следующее набранное, пока шла команда.
+                self.maybe_start_queued();
             }
         }
     }
@@ -1357,10 +1427,16 @@ pub(crate) mod testing {
         app.history_tokens = used;
         app.context_budget = budget;
     }
+
+    /// Подменяет флаг «модель думает» для тестов очереди ввода.
+    pub(crate) fn set_thinking(app: &mut App, thinking: bool) {
+        app.thinking = thinking;
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use super::testing;
     use super::testing::{stub_session, test_app};
     use super::*;
     use crate::agent::slash::SlashOutcome;
@@ -1676,6 +1752,86 @@ mod tests {
         assert_eq!(app.history_tokens(), 12_345, "индикатор обновился по ходу хода");
         app.handle_message(AppMessage::AgentEvent(AgentEvent::ContextUsage(20_000)));
         assert_eq!(app.history_tokens(), 20_000);
+    }
+
+    #[test]
+    fn typing_and_enter_enqueue_while_agent_thinks() {
+        let mut app = test_app();
+        app.screen = Screen::Chat;
+        testing::set_thinking(&mut app, true);
+        for c in "добавь NFR".chars() {
+            app.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
+        }
+        assert_eq!(app.input.text(), "добавь NFR", "ввод во время хода работает");
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert_eq!(app.queue.len(), 1, "сообщение в очереди");
+        assert_eq!(app.queue[0], "добавь NFR");
+        assert!(app.input.text().is_empty(), "строка ввода очищена");
+        assert!(app.thinking, "новый ход не начался — сообщение ждёт");
+        assert!(app.session.is_some(), "сессия не уехала в фоновую задачу");
+    }
+
+    #[test]
+    fn alt_enter_and_bang_prefix_jump_to_queue_front() {
+        let mut app = test_app();
+        app.screen = Screen::Chat;
+        testing::set_thinking(&mut app, true);
+        app.input.set_text("обычное".into());
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        app.input.set_text("срочное".into());
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT));
+        app.input.set_text("!!ещё срочнее".into());
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        let order: Vec<&str> = app.queue.iter().map(String::as_str).collect();
+        assert_eq!(
+            order,
+            vec!["ещё срочнее", "срочное", "обычное"],
+            "срочные — в начало очереди (Alt+Enter и «!!»)"
+        );
+    }
+
+    #[tokio::test]
+    async fn queued_message_starts_when_turn_finishes() {
+        let mut app = test_app();
+        app.screen = Screen::Chat;
+        let (tx, _rx) = mpsc::channel(8);
+        app.msg_tx = Some(tx);
+        testing::set_thinking(&mut app, true);
+        app.queue.push_back("второй вопрос".into());
+        let session = app.session.take().expect("сессия есть");
+        app.handle_message(AppMessage::TurnFinished {
+            session,
+            result: Ok("первый ответ".into()),
+        });
+        assert!(app.thinking, "сразу стартовал ход из очереди");
+        assert!(app.queue.is_empty(), "очередь опустела");
+        assert!(
+            app.blocks
+                .iter()
+                .any(|b| matches!(b, ChatBlock::User(t) if t == "второй вопрос")),
+            "блок пользователя для очередного сообщения"
+        );
+    }
+
+    #[tokio::test]
+    async fn queued_slash_runs_after_turn() {
+        let mut app = test_app();
+        app.screen = Screen::Chat;
+        let (tx, _rx) = mpsc::channel(8);
+        app.msg_tx = Some(tx);
+        testing::set_thinking(&mut app, true);
+        app.queue.push_back("/tools".into());
+        let session = app.session.take().expect("сессия есть");
+        app.handle_message(AppMessage::TurnFinished {
+            session,
+            result: Ok("ответ".into()),
+        });
+        assert!(app.thinking);
+        assert_eq!(
+            app.pending_slash.as_deref(),
+            Some("/tools"),
+            "очередная слэш-команда запущена"
+        );
     }
 
     #[test]

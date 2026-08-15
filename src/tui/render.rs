@@ -214,9 +214,11 @@ fn draw_fatal(f: &mut Frame, area: Rect, theme: &Theme, error: &str) {
 /// Поверх — модалка выбора вариантов (propose_options), если она открыта.
 fn draw_chat(f: &mut Frame, app: &mut App) {
     let theme = app.theme;
+    // Под очередь сообщений (во время хода) добавляем строки: до 3 + «ещё N».
+    let queue_rows = u16_sat(app.queue.len().min(3) + usize::from(app.queue.len() > 3));
     let rows = Layout::vertical([
         Constraint::Min(6),
-        Constraint::Length(3),
+        Constraint::Length(3 + queue_rows),
         Constraint::Length(1),
     ])
     .split(f.area());
@@ -692,11 +694,23 @@ fn draw_right(f: &mut Frame, area: Rect, app: &App, theme: &Theme) {
     f.render_widget(Paragraph::new(lines).block(block), area);
 }
 
-/// Нижняя строка ввода с prompt'ом, курсором и подсказкой-дополнением.
+/// Нижняя строка ввода с prompt'ом, курсором, подсказкой-дополнением и
+/// строками очереди сообщений (набранных во время хода агента).
 fn draw_input(f: &mut Frame, area: Rect, app: &App, theme: &Theme) {
     let thinking = app.thinking();
     let title = if thinking {
-        format!(" {} модель думает… ", SPINNER[app.spinner_frame()])
+        let mut t = format!(" {} модель думает…", SPINNER[app.spinner_frame()]);
+        if app.queue.is_empty() {
+            t.push_str(" · Enter — в очередь · Alt+Enter — срочно ");
+        } else {
+            t.push_str(&format!(
+                " · очередь: {} · Alt+Enter — срочно ",
+                app.queue.len()
+            ));
+        }
+        t
+    } else if !app.queue.is_empty() {
+        format!(" очередь: {} ", app.queue.len())
     } else {
         String::new()
     };
@@ -716,20 +730,36 @@ fn draw_input(f: &mut Frame, area: Rect, app: &App, theme: &Theme) {
         Span::styled(prompt, theme.heading()),
         Span::styled(app.input.text().to_string(), theme.base()),
     ];
-    if !thinking {
-        if let Some(hint) = app.input.ghost_hint() {
-            spans.push(Span::styled(hint, theme.muted()));
-        }
+    if let Some(hint) = app.input.ghost_hint() {
+        spans.push(Span::styled(hint, theme.muted()));
     }
-    f.render_widget(Paragraph::new(Line::from(spans)).block(block), area);
+    let mut lines = vec![Line::from(spans)];
+    // Очередь: до трёх строк под строкой ввода; первая — следующая на запуск.
+    // Маркеры — только узкие глифы (▶/•, ширина 1): двухширинные эмодзи
+    // съедают соседнюю ячейку и ломают сетку.
+    let inner_w = usize::from(area.width.saturating_sub(4)).max(1);
+    for (i, q) in app.queue.iter().take(3).enumerate() {
+        let marker = if i == 0 { "▶" } else { "•" };
+        let text: String = q.chars().take(inner_w.saturating_sub(6)).collect();
+        lines.push(Line::from(Span::styled(
+            format!("{marker} {}. {text}", i + 1),
+            theme.muted(),
+        )));
+    }
+    if app.queue.len() > 3 {
+        lines.push(Line::from(Span::styled(
+            format!("… ещё {}", app.queue.len() - 3),
+            theme.muted(),
+        )));
+    }
+    f.render_widget(Paragraph::new(lines).block(block), area);
 
-    if !thinking {
-        let before = UnicodeWidthStr::width(&app.input.text()[..app.input.cursor()]);
-        let offset = UnicodeWidthStr::width(prompt) + before;
-        let x = area.x.saturating_add(1).saturating_add(u16_sat(offset));
-        let max_x = area.x.saturating_add(area.width.saturating_sub(2));
-        f.set_cursor_position((x.min(max_x), area.y + 1));
-    }
+    // Ввод активен и во время хода (очередь) — курсор нужен всегда.
+    let before = UnicodeWidthStr::width(&app.input.text()[..app.input.cursor()]);
+    let offset = UnicodeWidthStr::width(prompt) + before;
+    let x = area.x.saturating_add(1).saturating_add(u16_sat(offset));
+    let max_x = area.x.saturating_add(area.width.saturating_sub(2));
+    f.set_cursor_position((x.min(max_x), area.y + 1));
 }
 
 /// Статус-бар: бейдж модели | индикатор контекста | cwd | заметки | подсказки.
@@ -1124,6 +1154,26 @@ mod tests {
             Some(ratatui::style::Color::Rgb(0xff, 0x9e, 0x64)),
             "между L1 и L3 шкала оранжевая"
         );
+    }
+
+    #[test]
+    #[test]
+    fn input_area_lists_queued_messages_while_thinking() {
+        use crate::tui::app::testing::set_thinking;
+        let mut app = test_app();
+        app.screen = Screen::Chat;
+        set_thinking(&mut app, true);
+        app.queue.push_back("первое в очереди".into());
+        app.queue.push_back("второе срочное".into());
+        let mut terminal = Terminal::new(TestBackend::new(100, 30)).expect("terminal");
+        terminal.draw(|f| app.render(f)).expect("draw");
+        let text = buffer_text(&terminal);
+        assert!(text.contains("очередь: 2"), "счётчик в заголовке:\n{text}");
+        assert!(
+            text.contains("▶ 1. первое в очереди"),
+            "первое — следующее на запуск:\n{text}"
+        );
+        assert!(text.contains("• 2. второе срочное"), "вторая строка:\n{text}");
     }
 
     #[test]
