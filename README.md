@@ -165,6 +165,14 @@ BMAD, Spec Kit, OpenSpec и др.):
 
 Подробности: `docs/governance.md`.
 
+#### Учебные кейсы
+
+- [`кейсы/`](кейсы/AGENTS.md) — сквозные примеры цикла solution-архитектора,
+  подготовленные харнессом: от spine-инвариантов до handoff-пакета кодовому
+  харнессу. Первый кейс — [`sbp-gateway`](кейсы/sbp-gateway/) (платёжный шлюз
+  СБП, C2B-приём; DeepSeek V4 Flash): spine AD-001…008, solutioning, 7 ADR,
+  контракты/NFR/RFP, handoff-пакет с рубрикой и fitness-правилами.
+
 #### Прочее
 
 - **TUI** (ratatui, Tokyo Night): стриминг, markdown, mermaid-арт на боковой
@@ -367,6 +375,12 @@ BMAD, Spec Kit, OpenSpec, and more):
 **Handoff to coding harnesses**: Claude Code, Qwen Code, OpenClaw, Hermes,
 Theseus, CodeWhale — `.arch-handoff/` packages with invariants, acceptance
 criteria, and a headless JSON contract (`docs/harness_integrations.md`).
+
+**Training cases**: [`кейсы/`](кейсы/AGENTS.md) — end-to-end samples of the
+solution-architect cycle produced with the harness. First case:
+[`sbp-gateway`](кейсы/sbp-gateway/) (faster-payments C2B gateway; DeepSeek V4
+Flash) — spine invariants, solutioning, 7 ADRs, contracts/NFR/RFP, and a
+handoff package with a rubric and fitness rules.
 
 **Plus**: beautiful Tokyo Night TUI (markdown chat, mermaid→Unicode diagrams,
 mouse, fullscreen viewer with horizontal pan, docx/xlsx export, option-picker
