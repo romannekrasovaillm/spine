@@ -440,6 +440,8 @@ pub(crate) struct App {
     history_tokens: usize,
     /// Эффективный бюджет контекста активной модели (0 — неизвестен).
     context_budget: usize,
+    /// Область кнопки «▼ — к свежему ответу» (ставит рендер; None — у дна).
+    pub(crate) jump_btn: Option<ratatui::layout::Rect>,
     /// Тема оформления.
     pub(crate) theme: Theme,
     /// Канал событий в event loop.
@@ -543,6 +545,7 @@ impl App {
             model_name: "—".into(),
             history_tokens: 0,
             context_budget,
+            jump_btn: None,
             theme: Theme::default(),
             msg_tx: None,
         }
@@ -662,10 +665,10 @@ impl App {
         }
     }
 
-    /// Обработка клавиши в чате.
     /// Событие мыши: колесо прокручивает диалог (3 строки за тик);
     /// в просмотрщике — его вертикаль, а с Shift — горизонтальная панорама.
-    /// Работает и во время хода модели (как PgUp/PgDn).
+    /// Клик левой кнопкой по «▼» в правом нижнем углу диалога — прыжок
+    /// к свежему ответу. Работает и во время хода модели (как PgUp/PgDn).
     pub(crate) fn handle_mouse(&mut self, mouse: crossterm::event::MouseEvent) {
         if !matches!(self.screen, Screen::Chat) {
             return;
@@ -685,6 +688,14 @@ impl App {
             return;
         }
         match mouse.kind {
+            // Клик по кнопке «▼» (справа внизу диалога) — к свежему ответу.
+            K::Down(crossterm::event::MouseButton::Left)
+                if self.jump_btn.is_some_and(|r| {
+                    r.contains(ratatui::layout::Position::new(mouse.column, mouse.row))
+                }) =>
+            {
+                self.scroll_to_bottom();
+            }
             K::ScrollUp => self.scroll_by(WHEEL_LINES),
             K::ScrollDown => self.scroll_back(WHEEL_LINES),
             _ => {}
@@ -1479,6 +1490,30 @@ mod tests {
         app.screen = Screen::Splash;
         app.handle_mouse(mouse(MouseEventKind::ScrollUp));
         assert_eq!(app.scroll, 0);
+    }
+
+    #[test]
+    fn click_on_jump_button_scrolls_to_bottom() {
+        use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+        let mut app = test_app();
+        app.screen = Screen::Chat;
+        app.scroll_by(9);
+        assert!(app.scroll > 0 && !app.stick);
+        // Кнопка « ▼ » 3×1 (координаты ставит рендер — здесь эмулируем).
+        app.jump_btn = Some(ratatui::layout::Rect::new(10, 20, 3, 1));
+        let click = |col, row| MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: col,
+            row,
+            modifiers: crossterm::event::KeyModifiers::empty(),
+        };
+        // Клик мимо кнопки — скролл не сбрасывается.
+        app.handle_mouse(click(0, 0));
+        assert_eq!(app.scroll, 9, "клик мимо кнопки — без эффекта");
+        // Клик по кнопке (в т.ч. по крайней ячейке) — прыжок к дну.
+        app.handle_mouse(click(12, 20));
+        assert_eq!(app.scroll, 0, "клик по ▼ — к свежему ответу");
+        assert!(app.stick, "снова прилипли к дну");
     }
 
     #[test]

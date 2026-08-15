@@ -11,7 +11,9 @@ use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Wrap};
+use ratatui::widgets::{
+    Block, BorderType, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap,
+};
 use unicode_width::UnicodeWidthStr;
 
 use crate::assets;
@@ -483,6 +485,46 @@ fn draw_dialog(f: &mut Frame, area: Rect, app: &mut App, theme: &Theme) {
         .border_style(border_style)
         .title(Span::styled(title, theme.heading()));
     f.render_widget(Paragraph::new(visible).block(block), area);
+
+    // Скроллбар на правой кромке рамки: видно, где мы в истории диалога.
+    // Трек повторяет глиф рамки (│), бегунок █ — акцентный.
+    if max_scroll > 0 && area.height > 3 {
+        let sb_area = Rect {
+            x: area.x + area.width.saturating_sub(1),
+            y: area.y + 1,
+            width: 1,
+            height: area.height.saturating_sub(2),
+        };
+        let mut sb_state = ScrollbarState::new(max_scroll)
+            .position(skip)
+            .viewport_content_length(view_h);
+        let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+            .begin_symbol(None)
+            .end_symbol(None)
+            .track_symbol(Some("│"))
+            .thumb_symbol("█")
+            .track_style(theme.muted())
+            .thumb_style(Style::default().fg(theme.cyan).bg(theme.bg));
+        f.render_stateful_widget(scrollbar, sb_area, &mut sb_state);
+    }
+
+    // Кнопка «▼» в правом нижнем углу: прыжок к свежему ответу.
+    // Показывается, только когда пользователь поднялся выше дна.
+    if app.scroll > 0 && area.width > 6 && area.height > 3 {
+        let btn = Rect {
+            x: area.x + area.width.saturating_sub(4),
+            y: area.y + area.height.saturating_sub(2),
+            width: 3,
+            height: 1,
+        };
+        app.jump_btn = Some(btn);
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(" ▼ ", theme.badge()))),
+            btn,
+        );
+    } else {
+        app.jump_btn = None;
+    }
 }
 
 /// Блок чата → стилизованные строки (до переноса по ширине).
@@ -1023,6 +1065,55 @@ mod tests {
         assert_eq!(fmt_tokens(12_345), "12.3k");
         assert_eq!(fmt_tokens(1_000_000), "1.0M");
         assert_eq!(fmt_tokens(6_000_000), "6.0M");
+    }
+
+    /// Длинный диалог: 20 блоков × ~3 строки — прокрутка гарантирована.
+    fn long_dialog_app() -> App {
+        let mut app = test_app();
+        app.screen = Screen::Chat;
+        for i in 0..20 {
+            app.push_block(ChatBlock::User(format!("сообщение {i}")));
+        }
+        app
+    }
+
+    #[test]
+    fn dialog_shows_scrollbar_and_jump_button_when_scrolled() {
+        let mut app = long_dialog_app();
+        app.scroll_by(10);
+        let mut terminal = Terminal::new(TestBackend::new(100, 30)).expect("terminal");
+        terminal.draw(|f| app.render(f)).expect("draw");
+        let text = buffer_text(&terminal);
+        assert!(text.contains('█'), "бегунок скроллбара:\n{text}");
+        assert!(text.contains(" ▼ "), "кнопка к свежему ответу:\n{text}");
+        assert!(app.jump_btn.is_some(), "область кнопки выставлена рендером");
+        // Кнопка — в правом нижнем углу диалога (диалог 66 колонок при 100).
+        let btn = app.jump_btn.expect("кнопка");
+        assert_eq!(btn.width, 3);
+        assert!(btn.x >= 60 && btn.y >= 20, "позиция кнопки: {btn:?}");
+    }
+
+    #[test]
+    fn no_jump_button_at_bottom_and_no_scrollbar_when_short() {
+        // Диалог короче экрана: ни скроллбара, ни кнопки.
+        let mut app = test_app();
+        app.screen = Screen::Chat;
+        app.push_block(ChatBlock::User("привет".into()));
+        let mut terminal = Terminal::new(TestBackend::new(100, 30)).expect("terminal");
+        terminal.draw(|f| app.render(f)).expect("draw");
+        let text = buffer_text(&terminal);
+        assert!(!text.contains('█'), "бегунка быть не должно:\n{text}");
+        assert!(!text.contains(" ▼ "), "кнопки быть не должно:\n{text}");
+        assert!(app.jump_btn.is_none());
+
+        // Длинный диалог, но у дна: скроллбар есть, кнопки нет.
+        let mut app = long_dialog_app();
+        let mut terminal = Terminal::new(TestBackend::new(100, 30)).expect("terminal");
+        terminal.draw(|f| app.render(f)).expect("draw");
+        let text = buffer_text(&terminal);
+        assert!(text.contains('█'), "бегунок виден у дна:\n{text}");
+        assert!(!text.contains(" ▼ "), "у дна кнопка скрыта:\n{text}");
+        assert!(app.jump_btn.is_none());
     }
 
     #[test]
