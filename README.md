@@ -196,6 +196,35 @@ arch models                    # проверить настроенные мо�
 `arch control score --trigger new_component=true`,
 `arch control spine examples/specs/ARCHITECTURE-SPINE.example.md`.
 
+### Настройка персональных путей
+
+Вся привязка к машине пользователя — только в конфиге (в коде — нейтральные
+плейсхолдеры). Порядок поиска конфига: `--config <path>` → `./arch-harness.toml`
+→ `~/.config/arch-harness/config.toml` → встроенные дефолты. Все секции
+опциональны — указывайте только отличия от дефолтов.
+
+```toml
+# ~/.config/arch-harness/config.toml
+[knowledge]
+dirs = ["~/Документы/архитектура", "~/library"]     # ваша база знаний (kb_search)
+
+[plugins]
+dirs = ["~/.arch-harness/plugins", "~/my-plugins"]  # ваши библиотеки плагинов
+
+[paths]                          # куда писать данные харнесса
+assets_dir = "~/.arch-harness/assets"     # промпты, рубрики, бенчи
+reports_dir = "~/.arch-harness/reports"   # отчёты рубрик/крона/субагентов
+sessions_dir = "~/.arch-harness/sessions" # журналы сессий
+```
+
+- Тильда `~/` раскрывается автоматически; относительные пути — от текущего каталога.
+- API-ключи: `api_key_env` (имя env-переменной) или `api_key_file` (путь к файлу,
+  напр. `~/.kimi_api_key`) — сами ключи в конфиг не пишутся никогда.
+- Проверка после правки: `arch doctor` (покажет доступность каталогов и ключей)
+  и `arch kb "запрос"` (находит ли ваша база).
+
+Полный образец с комментариями — `config.example.toml`.
+
 ### CLI
 
 ```
@@ -349,6 +378,34 @@ arch models                    # list configured models
 
 No-LLM smoke: `arch mermaid examples/mermaid/flow.mmd`,
 `arch control score --trigger new_component=true`, `arch doctor`.
+
+### Configuring personal paths
+
+All machine-specific wiring lives in the config file — the code ships only
+neutral placeholders. Config lookup order: `--config <path>` →
+`./arch-harness.toml` → `~/.config/arch-harness/config.toml` → built-in
+defaults. Every section is optional — override only what differs.
+
+```toml
+# ~/.config/arch-harness/config.toml
+[knowledge]
+dirs = ["~/Documents/architecture", "~/library"]     # your knowledge base (kb_search)
+
+[plugins]
+dirs = ["~/.arch-harness/plugins", "~/my-plugins"]   # your plugin libraries
+
+[paths]                          # where the harness writes its data
+assets_dir = "~/.arch-harness/assets"     # prompts, rubrics, benchmarks
+reports_dir = "~/.arch-harness/reports"   # rubric/cron/subagent reports
+sessions_dir = "~/.arch-harness/sessions" # session journals
+```
+
+- `~/` is expanded automatically; relative paths resolve from the cwd.
+- API keys: `api_key_env` (name of an env variable) or `api_key_file` (path to
+  a key file, e.g. `~/.kimi_api_key`) — key values never go into the config.
+- Verify after editing: `arch doctor` (dirs and keys) and `arch kb "query"`.
+
+Fully commented sample: `config.example.toml`.
 
 ### Documentation
 
