@@ -1,6 +1,7 @@
 # AGENTS.md — Spine
 
 Guidance for AI agents (and humans) working on this repository.
+**Reading/exploring the repo instead? See `AGENTS-READERS.md`.**
 
 **Spine** is a *domain agent harness for solution architects*: a thin,
 Rust-built terminal agent with architecture-specific tooling — ADRs,
