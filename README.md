@@ -177,6 +177,9 @@ BMAD, Spec Kit, OpenSpec и др.):
   Кейс 002 — [`payment-processing-platform`](кейсы/payment-processing-platform/)
   (процессинг банка: рельсы карты/СБП/SWIFT/БЭСП; GLM-5.2): 27 инвариантов
   spine, 16 ADR, fitness-констрейнты под Go-код, walking skeleton.
+  Кейс 003 — [`govproc-platform`](кейсы/govproc-platform/) (электронная
+  коммерция госсектора: B2G-закупки 44-ФЗ, ЕИС, УКЭП; Kimi K3): 7 AD spine,
+  5 ADR, NFR, OpenAPI-контракт, эмулятор внешней системы.
 
 #### Прочее
 
@@ -393,7 +396,10 @@ Flash) — spine invariants, solutioning, 7 ADRs, contracts/NFR/RFP, and a
 handoff package with a rubric and fitness rules. Case 002:
 [`payment-processing-platform`](кейсы/payment-processing-platform/) (bank
 processing rails: cards/SBP/SWIFT; GLM-5.2) — 27 spine invariants, 16 ADRs,
-fitness constraints targeting Go code, walking-skeleton handoff.
+fitness constraints targeting Go code, walking-skeleton handoff. Case 003:
+[`govproc-platform`](кейсы/govproc-platform/) (government-sector e-commerce:
+B2G procurement 44-FZ, EIS integration, qualified e-signature; Kimi K3) —
+7 spine invariants, 5 ADRs, NFR, OpenAPI contract, external-system emulator.
 
 **Plus**: beautiful Tokyo Night TUI (markdown chat, mermaid→Unicode diagrams —
 the side panel auto-widens up to 60% of the screen so renders are never

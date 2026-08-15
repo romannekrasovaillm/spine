@@ -1,0 +1,81 @@
+# CONSTRAINTS — Платформа B2G-закупок
+# Fitness functions для гейтов A1/A4. Прогон: fitness_check / arch control check.
+# Схема: rules[] {name, type, glob|path|command, pattern, severity}
+
+rules:
+  # --- Дисциплина решений ---
+  - name: adr-present
+    type: file_exists
+    path: docs/adr/ADR-001-44-223.md
+    severity: error
+  - name: adr-onprem-present
+    type: file_exists
+    path: docs/adr/ADR-002-on-prem.md
+    severity: error
+  - name: adr-eis-present
+    type: file_exists
+    path: docs/adr/ADR-003-eis-integration.md
+    severity: error
+  - name: adr-ukep-present
+    type: file_exists
+    path: docs/adr/ADR-004-ukep-gost.md
+    severity: error
+  - name: adr-monolith-present
+    type: file_exists
+    path: docs/adr/ADR-005-modular-monolith.md
+    severity: error
+  - name: spine-present
+    type: file_exists
+    path: ARCHITECTURE-SPINE.md
+    severity: error
+  - name: nfr-present
+    type: file_exists
+    path: docs/architecture/NFR.md
+    severity: error
+
+  - name: no-placeholders-in-arch-docs
+    type: must_not_contain
+    glob: "docs/adr/*.md"
+    pattern: "TODO|TBD|FIXME"
+    severity: error
+
+  # --- AD-7: криптография только в модуле signing ---
+  - name: crypto-only-in-signing
+    type: must_not_contain
+    glob: "src/core-monolith/**/*"
+    pattern: "CryptoPro|bouncycastle|GOST3411|JCP\\."
+    severity: error
+
+  # --- AD-3: ядро не ходит в ЕИС напрямую ---
+  - name: no-direct-eis-from-core
+    type: must_not_contain
+    glob: "src/core-monolith/**/*"
+    pattern: "zakupki\\.gov\\.ru"
+    severity: error
+
+  # --- AD-6: ПДн не логируются, тесты на синтетике ---
+  - name: no-pii-in-logs
+    type: must_not_contain
+    glob: "src/**/*"
+    pattern: "log(ger)?\\.(info|debug|error|warn)\\(.*(passport|snils|birthDate)"
+    severity: error
+
+  - name: no-real-passports-in-tests
+    type: must_not_contain
+    glob: "tests/**/*"
+    pattern: "\\d{4}\\s?\\d{6}.{0,40}(паспорт|passport)"
+    severity: error
+
+  # --- AD-5: публичное API — OpenAPI 3.1 ---
+  - name: openapi-contract-versioned
+    type: must_contain
+    glob: "api/*.yaml"
+    pattern: "openapi:\\s*[\"']?3\\.1"
+    severity: error
+
+  # --- AD-2: непиннутые версии запрещены в манифестах ---
+  - name: no-latest-tags-in-deploy
+    type: must_not_contain
+    glob: "deploy/**/*.y*ml"
+    pattern: ":(latest|stable|edge)\\b"
+    severity: error
