@@ -316,3 +316,57 @@ impl LlmRegistry {
         names
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn constructors_set_expected_fields() {
+        let sys = ChatMessage::system("s");
+        assert_eq!(sys.role, Role::System);
+        assert!(sys.tool_calls.is_empty() && sys.tool_call_id.is_none() && sys.reasoning_content.is_none());
+        let tool = ChatMessage::tool_result("id-1", "ok");
+        assert_eq!(tool.role, Role::Tool);
+        assert_eq!(tool.tool_call_id.as_deref(), Some("id-1"));
+        let asst = ChatMessage::assistant("a", Vec::new());
+        assert_eq!(asst.role, Role::Assistant);
+        assert!(asst.reasoning_content.is_none());
+    }
+
+    #[test]
+    fn rough_tokens_counts_content_reasoning_and_tool_args() {
+        let mut msg = ChatMessage::assistant("x".repeat(400), vec![ToolCall {
+            id: "c".into(),
+            name: "bash".into(),
+            arguments: serde_json::json!({"command": "y".repeat(388)}),
+        }]);
+        // arguments сериализуются в JSON: 400 символов строки-значения + обёртка.
+        msg.reasoning_content = Some("r".repeat(400));
+        let tokens = msg.rough_tokens();
+        let args_len = msg.tool_calls[0].arguments.to_string().len();
+        assert_eq!(tokens, (400 + 400 + args_len) / 4, "content+reasoning+args");
+        let plain = ChatMessage::user("x".repeat(400));
+        assert_eq!(plain.rough_tokens(), 100);
+    }
+
+    #[test]
+    fn registry_from_default_config_resolves_names_and_default() {
+        let cfg = crate::config::Config::default();
+        let registry = LlmRegistry::from_config(&cfg).expect("registry");
+        assert_eq!(registry.default_name(), "deepseek");
+        assert_eq!(registry.default().model(), "deepseek-v4-flash");
+        for name in ["deepseek", "deepseek-pro", "kimi", "glm", "glm-flash"] {
+            assert!(registry.names().iter().any(|n| n == name), "нет {name}");
+        }
+        assert_eq!(registry.get("kimi").expect("kimi").model(), "k3");
+        assert!(registry.get("unknown-model").is_err());
+    }
+
+    #[test]
+    fn registry_rejects_unknown_default_model() {
+        let mut cfg = crate::config::Config::default();
+        cfg.default_model = "ghost".into();
+        assert!(LlmRegistry::from_config(&cfg).is_err());
+    }
+}

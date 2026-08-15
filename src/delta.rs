@@ -47,9 +47,9 @@ const DELTA_TEMPLATE: &str = "# Дельта: {name}
 /// Каталог существует, ошибка записи.
 pub fn new(repo: &Path, name: &str) -> Result<PathBuf> {
     let dir = repo.join("changes").join(name);
-    if dir.exists() {
+    if dir.exists() || repo.join("changes/archive").join(name).exists() {
         return Err(HarnessError::Control(format!(
-            "дельта '{name}' уже существует: {}",
+            "дельта '{name}' уже существует (активная или в архиве): {}",
             dir.display()
         )));
     }
@@ -212,40 +212,51 @@ fn find_delta(repo: &Path, name: &str) -> Result<PathBuf> {
 mod tests {
     use super::*;
 
-    #[test]
-    fn full_lifecycle_new_validate_archive() {
-        let tmp = tempfile::tempdir().expect("tmp");
-        let repo = tmp.path();
-        let path = new(repo, "payment-timeout").expect("new");
-        assert!(path.is_file());
-        // Дубликат — ошибка.
-        assert!(new(repo, "payment-timeout").is_err());
-        // Шаблон не валиден (заглушки + пустые блоки).
-        let issues = validate(repo, "payment-timeout").expect("validate");
-        assert!(issues.iter().any(|i| i.rule == "empty_delta" && i.severity == "error"));
-        assert!(archive(repo, "payment-timeout").is_err(), "неполная дельта не архивируется");
-        // Заполняем.
+    /// Заполняет дельту рабочим содержимым (все обязательные секции + буллеты).
+    fn fill_delta(path: &Path) {
         std::fs::write(
-            &path,
+            path,
             "# Дельта\n\n## Проблема\nТаймаут велик.\n\n## ADDED\n- Требование: таймаут авторизации 500 мс. Критерий: When запрос, the оркестратор shall ответить ≤ 500 мс\n\n## MODIFIED\n\n## REMOVED\n\n## План отката\nrevert флага\n\n## Критерии приёмки\n- [ ] тест таймаута\n",
         )
         .expect("fill");
-        let issues = validate(repo, "payment-timeout").expect("validate2");
-        assert!(!issues.iter().any(|i| i.severity == "error"), "{issues:?}");
-        // В списке как proposed; после архивации — archived.
-        assert!(list(repo).iter().any(|d| d.status == DeltaStatus::Proposed));
-        let archived = archive(repo, "payment-timeout").expect("archive");
+    }
+
+    #[test]
+    fn delta_full_cycle_new_validate_archive_and_name_guard() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let repo = tmp.path();
+        // new: шаблон создан, висит в Proposed.
+        let path = new(repo, "saga-pilot").expect("new");
+        assert!(path.is_file());
+        let infos = list(repo);
+        assert_eq!(infos.len(), 1);
+        assert_eq!(infos[0].status, DeltaStatus::Proposed);
+        // Дубликат активного имени — отказ.
+        assert!(new(repo, "saga-pilot").is_err(), "активное имя занято");
+        // Свежий шаблон не валиден (пустые блоки ADDED/MODIFIED/REMOVED).
+        let issues = validate(repo, "saga-pilot").expect("validate");
+        assert!(
+            issues.iter().any(|i| i.rule == "empty_delta" && i.severity == "error"),
+            "issues: {issues:?}"
+        );
+        // Архивация невалидной дельты — отказ.
+        assert!(archive(repo, "saga-pilot").is_err(), "error-находки блокируют архив");
+        // Заполняем — валидация чиста (error-находок нет), архивируется.
+        fill_delta(&path);
+        let issues = validate(repo, "saga-pilot").expect("validate2");
+        assert!(
+            issues.iter().all(|i| i.severity != "error"),
+            "остались error: {issues:?}"
+        );
+        let archived = archive(repo, "saga-pilot").expect("archive");
         assert!(archived.is_file());
-        let lst = list(repo);
-        assert!(lst.iter().any(|d| d.status == DeltaStatus::Archived));
-        assert!(!lst.iter().any(|d| d.status == DeltaStatus::Proposed));
-        // Повторная архивация под тем же именем — ошибка (имена не переиспользуются).
-        new(repo, "payment-timeout").expect("re-new ok");
-        std::fs::write(
-            repo.join("changes/payment-timeout/DELTA.md"),
-            "# Д\n\n## Проблема\nx\n\n## ADDED\n- y\n\n## MODIFIED\n\n## REMOVED\n\n## План отката\nz\n\n## Критерии приёмки\n- [ ] q\n",
-        )
-        .expect("fill2");
-        assert!(archive(repo, "payment-timeout").is_err());
+        let infos = list(repo);
+        assert_eq!(infos[0].status, DeltaStatus::Archived);
+        // Имя в архиве занято навсегда: ни new, ни повторный archive.
+        let err = new(repo, "saga-pilot").expect_err("имя в архиве защищено");
+        assert!(err.to_string().contains("архиве"), "{err}");
+        assert!(archive(repo, "saga-pilot").is_err());
+        // Несуществующая дельта — внятная ошибка.
+        assert!(validate(repo, "ghost").is_err());
     }
 }

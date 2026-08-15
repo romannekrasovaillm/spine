@@ -353,6 +353,26 @@ mod tests {
         Arc::new(cfg)
     }
 
+    #[test]
+    fn name_validation_and_render_list() {
+        for ok in ["pilot", "saga-2", "a"] {
+            assert!(validate_name(ok).is_ok(), "{ok}");
+        }
+        for bad in ["", "Caps", "с пробелом", "слэш/внутри", "точка.com", &"x".repeat(49)] {
+            assert!(validate_name(bad).is_err(), "{bad}");
+        }
+        assert!(render_list(&[]).contains("нет"), "пусто — подсказка");
+        let infos = vec![WorktreeInfo {
+            name: "pilot".into(),
+            path: PathBuf::from("/tmp/wt/pilot"),
+            branch: "arch/pilot".into(),
+            dirty: true,
+            ahead: 3,
+        }];
+        let text = render_list(&infos);
+        assert!(text.contains("pilot") && text.contains("ГРЯЗНЫЙ") && text.contains("впереди: 3"), "{text}");
+    }
+
     #[tokio::test]
     async fn worktree_full_cycle_create_diff_accept() {
         let tmp = tempfile::tempdir().expect("tmp");

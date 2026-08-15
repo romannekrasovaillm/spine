@@ -271,3 +271,111 @@ impl ToolRegistry {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use serde_json::json;
+    use tempfile::TempDir;
+
+    use super::*;
+    use crate::config::Config;
+
+    fn ctx(dir: &TempDir) -> ToolContext {
+        ToolContext::new(dir.path().to_path_buf(), Arc::new(Config::default()))
+    }
+
+    /// Пробный инструмент с настраиваемым именем (для dispatch/политики).
+    struct Probe(&'static str);
+
+    #[async_trait]
+    impl Tool for Probe {
+        fn spec(&self) -> ToolSpec {
+            ToolSpec {
+                name: self.0.into(),
+                description: "проба".into(),
+                parameters: json!({"type": "object"}),
+            }
+        }
+        async fn call(&self, _args: Value, _ctx: &ToolContext) -> Result<ToolOutput> {
+            Ok(ToolOutput::ok("probe-ran"))
+        }
+    }
+
+    #[test]
+    fn output_ok_err_and_truncation_marker() {
+        assert!(!ToolOutput::ok("x").is_error);
+        assert!(ToolOutput::err("x").is_error);
+        let short = ToolOutput::ok("коротко").truncated(100);
+        assert_eq!(short.content, "коротко", "короткий текст не трогаем");
+        let long = ToolOutput::ok("y".repeat(500)).truncated(100);
+        assert!(long.content.contains("[усечено: 100 из 500 байт]"), "{}", long.content);
+        assert!(long.content.chars().count() < 140, "усечение работает");
+        // Кириллица: len() в байтах — маркер честно показывает байты.
+        let cyr = ToolOutput::ok("я".repeat(500)).truncated(100);
+        assert!(cyr.content.contains("из 1000 байт"), "{}", cyr.content);
+    }
+
+    #[test]
+    fn registry_register_get_names_specs_sorted() {
+        let reg = ToolRegistry::new()
+            .with(Arc::new(Probe("zeta")))
+            .with(Arc::new(Probe("alpha")));
+        assert!(reg.get("zeta").is_some());
+        assert!(reg.get("nope").is_none());
+        assert_eq!(reg.names(), ["alpha", "zeta"], "имена отсортированы");
+        let specs = reg.specs();
+        assert_eq!(specs[0].name, "alpha");
+        assert_eq!(specs[1].name, "zeta");
+    }
+
+    #[test]
+    fn subset_and_excluding_keep_policy() {
+        let reg = ToolRegistry::new()
+            .with(Arc::new(Probe("a")))
+            .with(Arc::new(Probe("b")))
+            .with(Arc::new(Probe("c")));
+        let sub = reg.subset(&["a".to_string(), "unknown".to_string()]);
+        assert_eq!(sub.names(), ["a"], "неизвестные имена отброшены");
+        let exc = reg.excluding(&["b"]);
+        assert_eq!(exc.names(), ["a", "c"]);
+    }
+
+    #[tokio::test]
+    async fn dispatch_unknown_tool_is_soft_error() {
+        let dir = tempfile::tempdir().expect("tmp");
+        let reg = ToolRegistry::new();
+        let out = reg.dispatch("ghost", json!({}), &ctx(&dir)).await;
+        assert!(out.is_error);
+        assert!(out.content.contains("неизвестный инструмент"), "{}", out.content);
+    }
+
+    #[tokio::test]
+    async fn dispatch_policy_denies_before_call() {
+        let dir = tempfile::tempdir().expect("tmp");
+        // Инструмент называется bash: деструктивная команда при R2 — DENY,
+        // тело инструмента не должно исполняться (ответ не «probe-ran»).
+        let reg = ToolRegistry::new().with(Arc::new(Probe("bash")));
+        let out = reg
+            .dispatch("bash", json!({"command": "rm -rf /tmp/x"}), &ctx(&dir))
+            .await;
+        assert!(out.is_error);
+        assert!(out.content.contains("ЗАПРЕЩЕНО"), "{}", out.content);
+        assert!(!out.content.contains("probe-ran"), "вызов не дошёл");
+        // Разрешённая команда доходит до инструмента.
+        let out = reg
+            .dispatch("bash", json!({"command": "ls"}), &ctx(&dir))
+            .await;
+        assert_eq!(out.content, "probe-ran");
+    }
+
+    #[test]
+    fn resolve_joins_relative_and_keeps_absolute() {
+        let dir = tempfile::tempdir().expect("tmp");
+        let c = ctx(&dir);
+        assert_eq!(c.resolve("sub/f.md"), dir.path().join("sub/f.md"));
+        let abs = c.resolve("/etc/hostname");
+        assert_eq!(abs, PathBuf::from("/etc/hostname"));
+    }
+}
