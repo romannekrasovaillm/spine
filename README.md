@@ -5,18 +5,19 @@
 </p>
 
 <p align="center">
-  <img src="docs/screenshots/02-chat-mermaid.png" alt="Spine: диалог с агентом и живой рендер mermaid-диаграммы · agent chat with a live mermaid diagram" width="88%">
+  <img src="docs/screenshots/02-chat-mermaid.png" alt="Spine: архитектурный ход — скиллы, база знаний, скоринг, живой mermaid-арт, индикатор контекста и фоновые субагенты · architecture turn: skills, KB, scoring, live mermaid, context gauge, background subagents" width="88%">
 </p>
 
 <p align="center">
   <img src="docs/screenshots/01-splash.png" alt="Заставка Tokyo Night · splash" width="32%">
   <img src="docs/screenshots/03-model-picker.png" alt="Пикер моделей · model picker" width="32%">
-  <img src="docs/screenshots/04-rubric.png" alt="Якорная рубрика · anchor rubric" width="32%">
+  <img src="docs/screenshots/04-rubric.png" alt="Якорная рубрика, бенчмарк и индикатор контекста за порогом L1 · anchor rubric, benchmark and the context gauge past L1" width="32%">
 </p>
 
 <p align="center">
-  <sub>Кадры — снимки реальных экранов TUI (рендерятся из кода тестом, не макеты) ·
-  Screenshots are renders of the real TUI (generated from code, not mockups).</sub>
+  <sub>Кадры — снимки реальных экранов TUI (рендерятся из кода тестом, не макеты); внизу каждого —
+  живой индикатор контекстного окна · Screenshots are renders of the real TUI (generated from code,
+  not mockups); note the live context-window gauge in each status bar.</sub>
 </p>
 
 > [!WARNING]

@@ -202,7 +202,10 @@ mod tests {
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
 
-    use crate::tui::app::{ChatBlock, RightTab, Screen, ToolState, testing::test_app};
+    use crate::tui::app::{
+        ChatBlock, RightTab, Screen, ToolState,
+        testing::{set_context_usage, test_app},
+    };
 
     use super::*;
 
@@ -229,41 +232,103 @@ mod tests {
 
         // 1. Сплэш: баннер с градиентом, модели, горячие клавиши.
         let mut app = test_app();
-        write(&out, "01-splash.svg", &snap(&mut app, 110, 30, "arch"));
+        write(&out, "01-splash.svg", &snap(&mut app, 116, 28, "arch"));
 
-        // 2. Чат: ход про сагу + tool-вызовы + вкладка Mermaid со схемой.
+        // 2. Чат (hero): сквозной архитектурный ход — скиллы, KB, скоринг,
+        //    mermaid-контейнеры на вкладке; статус-бар с живым индикатором
+        //    контекста и фоновыми субагентами; скроллбар у рамки диалога.
         let mut app = test_app();
         app.screen = Screen::Chat;
         app.model_name = "deepseek:deepseek-v4-flash".into();
+        app.tool_ctx.cwd = std::path::PathBuf::from("/home/user/sbp-gateway");
         app.push_block(ChatBlock::User(
-            "спроектируй сагу платежа SBP: участники, компенсации, диаграмма".into(),
+            "спроектируй платёжный шлюз СБП (C2B): контейнеры, паттерны, маршрут".into(),
         ));
+        app.push_block(ChatBlock::Tool {
+            name: "skill_load".into(),
+            state: ToolState::Ok,
+            summary: "transactional-outbox [patterns-integration] — скилл в контексте".into(),
+        });
         app.push_block(ChatBlock::Tool {
             name: "kb_search".into(),
             state: ToolState::Ok,
-            summary: "3 фрагмента: saga-transactions, queue-load-leveling…".into(),
+            summary: "4 фрагмента: saga-transactions, idempotent-consumer, strangler-acl…".into(),
+        });
+        app.push_block(ChatBlock::Tool {
+            name: "web_search".into(),
+            state: ToolState::Ok,
+            summary: "AWS Builders' Library: 3 статьи по outbox и сверке".into(),
+        });
+        app.push_block(ChatBlock::Tool {
+            name: "subagent_run".into(),
+            state: ToolState::Ok,
+            summary: "фон: sa-01 разведка репо ТСП, sa-02 черновик ADR-002".into(),
         });
         app.push_block(ChatBlock::Assistant(
-            "## Сага платежа SBP\n**Участники:** маршрутизатор → адаптер СБП → core-учёт.\n\
-             - шаг `reserve` → компенсация `release` при таймауте\n- дедупликация по `tx_id`".into(),
+            "## Контур шлюза (C4 — контейнеры)\n\
+             **Ядро:** API ТСП → статусная машина платежа (единый источник истины) → outbox.\n\
+             - **Паттерны:** сага, transactional outbox, идемпотентный потребитель\n\
+             - **Адаптеры:** ОПКЦ (НСПК) и АБС — ядро от них контрактно независимо\n\
+             - Решения фиксируем в ADR-001…003, инварианты — в ARCHITECTURE-SPINE.md"
+                .into(),
         ));
         app.push_block(ChatBlock::Tool {
             name: "mermaid_render".into(),
             state: ToolState::Ok,
-            summary: "flowchart: 4 узла, рендер на вкладке ◇ Mermaid".into(),
+            summary: "flowchart: 6 узлов · рендер на вкладке ◇ Mermaid".into(),
+        });
+        app.push_block(ChatBlock::Tool {
+            name: "control_score".into(),
+            state: ToolState::Ok,
+            summary: "Score 13 → маршрут Critical · гейты A0–A5, рубрика обязательна".into(),
+        });
+        app.push_block(ChatBlock::Assistant(
+            "Готово к передаче: `/handoff claude-code ./sbp-gateway` — пакет с инвариантами, \
+             критериями приёмки и рубрикой.".into(),
+        ));
+        app.push_block(ChatBlock::System {
+            command: "детектор".into(),
+            text: "контекст: L1-маскирование — 12 старых tool-результатов усечены".into(),
         });
         app.panels.mermaid = crate::mermaid::render(
-            "flowchart TD\n  A[Клиент] -->|оплата| B{СБП}\n  B -->|ok| C[Core-учёт]\n  B -->|таймаут| D[Откат]",
+            "flowchart TD\n  API[API ТСП] --> SM[Ядро: статусная машина]\n  \
+             SM --> OB[(Outbox)]\n  SM --> OP[Адаптер ОПКЦ]\n  OB --> ABS[Адаптер АБС]\n  \
+             OP --> DLQ[(DLQ)]",
         )
         .expect("рендер mermaid");
-        app.input.set_text("добавь fitness-гейт на дедупликацию".into());
-        write(&out, "02-chat-mermaid.svg", &snap(&mut app, 122, 27, "arch — чат + mermaid"));
+        // Живой индикатор контекста + двое фоновых субагентов в статус-баре.
+        set_context_usage(&mut app, 61_440, 1_000_000);
+        let registry = crate::subagent::SubagentRegistry::new();
+        for (id, task) in [
+            ("sa-01", "разведка репозитория ТСП"),
+            ("sa-02", "черновик ADR-002: статусная машина"),
+        ] {
+            registry.insert(crate::subagent::SubagentTask {
+                id: id.into(),
+                agent: "explore".into(),
+                task: task.into(),
+                status: crate::subagent::TaskStatus::Running,
+                report: String::new(),
+                started_at: "2026-08-15".into(),
+                finished_at: None,
+            });
+        }
+        let ctx = app.tool_ctx.clone().with_subagents(registry);
+        app.tool_ctx = ctx;
+        app.input.set_text("покажи fitness-функции для outbox и сверки".into());
+        write(&out, "02-chat-mermaid.svg", &snap(&mut app, 150, 40, "arch — чат + mermaid"));
 
         // 3. Пикер моделей (модалка поверх чата).
         let mut app = test_app();
         app.screen = Screen::Chat;
         app.model_name = "deepseek:deepseek-v4-flash".into();
-        app.push_block(ChatBlock::User("переключись на тяжёлую модель для ревью".into()));
+        app.tool_ctx.cwd = std::path::PathBuf::from("/home/user/sbp-gateway");
+        app.push_block(ChatBlock::User(
+            "перед ревью ADR переключись на тяжёлую модель с ризонингом".into(),
+        ));
+        app.push_block(ChatBlock::Assistant(
+            "Открываю пикер: у моделей с меткой «ризонинг» доступен `/think on`.".into(),
+        ));
         app.open_model_picker();
         // В сцене текущая модель — stub-провайдер тестов; для снимка показываем
         // реалистичное состояние: deepseek — текущая (★ и курсор).
@@ -271,23 +336,52 @@ mod tests {
             ask.question = "Модель для этой сессии (сейчас: deepseek):".into();
             ask.recommended = Some("deepseek".into());
         }
-        write(&out, "03-model-picker.svg", &snap(&mut app, 110, 30, "arch — /model"));
+        set_context_usage(&mut app, 12_300, 1_000_000);
+        write(&out, "03-model-picker.svg", &snap(&mut app, 122, 32, "arch — /model"));
 
-        // 4. Рубрика: отчёт LLM-судьи на правой вкладке.
+        // 4. Рубрика: отчёт LLM-судьи на правой вкладке; индикатор контекста
+        //    за порогом L1 (оранжевый) — видна семантика цветов.
         let mut app = test_app();
         app.screen = Screen::Chat;
         app.model_name = "deepseek-pro:deepseek-v4-pro 🧠".into();
-        app.push_block(ChatBlock::User("оцени ADR-014 по якорной рубрике".into()));
+        app.tool_ctx.cwd = std::path::PathBuf::from("/home/user/sbp-gateway");
+        app.push_block(ChatBlock::User(
+            "оцени solutioning СБП-шлюза по якорной рубрике и прогоняй бенчмарк".into(),
+        ));
         app.push_block(ChatBlock::Tool {
             name: "rubric_evaluate".into(),
             state: ToolState::Ok,
             summary: "solution_architecture: 4.2/5 — отчёт на вкладке ✓ Рубрика".into(),
         });
-        app.panels.rubric = "Оценка: solution_architecture\n\n\
+        app.push_block(ChatBlock::Tool {
+            name: "bench_run".into(),
+            state: ToolState::Ok,
+            summary: "solution-bench: 8/10 сценариев PASS · 2 замечания по сверке".into(),
+        });
+        app.push_block(ChatBlock::Assistant(
+            "**Итог: READY с замечаниями.** Обратимость (3/5) и критерии отката — \
+             в доработку; остальное закрыто.".into(),
+        ));
+        app.push_block(ChatBlock::User(
+            "зафиксируй замечания в ADR и подготовь вопросы к архкому".into(),
+        ));
+        app.push_block(ChatBlock::Tool {
+            name: "adr_new".into(),
+            state: ToolState::Ok,
+            summary: "ADR-002 создан: docs/adr/ADR-002-state-machine.md".into(),
+        });
+        app.push_block(ChatBlock::Assistant(
+            "Замечания внесены в ADR-002. На A3 выносится выбор вендора транспорта — \
+             RFP-пакет готов (`docs/rfp/vendor-rfp.md`).".into(),
+        ));
+        app.panels.rubric = "Оценка: solution_architecture (якорная)\n\n\
              ✓ Контекст и драйверы      5/5\n✓ Альтернативы             4/5\n\
-             ✓ Отрицательные следствия  4/5\n◌ Обратимость              3/5\n\n\
-             Итог: 4.2/5 — READY с замечаниями".into();
+             ✓ Отрицательные следствия  4/5\n◌ Обратимость              3/5\n\
+             ✓ Fitness-функции          5/5\n\n\
+             Взвешенный итог: 4.2/5 — READY с замечаниями\nБенчмарк: 8/10 PASS"
+            .into();
         app.right_tab = RightTab::Rubric;
-        write(&out, "04-rubric.svg", &snap(&mut app, 122, 24, "arch — рубрика"));
+        set_context_usage(&mut app, 812_000, 1_000_000);
+        write(&out, "04-rubric.svg", &snap(&mut app, 134, 30, "arch — рубрика"));
     }
 }
