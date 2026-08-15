@@ -62,9 +62,10 @@ pub enum AgentEvent {
         is_error: bool,
         /// Краткий итог (первая строка вывода).
         summary: String,
-        /// Полный вывод (после редакции секретов и усечения) — для вкладок
-        /// правой панели (mermaid-арт, рубрики): summary их обрезал до
-        /// первой строки.
+        /// Полный вывод (после редакции секретов, БЕЗ усечения) — для вкладок
+        /// правой панели (mermaid-арт показывается целиком). В историю и
+        /// журнал уходит усечённая версия (`TOOL_RESULT_MAX_CHARS`) — бюджет
+        /// контекста модели защищён отдельно от UI.
         content: String,
     },
     /// Служебная заметка (детекторы циклов, компактификация, хуки).
@@ -397,7 +398,10 @@ impl AgentSession {
                             name: call.name.clone(),
                             is_error: out.is_error,
                             summary: summarize(&redacted),
-                            content: content.clone(),
+                            // UI получает ПОЛНЫЙ вывод (mermaid-арт на вкладке
+                            // не должен обрываться); усечённая версия — только
+                            // в историю и журнал (бюджет контекста модели).
+                            content: redacted.clone(),
                         })
                         .await;
                 }
@@ -1176,6 +1180,52 @@ mod tests {
         }
     }
 
+    /// Инструмент с объёмным выводом (> TOOL_RESULT_MAX_CHARS) — как большой
+    /// mermaid-рендер.
+    #[derive(Debug)]
+    struct BigTool;
+
+    #[async_trait::async_trait]
+    impl Tool for BigTool {
+        fn spec(&self) -> ToolSpec {
+            ToolSpec {
+                name: "big".into(),
+                description: "отдаёт 10 000 символов".into(),
+                parameters: serde_json::json!({ "type": "object" }),
+            }
+        }
+        async fn call(&self, _args: Value, _ctx: &ToolContext) -> Result<ToolOutput> {
+            Ok(ToolOutput::ok("x".repeat(10_000)))
+        }
+    }
+
+    /// Провайдер, зовущий инструмент `big` один раз.
+    #[derive(Debug)]
+    struct BigLlm;
+
+    #[async_trait::async_trait]
+    impl LlmProvider for BigLlm {
+        fn name(&self) -> &str {
+            "big-llm"
+        }
+        fn model(&self) -> &str {
+            "big-1"
+        }
+        async fn complete(&self, req: ChatRequest) -> Result<ChatMessage> {
+            if req.messages.iter().any(|m| m.role == Role::Tool) {
+                return Ok(ChatMessage::assistant("готово", Vec::new()));
+            }
+            Ok(ChatMessage::assistant(
+                "",
+                vec![ToolCall {
+                    id: "b1".into(),
+                    name: "big".into(),
+                    arguments: serde_json::json!({}),
+                }],
+            ))
+        }
+    }
+
     /// Сессия в tempdir: журнал в `dir/sessions`, один инструмент `echo`.
     fn make_session(
         dir: &Path,
@@ -1277,6 +1327,49 @@ mod tests {
             "третьим — Delta"
         );
         assert!(matches!(key[3], AgentEvent::TurnDone), "последним — TurnDone");
+    }
+
+    #[tokio::test]
+    async fn tool_end_event_carries_full_output_history_keeps_truncated() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let mut cfg = Config::default();
+        cfg.paths.sessions_dir = tmp.path().join("sessions");
+        cfg.agent.stream = false;
+        cfg.plugins.include_hooks = false;
+        let config = Arc::new(cfg);
+        let tools = ToolRegistry::new().with(Arc::new(BigTool));
+        let tool_ctx = ToolContext::new(tmp.path().to_path_buf(), config.clone());
+        let mut s = AgentSession::new(
+            config,
+            Arc::new(BigLlm),
+            tools,
+            tool_ctx,
+            "системный промпт".into(),
+        );
+        let (tx, mut rx) = mpsc::channel(16);
+        s.send("рендер большой схемы", Some(tx)).await.expect("send");
+
+        let mut full = None;
+        while let Ok(ev) = rx.try_recv() {
+            if let AgentEvent::ToolEnd { name, content, .. } = ev {
+                if name == "big" {
+                    full = Some(content);
+                }
+            }
+        }
+        let full = full.expect("ToolEnd от big");
+        assert_eq!(full.len(), 10_000, "UI получает вывод целиком");
+        let hist = s
+            .messages()
+            .iter()
+            .find(|m| m.role == Role::Tool)
+            .expect("tool-сообщение в истории");
+        assert!(
+            hist.content.len() < 10_000,
+            "история усечена (бюджет контекста): {}",
+            hist.content.len()
+        );
+        assert!(hist.content.contains("усечено до"), "пометка усечения");
     }
 
     #[tokio::test]

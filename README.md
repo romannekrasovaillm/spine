@@ -178,7 +178,8 @@ BMAD, Spec Kit, OpenSpec и др.):
 #### Прочее
 
 - **TUI** (ratatui, Tokyo Night): стриминг, markdown, mermaid-арт на боковой
-  вкладке, мышь, скроллбар диалога и кнопка «▼» — прыжок к свежему ответу,
+  вкладке (панель сама расширяется под ширину схемы, до 60% экрана; рендер
+  не усечается), мышь, скроллбар диалога и кнопка «▼» — прыжок к свежему ответу,
   полноэкранный просмотр `F4` с горизонтальной панорамой,
   экспорт экрана в Word/Excel (`/export`), модалки выбора (`propose_options`).
 - **Диагностика** `arch doctor` — 10 проверок окружения с ✓/⚠/✗.
@@ -386,10 +387,11 @@ solution-architect cycle produced with the harness. First case:
 Flash) — spine invariants, solutioning, 7 ADRs, contracts/NFR/RFP, and a
 handoff package with a rubric and fitness rules.
 
-**Plus**: beautiful Tokyo Night TUI (markdown chat, mermaid→Unicode diagrams,
-mouse, dialog scrollbar with a "▼" jump-to-latest button, fullscreen viewer
-with horizontal pan, docx/xlsx export, option-picker modals), MCP client,
-curated architecture websites + local knowledge base,
+**Plus**: beautiful Tokyo Night TUI (markdown chat, mermaid→Unicode diagrams —
+the side panel auto-widens up to 60% of the screen so renders are never
+truncated, mouse, dialog scrollbar with a "▼" jump-to-latest button,
+fullscreen viewer with horizontal pan, docx/xlsx export, option-picker
+modals), MCP client, curated architecture websites + local knowledge base,
 markdown-task cron, `arch doctor` diagnostics.
 
 ### Quick start

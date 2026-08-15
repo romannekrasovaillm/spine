@@ -25,6 +25,26 @@ use super::theme::Theme;
 /// Ширина правой колонки (вкладки).
 const RIGHT_WIDTH: u16 = 34;
 
+/// Ширина правой колонки: под широкий mermaid-арт панель растёт (до 60%
+/// терминала), чтобы схема помещалась целиком, без горизонтального клипа.
+/// На остальных вкладках — фиксированная [`RIGHT_WIDTH`].
+fn right_panel_width(app: &App, term_w: u16) -> u16 {
+    if app.right_tab() != RightTab::Mermaid {
+        return RIGHT_WIDTH;
+    }
+    let art_w = app
+        .panels
+        .mermaid
+        .lines()
+        .map(UnicodeWidthStr::width)
+        .max()
+        .unwrap_or(0);
+    // +2 — рамка панели; диалог остаётся главным экраном (кап 60%).
+    let want = u16_sat(art_w.saturating_add(2));
+    let cap = u16_sat(usize::from(term_w) * 3 / 5).max(RIGHT_WIDTH);
+    want.clamp(RIGHT_WIDTH, cap)
+}
+
 /// usize → u16 с насыщением (без паник на гигантских терминалах).
 fn u16_sat(v: usize) -> u16 {
     u16::try_from(v).unwrap_or(u16::MAX)
@@ -200,11 +220,9 @@ fn draw_chat(f: &mut Frame, app: &mut App) {
         Constraint::Length(1),
     ])
     .split(f.area());
-    let cols = Layout::horizontal([
-        Constraint::Min(24),
-        Constraint::Length(RIGHT_WIDTH),
-    ])
-    .split(rows[0]);
+    let right_w = right_panel_width(app, f.area().width);
+    let cols = Layout::horizontal([Constraint::Min(24), Constraint::Length(right_w)])
+        .split(rows[0]);
 
     draw_dialog(f, cols[0], app, &theme);
     draw_right(f, cols[1], app, &theme);
@@ -611,6 +629,16 @@ fn block_lines(block: &ChatBlock, theme: &Theme) -> Vec<Line<'static>> {
 /// Правая колонка: вкладки Mermaid / Рубрика / Знания.
 /// Mermaid — без переносов (арт клипается), остальные — с переносом.
 fn draw_right(f: &mut Frame, area: Rect, app: &App, theme: &Theme) {
+    let inner_w = usize::from(area.width.saturating_sub(2)).max(1);
+    // Арт шире даже расширенной панели (кап 60%)? Подскажем путь: F4.
+    let mermaid_clipped = app
+        .panels
+        .mermaid
+        .lines()
+        .map(UnicodeWidthStr::width)
+        .max()
+        .unwrap_or(0)
+        > inner_w;
     let mut title_spans = Vec::new();
     for tab in RightTab::ALL.iter() {
         let style = if *tab == app.right_tab() {
@@ -626,7 +654,12 @@ fn draw_right(f: &mut Frame, area: Rect, app: &App, theme: &Theme) {
             RightTab::Rubric => "✓",
             RightTab::Knowledge => "◈",
         };
-        title_spans.push(Span::styled(format!(" {icon} {} ", tab.title()), style));
+        let label = if *tab == RightTab::Mermaid && mermaid_clipped {
+            format!(" {icon} {} ·F4 — вся схема ", tab.title())
+        } else {
+            format!(" {icon} {} ", tab.title())
+        };
+        title_spans.push(Span::styled(label, style));
     }
     let block = Block::default()
         .borders(Borders::ALL)
@@ -636,7 +669,6 @@ fn draw_right(f: &mut Frame, area: Rect, app: &App, theme: &Theme) {
 
     let tab = app.right_tab();
     let content = app.panels.content(tab);
-    let inner_w = usize::from(area.width.saturating_sub(2)).max(1);
     let mut lines: Vec<Line<'static>> = Vec::new();
     if content.is_empty() {
         lines.extend(wrap_line(
@@ -912,10 +944,47 @@ mod tests {
     }
 
     #[test]
+    #[test]
+    fn mermaid_tab_widens_to_fit_wide_art() {
+        let mut app = test_app();
+        app.screen = Screen::Chat;
+        // Арт 70 колонок: при терминале 150 панель растёт до 72 (кап 90).
+        let wide = format!("┌{}┐", "─".repeat(68));
+        app.panels.mermaid = format!("{wide}\n│{:^68}│\n└{}┘", "схема", "─".repeat(68));
+        let mut terminal = Terminal::new(TestBackend::new(150, 30)).expect("terminal");
+        terminal.draw(|f| app.render(f)).expect("draw");
+        let text = buffer_text(&terminal);
+        assert!(
+            text.contains(&wide),
+            "широкая схема показана целиком (панель расширилась):\n{text}"
+        );
+        assert!(!text.contains("F4 — вся схема"), "клипа нет — хинт не нужен");
+    }
+
+    #[test]
+    fn mermaid_tab_width_capped_with_f4_hint() {
+        let mut app = test_app();
+        app.screen = Screen::Chat;
+        // Арт 120 колонок при терминале 100: панель упирается в кап 60% (60),
+        // остаток клипается, но вкладка подсказывает F4.
+        let wide = format!("┌{}┐", "─".repeat(118));
+        app.panels.mermaid = format!("{wide}\n└{}┘", "─".repeat(118));
+        let mut terminal = Terminal::new(TestBackend::new(100, 30)).expect("terminal");
+        terminal.draw(|f| app.render(f)).expect("draw");
+        let text = buffer_text(&terminal);
+        assert!(!text.contains(&wide), "за капом — клип:\n{text}");
+        assert!(
+            text.contains("F4 — вся схема"),
+            "хинт про полноэкранный просмотр:\n{text}"
+        );
+    }
+
+    #[test]
     fn mermaid_tab_clips_instead_of_wrapping() {
         let mut app = test_app();
         app.screen = Screen::Chat;
-        // Строка арта 41 колонка — шире внутренней ширины вкладки (32).
+        // Строка арта 41 колонка — шире вкладки даже после авто-расширения
+        // (терминал 60 → кап 36, внутренняя ширина 34).
         app.panels.mermaid =
             "┌──────────┐     ┌──────────┐     ┌─────┐\n│    A     │─────▶│    B     │     │  C  │"
                 .into();
