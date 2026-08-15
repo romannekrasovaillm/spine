@@ -69,11 +69,11 @@ context_limit = 1000000
 # Китайская площадка Zhipu (ключ ZHIPU_API_KEY); международный аналог —
 # https://api.z.ai/api/paas/v4 (свой ключ с docs.z.ai).
 base_url = "https://open.bigmodel.cn/api/paas/v4"
-model = "glm-5.2"                     # флагман Z.AI (резервный провайдер)
+model = "glm-5.2"                     # флагман Z.AI, 1M контекст (резервный провайдер)
 api_key_env = "ZHIPU_API_KEY"
 max_tokens = 8192
 timeout_secs = 180
-context_limit = 204800
+context_limit = 1000000
 thinking_on  = { thinking = { type = "enabled" } }
 thinking_off = { thinking = { type = "disabled" } }
 

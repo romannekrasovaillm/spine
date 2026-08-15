@@ -502,7 +502,7 @@ impl Default for Config {
             thinking_off: glm_off.clone(),
             ..ModelConfig::default()
         };
-        models.insert("glm".into(), glm_entry("glm-5.2", 180, 204_800));
+        models.insert("glm".into(), glm_entry("glm-5.2", 180, 1_000_000));
         models.insert("glm-4.7".into(), glm_entry("glm-4.7", 180, 204_800));
         models.insert("glm-air".into(), glm_entry("glm-4.5-air", 120, 131_072));
         models.insert("glm-flash".into(), glm_entry("glm-4.7-flash", 120, 204_800));
@@ -638,6 +638,17 @@ mod tests {
         assert!(cfg.harnesses.contains_key("claude-code"));
         assert!(cfg.harnesses.contains_key("codewhale"));
         assert!(cfg.web.arch_sites.len() >= 8);
+    }
+
+    #[test]
+    fn flagship_models_default_to_1m_context() {
+        let cfg = Config::default();
+        for name in ["deepseek", "deepseek-pro", "kimi", "glm"] {
+            let limit = cfg.models[name].context_limit.expect("context_limit задан");
+            assert_eq!(limit, 1_000_000, "окно {name}");
+        }
+        // Бюджетные GLM остаются на своих окнах.
+        assert_eq!(cfg.models["glm-air"].context_limit, Some(131_072));
     }
 
     #[test]
