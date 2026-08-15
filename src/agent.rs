@@ -125,7 +125,14 @@ impl AgentSession {
                 (None, None)
             }
         };
-        let hooks = crate::hooks::HookSet::from_specs(&config.hooks.specs);
+        let hooks = {
+            // Хуки: конфиг + плагины (`include_hooks`); конфиг — первым.
+            let mut specs = config.hooks.specs.clone();
+            if config.plugins.include_hooks {
+                specs.extend(crate::hooks::specs_from_plugin_dirs(&config.plugins.dirs));
+            }
+            crate::hooks::HookSet::from_specs(&specs)
+        };
         let mut tool_ctx = tool_ctx;
         // Активная модель в контексте инструментов: субагенты и дистилляция
         // наследуют её (и следят за /model через set_provider).

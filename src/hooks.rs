@@ -20,6 +20,7 @@ use std::io::Read as _;
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 /// Максимум байт контекста в `ARCH_HOOK_CONTEXT`.
 const MAX_CONTEXT_BYTES: usize = 8 * 1024;
@@ -125,6 +126,82 @@ pub struct HookOutcome {
     pub stdout: String,
     /// Диагностика (таймаут, ошибка запуска).
     pub note: Option<String>,
+}
+
+/// Разбор хуков плагина (формат Claude Code `hooks/hooks.json`) в
+/// спецификации [`HookSpec`]. Толерантный разбор: битый JSON/поля —
+/// пустой список, библиотека не должна падать из-за одного плагина.
+///
+/// Отличия форматов: плагинный `matcher` — строка с `|`-альтернативами
+/// (мы разворачиваем её в отдельные спеки, наш фильтр — подстрока имени
+/// инструмента), `timeout` — секунды числом.
+#[must_use]
+pub fn specs_from_plugin_json(text: &str) -> Vec<HookSpec> {
+    let Ok(v) = serde_json::from_str::<Value>(text) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    let Some(hooks) = v.get("hooks").and_then(Value::as_object) else {
+        return out;
+    };
+    for (event, entries) in hooks {
+        let Some(entries) = entries.as_array() else {
+            continue;
+        };
+        for entry in entries {
+            let matcher = entry.get("matcher").and_then(Value::as_str).unwrap_or("");
+            let Some(commands) = entry.get("hooks").and_then(Value::as_array) else {
+                continue;
+            };
+            for cmd in commands {
+                let command = cmd.get("command").and_then(Value::as_str).unwrap_or("").trim();
+                if command.is_empty() {
+                    continue;
+                }
+                let timeout_secs = cmd.get("timeout").and_then(Value::as_u64);
+                let alternatives: Vec<&str> = matcher
+                    .split('|')
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .collect();
+                if alternatives.is_empty() {
+                    out.push(HookSpec {
+                        event: event.clone(),
+                        tool: None,
+                        command: command.to_string(),
+                        timeout_secs,
+                    });
+                } else {
+                    for alt in alternatives {
+                        out.push(HookSpec {
+                            event: event.clone(),
+                            tool: Some(alt.to_string()),
+                            command: command.to_string(),
+                            timeout_secs,
+                        });
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Собирает хуки всех плагинов из каталогов `dirs` (`<plugin>/hooks/hooks.json`).
+/// Порядок: по порядку каталогов и имён плагинов (детерминированно).
+#[must_use]
+pub fn specs_from_plugin_dirs(dirs: &[std::path::PathBuf]) -> Vec<HookSpec> {
+    let mut out = Vec::new();
+    for plugin in crate::plugin::discover(dirs) {
+        for path in plugin.extra_components() {
+            if path.file_name().is_some_and(|n| n == "hooks.json") {
+                if let Ok(text) = std::fs::read_to_string(&path) {
+                    out.extend(specs_from_plugin_json(&text));
+                }
+            }
+        }
+    }
+    out
 }
 
 /// Был ли хотя бы один блок (exit 2).
@@ -306,6 +383,54 @@ mod tests {
         // Другой инструмент фильтром отсекается.
         let out = set.fire(HookEvent::PreToolUse, Some("read_file"), "{}");
         assert!(out.is_empty());
+    }
+
+    #[test]
+    fn plugin_hooks_json_parses_and_splits_alternation() {
+        let text = r#"{
+          "hooks": {
+            "PostToolUse": [{
+              "matcher": "write_file|edit_file",
+              "hooks": [{"type": "command", "command": "echo check", "timeout": 3}]
+            }],
+            "SessionStart": [{
+              "matcher": "",
+              "hooks": [{"type": "command", "command": "echo hi"}]
+            }]
+          }
+        }"#;
+        let specs = specs_from_plugin_json(text);
+        assert_eq!(specs.len(), 3, "2 альтернативы + 1 без matcher: {specs:?}");
+        assert_eq!(specs[0].tool.as_deref(), Some("write_file"));
+        assert_eq!(specs[1].tool.as_deref(), Some("edit_file"));
+        assert_eq!(specs[1].timeout_secs, Some(3));
+        assert_eq!(specs[2].tool, None, "пустой matcher — все инструменты/события");
+        assert_eq!(specs[2].event, "SessionStart");
+        // Битый JSON и отсутствующие поля — пусто, не паника.
+        assert!(specs_from_plugin_json("{битый").is_empty());
+        assert!(specs_from_plugin_json("{}").is_empty());
+        assert!(specs_from_plugin_json(r#"{"hooks":{"PostToolUse":[{"matcher":"bash","hooks":[{"type":"command"}]}]}}"#).is_empty());
+    }
+
+    #[test]
+    fn plugin_dirs_loader_collects_hooks_from_plugin_layout() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let hook_dir = tmp.path().join("plug/hooks");
+        std::fs::create_dir_all(&hook_dir).expect("mkdir");
+        std::fs::write(
+            hook_dir.join("hooks.json"),
+            r#"{"hooks":{"PreToolUse":[{"matcher":"bash","hooks":[{"type":"command","command":"exit 0"}]}]}}"#,
+        )
+        .expect("write");
+        let specs = specs_from_plugin_dirs(&[tmp.path().to_path_buf()]);
+        assert_eq!(specs.len(), 1, "specs: {specs:?}");
+        assert_eq!(specs[0].event, "PreToolUse");
+        assert_eq!(specs[0].tool.as_deref(), Some("bash"));
+        // Собранный HookSet реально срабатывает на событии.
+        let set = HookSet::from_specs(&specs);
+        let outcomes = set.fire(HookEvent::PreToolUse, Some("bash"), "{}");
+        assert_eq!(outcomes.len(), 1);
+        assert_eq!(outcomes[0].code, Some(0));
     }
 
     #[test]

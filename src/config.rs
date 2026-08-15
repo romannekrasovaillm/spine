@@ -124,8 +124,8 @@ pub struct AgentConfig {
 impl Default for AgentConfig {
     fn default() -> Self {
         Self {
-            max_tool_turns: 48,
-            context_budget_tokens: 60_000,
+            max_tool_turns: 4800,
+            context_budget_tokens: 6_000_000,
             stream: true,
             compact_l1_pct: 70,
             compact_l3_pct: 95,
@@ -289,6 +289,10 @@ pub struct PluginsConfig {
     /// Подхватывать MCP-серверы из плагинов (`mcpServers` в plugin.json
     /// или `.mcp.json` в корне плагина) в общий MCP-пул.
     pub include_mcp: bool,
+    /// Исполнять хуки плагинов (`hooks/hooks.json`): shell-команды из
+    /// установленных плагинов — включайте только для доверенных библиотек.
+    /// Дефолт `true` (как у include_mcp).
+    pub include_hooks: bool,
 }
 
 impl Default for PluginsConfig {
@@ -298,6 +302,7 @@ impl Default for PluginsConfig {
             // плагинов добавляются в config.toml.
             dirs: vec![Config::home_dir().join("plugins")],
             include_mcp: true,
+            include_hooks: true,
         }
     }
 }

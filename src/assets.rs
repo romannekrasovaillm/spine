@@ -66,6 +66,18 @@ pub const CRON_TASK_SPEC_DRIFT: &str = include_str!("../examples/cron/spec_drift
 
 /// Встроенный файл плагина `assets/plugins/arch-core/plugin.json`.
 pub const PLUGIN_ARCH_CORE_PLUGIN_JSON: &str = include_str!("../assets/plugins/arch-core/plugin.json");
+/// Встроенный файл плагина `assets/plugins/arch-core/agents/adr-reviewer.md`.
+pub const PLUGIN_ARCH_CORE_AGENTS_ADR_REVIEWER_MD: &str = include_str!("../assets/plugins/arch-core/agents/adr-reviewer.md");
+/// Встроенный файл плагина `assets/plugins/arch-core/agents/nfr-auditor.md`.
+pub const PLUGIN_ARCH_CORE_AGENTS_NFR_AUDITOR_MD: &str = include_str!("../assets/plugins/arch-core/agents/nfr-auditor.md");
+/// Встроенный файл плагина `assets/plugins/arch-core/hooks/hooks.json`.
+pub const PLUGIN_ARCH_CORE_HOOKS_HOOKS_JSON: &str = include_str!("../assets/plugins/arch-core/hooks/hooks.json");
+/// Встроенный файл плагина `assets/plugins/arch-core/mcp.json`.
+pub const PLUGIN_ARCH_CORE_MCP_JSON: &str = include_str!("../assets/plugins/arch-core/mcp.json");
+/// Встроенный файл плагина `assets/plugins/arch-office/agents/report-proofreader.md`.
+pub const PLUGIN_ARCH_OFFICE_AGENTS_REPORT_PROOFREADER_MD: &str = include_str!("../assets/plugins/arch-office/agents/report-proofreader.md");
+/// Встроенный файл плагина `assets/plugins/arch-office/mcp.json`.
+pub const PLUGIN_ARCH_OFFICE_MCP_JSON: &str = include_str!("../assets/plugins/arch-office/mcp.json");
 /// Встроенный файл плагина `assets/plugins/arch-core/agents/repo-scout.md`.
 pub const PLUGIN_ARCH_CORE_AGENTS_REPO_SCOUT_MD: &str = include_str!("../assets/plugins/arch-core/agents/repo-scout.md");
 /// Встроенный файл плагина `assets/plugins/arch-core/skills/adr-authoring/SKILL.md`.
@@ -248,6 +260,12 @@ pub const PLUGIN_AWS_BUILDERS_LIBRARY_SKILLS_TIMEOUTS_BACKOFF_JITTER_SKILL_MD: &
 const PLUGIN_FILES: &[(&str, &str)] = &[
     ("plugins/arch-core/plugin.json", PLUGIN_ARCH_CORE_PLUGIN_JSON),
     ("plugins/arch-core/agents/repo-scout.md", PLUGIN_ARCH_CORE_AGENTS_REPO_SCOUT_MD),
+    ("plugins/arch-core/agents/adr-reviewer.md", PLUGIN_ARCH_CORE_AGENTS_ADR_REVIEWER_MD),
+    ("plugins/arch-core/agents/nfr-auditor.md", PLUGIN_ARCH_CORE_AGENTS_NFR_AUDITOR_MD),
+    ("plugins/arch-core/hooks/hooks.json", PLUGIN_ARCH_CORE_HOOKS_HOOKS_JSON),
+    ("plugins/arch-core/mcp.json", PLUGIN_ARCH_CORE_MCP_JSON),
+    ("plugins/arch-office/agents/report-proofreader.md", PLUGIN_ARCH_OFFICE_AGENTS_REPORT_PROOFREADER_MD),
+    ("plugins/arch-office/mcp.json", PLUGIN_ARCH_OFFICE_MCP_JSON),
     ("plugins/arch-core/skills/adr-authoring/SKILL.md", PLUGIN_ARCH_CORE_SKILLS_ADR_AUTHORING_SKILL_MD),
     ("plugins/arch-core/skills/adr-authoring/references/adr-template.md", PLUGIN_ARCH_CORE_SKILLS_ADR_AUTHORING_REFERENCES_ADR_TEMPLATE_MD),
     ("plugins/arch-core/skills/adversarial-review/SKILL.md", PLUGIN_ARCH_CORE_SKILLS_ADVERSARIAL_REVIEW_SKILL_MD),

@@ -86,20 +86,25 @@ pub trait LlmProvider: Send + Sync + fmt::Debug {
 `AgentSession::send(input, events)`:
 
 1. `input` пушится в историю и в журнал (`user`).
-2. До `agent.max_tool_turns` итераций (дефолт 24):
+2. До `agent.max_tool_turns` итераций (дефолт 4800):
    - `compact_history()` — при превышении `context_budget_tokens`
-     (дефолт 60 000; оценка 4 символа ≈ 1 токен): сначала усечение старых
+     (дефолт 6 000 000 — «лимит задаёт провайдер»: компактификация на практике
+     отложена до HTTP 413, который покрывает on-error compact&resubmit;
+     оценка 4 символа ≈ 1 токен): сначала усечение старых
      tool-сообщений до 500 символов (кроме 4 последних), затем удаление
      старейших сообщений (хвост из 6 не трогается); факт пишется в журнал.
    - `build_request()` — системный промпт + история + `tools.specs()`;
-     `temperature`/`max_tokens` из `ModelConfig` активного провайдера.
+     `temperature`/`max_tokens` из `ModelConfig` активного провайдера;
+     `thinking` — из сессионного переключателя `/think`.
    - Запрос: стриминг (`stream` + канал событий) или `complete`.
    - Ответ без `tool_calls` → пуш в историю/журнал, `AgentEvent::TurnDone`,
      возврат текста.
    - Иначе для каждого вызова: `AgentEvent::ToolStart` →
      `ToolRegistry::dispatch` с таймаутом 300 с → результат усекается до
      8192 символов → `ChatMessage::tool_result` в историю, `AgentEvent::ToolEnd`.
-3. Лимит исчерпан → `HarnessError::Agent("лимит итераций инструментов")`.
+3. Лимит исчерпан → ход НЕ падает: финальный запрос с пустым `tools`
+   и служебной репликой (только в запрос) «дай ответ по собранному»;
+   заметка в UI, событие `tool_turn_limit` в журнале.
 
 Журнал: append-only JSONL `sessions/session-<yyyymmdd-hhmmss>.jsonl`,
 события `system`/`user`/`assistant`/`tool`/`event` с ISO-метками; каждая

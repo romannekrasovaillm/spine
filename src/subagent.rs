@@ -11,7 +11,8 @@
 //! - **least privilege**: whitelist инструментов из frontmatter спеки
 //!   (`plugins/*/agents/*.md`), пустой — все инструменты харнесса;
 //! - **антирекурсия**: субагенту не выдаются `subagent_*`-инструменты;
-//! - **лимит конкурентности**: максимум [`MAX_RUNNING`] фоновых задач.
+//! - **лимит конкурентности**: слоты реестра (дефолт [`MAX_RUNNING`] = 400;
+//!   реальный регулятор — rate-limit провайдера, покрытый ретраями);
 //!
 //! КОНТРАКТ (владелец: агент `subagent`):
 //! - спека субагента — `agents/<name>.md` в плагине: frontmatter
@@ -34,8 +35,9 @@ use crate::llm::{LlmProvider, ToolSpec};
 use crate::tool::{Tool, ToolContext, ToolOutput};
 
 /// Максимум одновременно работающих фоновых задач (субагенты и ralph-циклы
-/// делят одни слоты).
-pub(crate) const MAX_RUNNING: usize = 4;
+/// делят одни слоты). 400 — фактически «без потолка»: реальный регулятор —
+/// rate-limit провайдера (429 покрываются терпеливыми ретраями), а не слоты.
+pub(crate) const MAX_RUNNING: usize = 400;
 /// Лимит длины отчёта субагента в реестре (символов).
 const REPORT_MAX_CHARS: usize = 6000;
 /// Имена инструментов оркестрации (не выдаются субагентам и ralph-раундам —
@@ -125,16 +127,41 @@ pub struct SubagentTask {
 }
 
 /// Общий реестр фоновых субагентов (клонируется дёшево — Arc внутри).
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct SubagentRegistry {
     tasks: Arc<Mutex<Vec<SubagentTask>>>,
+    /// Ёмкость слотов (по умолчанию [`MAX_RUNNING`]; меньше — в тестах).
+    capacity: usize,
+}
+
+impl Default for SubagentRegistry {
+    fn default() -> Self {
+        Self {
+            tasks: Arc::new(Mutex::new(Vec::new())),
+            capacity: MAX_RUNNING,
+        }
+    }
 }
 
 impl SubagentRegistry {
-    /// Пустой реестр.
+    /// Пустой реестр с дефолтной ёмкостью.
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Реестр с усечённой ёмкостью (тесты лимита без сотен задач).
+    #[cfg(test)]
+    pub(crate) fn with_capacity(capacity: usize) -> Self {
+        Self {
+            tasks: Arc::new(Mutex::new(Vec::new())),
+            capacity,
+        }
+    }
+
+    /// Слот ёмкости реестра.
+    pub(crate) fn capacity(&self) -> usize {
+        self.capacity
     }
 
     /// Число работающих задач.
@@ -206,9 +233,10 @@ impl SubagentRegistry {
         provider: Arc<dyn LlmProvider>,
         tool_ctx: ToolContext,
     ) -> Result<String> {
-        if self.running() >= MAX_RUNNING {
+        if self.running() >= self.capacity {
             return Err(HarnessError::Agent(format!(
-                "все слоты субагентов заняты ({MAX_RUNNING}); дождитесь завершения — subagent_list"
+                "все слоты субагентов заняты ({}); дождитесь завершения — subagent_list",
+                self.capacity
             )));
         }
         let id = self.next_id("sa");
@@ -720,9 +748,10 @@ mod tests {
     #[tokio::test]
     async fn launch_respects_concurrency_cap() {
         let tmp = tempfile::tempdir().expect("tmp");
-        let registry = SubagentRegistry::new();
+        // Ёмкость 4 — тест лимита без сотен фоновых задач.
+        let registry = SubagentRegistry::with_capacity(4);
         let ctx = test_ctx(tmp.path()).with_subagents(registry.clone());
-        for _ in 0..MAX_RUNNING {
+        for _ in 0..4 {
             registry
                 .launch(&general_spec(), "долгая работа", None, Arc::new(SlowLlm), ctx.clone())
                 .expect("слот есть");

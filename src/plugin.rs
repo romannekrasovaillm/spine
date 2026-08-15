@@ -11,7 +11,8 @@
 //!
 //! Субагенты (`agents/*.md`) исполняются как фоновые задачи (модуль
 //! [`crate::subagent`]: `subagent_run`/`subagent_list`/`subagent_result`);
-//! хуки (`hooks/hooks.json`) — клиентское расширение, харнесс их показывает
+//! хуки (`hooks/hooks.json`) — клиентское расширение, исполняются при
+//! `plugins.include_hooks = true` (конвертер — `hooks::specs_from_plugin_json`);
 //! в `arch plugins show`, но не исполняет.
 
 use std::collections::{HashMap, HashSet};
@@ -140,7 +141,14 @@ fn load_plugin(dir: &Path) -> Option<Plugin> {
                 return None;
             }
         }
-    } else if dir.join("skills").is_dir() {
+    } else if dir.join("skills").is_dir()
+        || dir.join("hooks").join("hooks.json").is_file()
+        || dir.join("agents").is_dir()
+        || dir.join("mcp.json").is_file()
+        || dir.join(".mcp.json").is_file()
+    {
+        // Плагин без манифеста: имя синтезируется из каталога. Признак
+        // плагина — любой носитель: skills/, hooks/hooks.json, agents/, mcp.json.
         let name = dir.file_name()?.to_string_lossy().to_string();
         PluginManifest {
             name,

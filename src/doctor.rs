@@ -12,7 +12,7 @@
 //!   (создаётся и тут же удаляется).
 
 use std::fmt::Write as _;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::config::Config;
 
@@ -114,18 +114,32 @@ fn check_default_model(cfg: &Config) -> Check {
 }
 
 /// API-ключи: env-переменные моделей установлены (значения не выводим!).
+/// Ключ считается доступным и по `api_key_file` (запасной файл с ключом).
 fn check_api_keys(cfg: &Config) -> Check {
+    let key_available = |mc: &crate::config::ModelConfig| {
+        if std::env::var_os(&mc.api_key_env).is_some_and(|v| !v.is_empty()) {
+            return true;
+        }
+        mc.api_key_file.as_deref().is_some_and(|path| {
+            let expanded = match path.strip_prefix("~/") {
+                Some(rest) => dirs::home_dir()
+                    .map(|h| h.join(rest))
+                    .unwrap_or_else(|| PathBuf::from(path)),
+                None => PathBuf::from(path),
+            };
+            std::fs::metadata(&expanded).map(|m| m.len() > 0).unwrap_or(false)
+        })
+    };
     let mut missing = Vec::new();
     for (name, mc) in &cfg.models {
-        let set = std::env::var_os(&mc.api_key_env).is_some_and(|v| !v.is_empty());
-        if !set {
+        if !key_available(mc) {
             missing.push(format!("{name} ({})", mc.api_key_env));
         }
     }
     let default_missing = cfg
         .models
         .get(&cfg.default_model)
-        .is_some_and(|mc| std::env::var_os(&mc.api_key_env).is_none_or(|v| v.is_empty()));
+        .is_some_and(|mc| !key_available(mc));
     let (verdict, text) = if missing.is_empty() {
         (Verdict::Ok, format!("все {} ключей на месте", cfg.models.len()))
     } else if default_missing {

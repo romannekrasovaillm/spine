@@ -25,9 +25,13 @@ my-plugin/
 └── hooks/hooks.json       # хуки событий (клиентское расширение)
 ```
 
-Харнесс исполняет скиллы, MCP и субагентов; хуки плагинов **показывает** в
-`arch plugins show` (исполнение хуков плагинов — roadmap; свои хуки есть в
-`[hooks]` конфига, см. `docs/theseus_hardening.md`).
+Харнесс исполняет скиллы, MCP, субагентов и **хуки** плагинов. Хуки плагинов
+(`hooks/hooks.json`, формат Claude Code) конвертируются в спеки `[hooks]`
+(`hooks::specs_from_plugin_json`: `matcher` с `|`-альтернативами разворачивается
+в отдельные спеки, наш фильтр — подстрока имени инструмента) и сливаются с
+хуками конфига при старте сессии; выключается `[plugins] include_hooks = false`.
+Включайте исполнение только для доверенных библиотек — хуки исполняют
+shell-команды плагинов.
 
 Субагент (`agents/<name>.md`: frontmatter `name`/`description`/`tools` + тело =
 системный промпт) запускается в фоне инструментом `subagent_run` — свежий
@@ -58,11 +62,13 @@ include_mcp = true   # MCP из плагинов → общий пул, имен
 
 ## Встроенные плагины (раскладываются `arch init`)
 
-- **arch-core** (13 скиллов) — ядро методов solution-архитектора: `adr-authoring`,
+- **arch-core** (14 скиллов) — ядро методов solution-архитектора: `adr-authoring`,
   `spine-invariants`, `significance-routing`, `c4-mermaid`, `nfr-design`,
   `readiness-gate`, `adversarial-review`, `handoff-packaging`, `reverse-discovery`,
   `delta-spec`, `fitness-functions`, `rubric-judging`, `skill-authoring` (мета-скилл
-  создания скиллов).
+  создания скиллов), `dsh-harness-patterns`. Субагенты: `repo-scout`, `adr-reviewer`,
+  `nfr-auditor`. Хуки: блок force-push в bash (PreToolUse, exit 2), напоминание о
+  spine/ADR после правок (PostToolUse), заметка SessionStart. MCP: `arch-memory`.
 - **patterns-integration** (5 скиллов) — дистилляты pattern language Криса Ричардсона
   ([microservices.io](https://microservices.io/patterns/)): `saga-transactions`,
   `transactional-outbox`, `cqrs-api-composition`, `strangler-acl`, `idempotent-consumer`;
@@ -90,7 +96,8 @@ include_mcp = true   # MCP из плагинов → общий пул, имен
   pptx: `pptx-board-deck` (правление), `pptx-architecture-review` (архкомитет);
   xlsx: `xlsx-system-catalog`, `xlsx-integration-matrix` (+ сводка формулами),
   `xlsx-decision-matrix` (взвешенная оценка, чувствительность),
-  `xlsx-risk-register` (карта 5×5).
+  `xlsx-risk-register` (карта 5×5). Субагент `report-proofreader` (корректура
+  отчётов для МД). MCP: `arch-time`.
 
 ## Команды
 

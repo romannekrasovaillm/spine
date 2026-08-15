@@ -35,7 +35,7 @@ use crate::config::Config;
 use crate::error::Result;
 use crate::llm::{LlmProvider, ToolSpec};
 use crate::subagent::{
-    MAX_RUNNING, SUBAGENT_TOOLS, SubagentRegistry, SubagentSpec, SubagentTask, TaskStatus,
+    SUBAGENT_TOOLS, SubagentRegistry, SubagentSpec, SubagentTask, TaskStatus,
     available_specs, general_spec, now_iso,
 };
 use crate::tool::{Tool, ToolContext, ToolOutput};
@@ -175,9 +175,10 @@ pub(crate) fn launch_ralph(
     provider: Arc<dyn LlmProvider>,
     tool_ctx: ToolContext,
 ) -> crate::error::Result<String> {
-    if registry.running() >= MAX_RUNNING {
+    if registry.running() >= registry.capacity() {
         return Err(crate::error::HarnessError::Agent(format!(
-            "все слоты фоновых задач заняты ({MAX_RUNNING}); дождитесь завершения — subagent_list"
+            "все слоты фоновых задач заняты ({}); дождитесь завершения — subagent_list",
+            registry.capacity()
         )));
     }
     let id = registry.next_id("ralph");

@@ -874,7 +874,7 @@ mod tests {
     #[test]
     fn status_bar_shows_running_subagents_count() {
         use crate::subagent::{SubagentRegistry, SubagentTask, TaskStatus};
-        let tmp = tempfile::tempdir().expect("tmp");
+        let _tmp = tempfile::tempdir().expect("tmp");
         let registry = SubagentRegistry::new();
         registry.insert(SubagentTask {
             id: "sa-t-00".into(),
