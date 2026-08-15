@@ -69,6 +69,9 @@ pub enum AgentEvent {
     },
     /// Служебная заметка (детекторы циклов, компактификация, хуки).
     Note(String),
+    /// Текущая оценка токенов истории — живое обновление индикатора
+    /// контекста в UI по ходу длинного хода (не дожидаясь TurnFinished).
+    ContextUsage(usize),
     /// Ход завершён.
     TurnDone,
 }
@@ -185,10 +188,13 @@ impl AgentSession {
         }
         self.history.push(ChatMessage::user(input));
         self.log_event("user", serde_json::json!({ "content": input }));
+        self.emit_context_usage(&events);
 
         let max_turns = self.config.agent.max_tool_turns;
         for _turn in 0..max_turns {
             self.compact_history(&events).await;
+            // Компактификация могла существенно срезать историю — обновим UI.
+            self.emit_context_usage(&events);
             let request = self.build_request();
             let first = match (&events, self.config.agent.stream) {
                 (Some(tx), true) => self.stream_request(request, tx).await,
@@ -230,6 +236,7 @@ impl AgentSession {
                     self.emit_note(&events, note.text);
                 }
                 self.history.push(reply.clone());
+                self.emit_context_usage(&events);
                 // reasoning_content — в журнал (аудит цепочек рассуждений;
                 // restore его игнорирует — обратная совместимость сохранена).
                 self.log_event(
@@ -267,6 +274,7 @@ impl AgentSession {
                 self.emit_note(&events, note.text);
             }
             self.history.push(reply.clone());
+            self.emit_context_usage(&events);
 
             for call in &reply.tool_calls {
                 if let Some(tx) = &events {
@@ -404,6 +412,7 @@ impl AgentSession {
                 );
                 self.history
                     .push(ChatMessage::tool_result(call.id.clone(), content));
+                self.emit_context_usage(&events);
             }
             if let Some(reminder) = reminder {
                 self.history.push(ChatMessage::user(reminder));
@@ -441,6 +450,7 @@ impl AgentSession {
             }),
         );
         self.history.push(reply);
+        self.emit_context_usage(&events);
         if let Some(tx) = &events {
             let _ = tx.send(AgentEvent::TurnDone).await;
         }
@@ -543,6 +553,16 @@ impl AgentSession {
         self.log_event("event", serde_json::json!({ "event": "note", "text": text }));
         if let Some(tx) = events {
             let _ = tx.try_send(AgentEvent::Note(text));
+        }
+    }
+
+    /// Эмит текущей оценки токенов истории (индикатор контекста в UI).
+    /// `try_send`: телеметрия необязательна — ход агента не блокируется,
+    /// если канал занят дельтами; следующая эмиссия обновит значение.
+    fn emit_context_usage(&self, events: &Option<mpsc::Sender<AgentEvent>>) {
+        if let Some(tx) = events {
+            let used: usize = self.history.iter().map(ChatMessage::rough_tokens).sum();
+            let _ = tx.try_send(AgentEvent::ContextUsage(used));
         }
     }
 
@@ -1237,20 +1257,53 @@ mod tests {
         while let Ok(ev) = rx.try_recv() {
             seen.push(ev);
         }
-        assert_eq!(seen.len(), 4, "события: {seen:?}");
+        // Телеметрия контекста перемежает основной поток — для проверки
+        // порядка ключевых событий её отфильтровываем.
+        let key: Vec<&AgentEvent> = seen
+            .iter()
+            .filter(|e| !matches!(e, AgentEvent::ContextUsage(_)))
+            .collect();
+        assert_eq!(key.len(), 4, "события: {seen:?}");
         assert!(
-            matches!(&seen[0], AgentEvent::ToolStart { name, .. } if name == "echo"),
+            matches!(key[0], AgentEvent::ToolStart { name, .. } if name == "echo"),
             "первым — ToolStart"
         );
         assert!(
-            matches!(&seen[1], AgentEvent::ToolEnd { name, is_error: false, .. } if name == "echo"),
+            matches!(key[1], AgentEvent::ToolEnd { name, is_error: false, .. } if name == "echo"),
             "вторым — ToolEnd"
         );
         assert!(
-            matches!(&seen[2], AgentEvent::Delta(t) if t == "финальный ответ"),
+            matches!(key[2], AgentEvent::Delta(t) if t == "финальный ответ"),
             "третьим — Delta"
         );
-        assert!(matches!(seen[3], AgentEvent::TurnDone), "последним — TurnDone");
+        assert!(matches!(key[3], AgentEvent::TurnDone), "последним — TurnDone");
+    }
+
+    #[tokio::test]
+    async fn context_usage_events_track_history_growth_live() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let mut s = make_session(tmp.path(), Arc::new(FakeLlm::new()), |_| {});
+        let (tx, mut rx) = mpsc::channel(16);
+        s.send("привет", Some(tx)).await.expect("send");
+
+        let usages: Vec<usize> = std::iter::from_fn(|| rx.try_recv().ok())
+            .filter_map(|ev| match ev {
+                AgentEvent::ContextUsage(u) => Some(u),
+                _ => None,
+            })
+            .collect();
+        assert!(usages.len() >= 3, "эмиссии по ходу хода: {usages:?}");
+        assert!(
+            usages.windows(2).all(|w| w[0] <= w[1]),
+            "монотонный рост без компактификации: {usages:?}"
+        );
+        let final_used: usize = s.messages().iter().map(ChatMessage::rough_tokens).sum();
+        assert_eq!(
+            *usages.last().expect("хотя бы одна эмиссия"),
+            final_used,
+            "последнее значение совпадает с историей"
+        );
+        assert!(final_used > 0);
     }
 
     /// Провайдер, который зовёт инструмент, пока инструменты есть в запросе,

@@ -725,6 +725,8 @@ async fn cmd_run(
                     AgentEvent::TurnDone => {
                         let _ = writeln!(out);
                     }
+                    // Телеметрия индикатора контекста — только для TUI.
+                    AgentEvent::ContextUsage(_) => {}
                 }
             }
         });

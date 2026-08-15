@@ -1129,6 +1129,8 @@ impl App {
                 });
             }
             AgentEvent::TurnDone => self.assistant_open = false,
+            // Живое обновление индикатора контекста по ходу длинного хода.
+            AgentEvent::ContextUsage(used) => self.history_tokens = used,
         }
         if self.stick {
             self.scroll = 0;
@@ -1648,6 +1650,32 @@ mod tests {
         assert_eq!(app.scroll, 0);
         assert!(app.stick, "прилипание к дну восстановлено");
         assert_eq!(app.history_tokens(), 0, "индикатор контекста сброшен");
+    }
+
+    #[tokio::test]
+    async fn finished_turn_updates_context_gauge() {
+        let mut app = test_app();
+        let mut session = app.session.take().expect("сессия есть");
+        // Полный ход через реальный AgentSession::send (провайдер-заглушка).
+        session.send("расскажи про сагу", None).await.expect("ход");
+        assert!(!session.messages().is_empty());
+        app.handle_message(AppMessage::TurnFinished {
+            session,
+            result: Ok("ответ-заглушка".into()),
+        });
+        assert!(
+            app.history_tokens() > 0,
+            "после хода счётчик контекста обязан вырасти"
+        );
+    }
+
+    #[test]
+    fn context_usage_event_updates_gauge_mid_turn() {
+        let mut app = test_app();
+        app.handle_message(AppMessage::AgentEvent(AgentEvent::ContextUsage(12_345)));
+        assert_eq!(app.history_tokens(), 12_345, "индикатор обновился по ходу хода");
+        app.handle_message(AppMessage::AgentEvent(AgentEvent::ContextUsage(20_000)));
+        assert_eq!(app.history_tokens(), 20_000);
     }
 
     #[test]
