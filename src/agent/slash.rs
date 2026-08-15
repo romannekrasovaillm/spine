@@ -27,6 +27,9 @@ pub enum SlashOutcome {
     /// `/model` без аргумента: UI предлагается открыть пикер моделей
     /// (TUI — модалка; выбор сводится к `/model <name>`).
     PickModel,
+    /// `/resume` без аргумента: UI предлагается открыть пикер сессий
+    /// (TUI — модалка; выбор сводится к `/resume <имя-файла>`).
+    PickSession,
     /// `/new`: новая сессия — сессия уже ротирована исполнителем
     /// (история пуста, журнал — новый файл); UI очищает блоки диалога.
     NewSession,
@@ -151,7 +154,7 @@ pub fn catalog() -> Vec<(&'static str, &'static str)> {
         ("/load <file>", "включить файл в контекст"),
         ("/agentsmd <repo>", "сгенерировать/проверить AGENTS.md репозитория"),
         ("/sessions", "журналы прошлых сессий"),
-        ("/resume <file|last>", "восстановить сессию из журнала"),
+        ("/resume [file|last]", "восстановить сессию; без аргумента — пикер"),
     ]
 }
 
@@ -923,11 +926,11 @@ fn cmd_sessions(ctx: &ToolContext) -> Result<SlashOutcome> {
 }
 
 /// `/resume <file|last>`: восстанавливает историю из журнала прошлой сессии.
+/// Без аргумента — [`SlashOutcome::PickSession`]: UI открывает пикер сессий
+/// (стрелки + Enter), выбор сводится к `/resume <имя-файла>`.
 fn cmd_resume(rest: &str, session: &mut AgentSession, ctx: &ToolContext) -> Result<SlashOutcome> {
     if rest.is_empty() {
-        return Ok(SlashOutcome::Handled(
-            "использование: /resume <имя-файла|last> (список — /sessions)".into(),
-        ));
+        return Ok(SlashOutcome::PickSession);
     }
     let logs = crate::agent::list_session_logs(&ctx.config.paths.sessions_dir);
     let current = session.log_path().map(std::path::Path::to_path_buf);
@@ -1046,6 +1049,21 @@ mod tests {
         );
         let ctx = ToolContext::new(dir.to_path_buf(), config);
         (session, ctx)
+    }
+
+    #[tokio::test]
+    async fn resume_without_args_asks_session_picker() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let (mut s, ctx) = make_fixture(tmp.path());
+        assert!(matches!(
+            execute("/resume", &mut s, &ctx).await.expect("ok"),
+            SlashOutcome::PickSession
+        ));
+        // С аргументом — прежнее поведение (last без прошлых журналов — «не найден»).
+        match execute("/resume last", &mut s, &ctx).await.expect("ok") {
+            SlashOutcome::Handled(text) => assert!(text.contains("не найден"), "{text}"),
+            other => panic!("ожидался Handled, получено {other:?}"),
+        }
     }
 
     #[tokio::test]

@@ -128,8 +128,9 @@ BMAD, Spec Kit, OpenSpec и др.):
 - Поиск `arch skills search`, показ `arch skills show`; в TUI — `/skills`,
   `/skill` (в контекст сессии), `/plugins`; модель зовёт `skill_search`/`skill_load`
   сама. Дистилляция статей/контекста в новые скиллы — `skill_distill` и `/distill`.
-- Сессии: `/new` — чистый лист с ротацией журнала; `/sessions`,
-  `/resume last` — восстановление из append-only журнала.
+- Сессии: `/new` — чистый лист с ротацией журнала; `/resume` — пикер сессий
+  (стрелки + Enter), `/resume last` — мгновенно к последней; `/sessions` —
+  журналы из append-only архива.
 
 Подробности: `docs/plugins_and_skills.md`.
 
@@ -362,7 +363,7 @@ BMAD, Spec Kit, OpenSpec, and more):
   migration roadmaps, decision matrices, risk registers).
 - `skill_search`/`skill_load` tools, `/skills`, `/distill` (distill articles or
   the session transcript into new skills), `/new` (fresh session with journal
-  rotation), `/sessions` + `/resume last`.
+  rotation), `/resume` (session picker: arrows + Enter), `/sessions`.
 
 **Background sub-agents, ralph loops, worktree factory**
 

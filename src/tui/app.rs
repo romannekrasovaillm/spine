@@ -363,6 +363,8 @@ pub(crate) enum AskKind {
     Tool,
     /// Пикер модели (`/model` без аргумента): выбор сводится к `/model <name>`.
     ModelPicker,
+    /// Пикер сессии (`/resume` без аргумента): выбор сводится к `/resume <file>`.
+    SessionPicker,
 }
 
 /// Активная модальная панель выбора (инструмент `propose_options` ждёт ответа).
@@ -848,6 +850,53 @@ impl App {
         self.scroll_to_bottom();
     }
 
+    /// Открывает пикер сессий по `/resume` без аргумента: варианты — журналы
+    /// из `paths.sessions_dir` (новые первыми, журнал текущей сессии скрыт;
+    /// описание — дата, число сообщений, первая реплика). Выбор сводится
+    /// к обычному `/resume <имя-файла>`.
+    pub(crate) fn open_session_picker(&mut self) {
+        let current = self
+            .session
+            .as_ref()
+            .and_then(|s| s.log_path().map(std::path::Path::to_path_buf));
+        let logs = crate::agent::list_session_logs(&self.tool_ctx.config.paths.sessions_dir);
+        let options: Vec<crate::tool::AskOption> = logs
+            .into_iter()
+            .filter(|l| Some(&l.path) != current.as_ref())
+            .take(12)
+            .map(|l| {
+                let name = l
+                    .path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                crate::tool::AskOption {
+                    label: name,
+                    description: format!(
+                        "{} · сообщений: {} · {}",
+                        l.modified, l.messages, l.first_user_line
+                    ),
+                }
+            })
+            .collect();
+        if options.is_empty() {
+            self.push_block(ChatBlock::System {
+                command: "resume".into(),
+                text: "прошлых сессий нет (журналы — в paths.sessions_dir)".into(),
+            });
+            return;
+        }
+        self.ask = Some(AskState {
+            question: "Сессия для восстановления:".into(),
+            options,
+            recommended: None,
+            selected: 0,
+            reply: None,
+            kind: AskKind::SessionPicker,
+        });
+        self.scroll_to_bottom();
+    }
+
     /// Клавиши модалки выбора: навигация, подтверждение, отказ.
     fn handle_ask_key(&mut self, key: KeyEvent) {
         let Some(ask) = self.ask.as_mut() else {
@@ -893,6 +942,11 @@ impl App {
                 AskKind::ModelPicker => {
                     if let Some(label) = label {
                         self.start_slash(format!("/model {label}"));
+                    }
+                }
+                AskKind::SessionPicker => {
+                    if let Some(label) = label {
+                        self.start_slash(format!("/resume {label}"));
                     }
                 }
             }
@@ -1125,6 +1179,7 @@ impl App {
                         self.push_block(ChatBlock::System { command, text });
                     }
                     Ok(slash::SlashOutcome::PickModel) => self.open_model_picker(),
+                    Ok(slash::SlashOutcome::PickSession) => self.open_session_picker(),
                     Ok(slash::SlashOutcome::NewSession) => {
                         // /new: чистый лист — блоки, вкладки и скролл сброшены;
                         // сессия уже ротирована исполнителем (новый журнал).
@@ -1832,6 +1887,75 @@ mod tests {
             Some("/tools"),
             "очередная слэш-команда запущена"
         );
+    }
+
+    #[tokio::test]
+    async fn session_picker_lists_journals_and_confirms_to_resume() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let dir = tmp.path().join("sessions");
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        for (name, first) in [
+            ("session-20260815-100000-111.jsonl", "первый вопрос старой сессии"),
+            ("session-20260815-110000-111.jsonl", "второй вопрос"),
+        ] {
+            std::fs::write(
+                dir.join(name),
+                format!(
+                    "{{\"kind\":\"system\",\"content\":\"sys\"}}\n\
+                     {{\"kind\":\"user\",\"content\":\"{first}\"}}\n\
+                     {{\"kind\":\"assistant\",\"content\":\"ответ\"}}\n"
+                ),
+            )
+            .expect("write journal");
+        }
+        let mut app = test_app();
+        app.screen = Screen::Chat;
+        let mut cfg = Config::default();
+        cfg.paths.sessions_dir = dir;
+        app.tool_ctx = ToolContext::new(std::path::PathBuf::from("/tmp"), Arc::new(cfg));
+        let (tx, _rx) = mpsc::channel(8);
+        app.msg_tx = Some(tx);
+
+        app.open_session_picker();
+        let ask = app.ask.as_ref().expect("пикер открыт");
+        assert_eq!(ask.kind, super::AskKind::SessionPicker);
+        assert_eq!(ask.options.len(), 2, "оба журнала в вариантах");
+        assert!(
+            ask.options
+                .iter()
+                .any(|o| o.description.contains("второй вопрос")),
+            "превью первой реплики в описании: {:?}",
+            ask.options[0].description
+        );
+        // Навигация вниз + Enter → слэш /resume <имя-файла>.
+        app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(
+            app.pending_slash
+                .as_deref()
+                .is_some_and(|c| c.starts_with("/resume session-")),
+            "выбор свёлся к /resume <имя>: {:?}",
+            app.pending_slash
+        );
+        assert!(app.ask.is_none(), "модалка закрыта после выбора");
+    }
+
+    #[test]
+    fn session_picker_without_journals_shows_note() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let mut app = test_app();
+        app.screen = Screen::Chat;
+        let mut cfg = Config::default();
+        cfg.paths.sessions_dir = tmp.path().join("empty-sessions");
+        app.tool_ctx = ToolContext::new(std::path::PathBuf::from("/tmp"), Arc::new(cfg));
+        app.open_session_picker();
+        assert!(app.ask.is_none(), "пикер не открывается без журналов");
+        match app.blocks.last() {
+            Some(ChatBlock::System { text, .. }) => {
+                assert!(text.contains("прошлых сессий нет"), "{text}")
+            }
+            other => panic!("ожидалась заметка, получено: {other:?}"),
+        }
     }
 
     #[test]

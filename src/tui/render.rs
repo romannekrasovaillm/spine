@@ -383,6 +383,7 @@ fn draw_ask(f: &mut Frame, area: Rect, app: &App, theme: &Theme) {
     let (title, esc_hint) = match ask.kind {
         crate::tui::app::AskKind::Tool => (" ◈ решение за вами ", " решить агенту"),
         crate::tui::app::AskKind::ModelPicker => (" ◈ выбор модели ", " отмена"),
+        crate::tui::app::AskKind::SessionPicker => (" ◈ выбор сессии ", " отмена"),
     };
     let block = Block::default()
         .borders(Borders::ALL)
