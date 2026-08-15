@@ -38,7 +38,7 @@ model = "deepseek-v4-flash"           # быстрая модель для по�
 api_key_env = "DEEPSEEK_API_KEY"
 max_tokens = 8192
 timeout_secs = 180
-context_limit = 131072
+context_limit = 1000000
 thinking_on  = { thinking = { type = "enabled" } }
 thinking_off = { thinking = { type = "disabled" } }
 
@@ -48,7 +48,7 @@ model = "deepseek-v4-pro"             # тяжёлый ризонинг: сос�
 api_key_env = "DEEPSEEK_API_KEY"
 max_tokens = 8192
 timeout_secs = 300                    # pro думает дольше — бюджет тишины выше
-context_limit = 131072
+context_limit = 1000000
 thinking_on  = { thinking = { type = "enabled" } }
 thinking_off = { thinking = { type = "disabled" } }
 
@@ -63,7 +63,7 @@ api_key_env = "KIMI_API_KEY"
 api_key_file = "~/.kimi_api_key"      # запасной путь, если env не задан
 max_tokens = 8192
 timeout_secs = 180
-context_limit = 262144
+context_limit = 1000000
 
 [models.glm]
 # Китайская площадка Zhipu (ключ ZHIPU_API_KEY); международный аналог —

@@ -456,7 +456,7 @@ impl Default for Config {
                 base_url: "https://api.deepseek.com/v1".into(),
                 model: "deepseek-v4-flash".into(),
                 api_key_env: "DEEPSEEK_API_KEY".into(),
-                context_limit: Some(131_072),
+                context_limit: Some(1_000_000),
                 thinking_on: think_on.clone(),
                 thinking_off: think_off.clone(),
                 ..ModelConfig::default()
@@ -469,7 +469,7 @@ impl Default for Config {
                 model: "deepseek-v4-pro".into(),
                 api_key_env: "DEEPSEEK_API_KEY".into(),
                 timeout_secs: 300,
-                context_limit: Some(131_072),
+                context_limit: Some(1_000_000),
                 thinking_on: think_on.clone(),
                 thinking_off: think_off,
                 ..ModelConfig::default()
@@ -487,7 +487,7 @@ impl Default for Config {
                 model: "k3".into(),
                 api_key_env: "KIMI_API_KEY".into(),
                 api_key_file: Some("~/.kimi_api_key".into()),
-                context_limit: Some(262_144),
+                context_limit: Some(1_000_000),
                 ..ModelConfig::default()
             },
         );
