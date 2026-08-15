@@ -106,6 +106,10 @@ BMAD, Spec Kit, OpenSpec и др.):
 
 #### Библиотека скиллов и плагины (agent-plugins.org)
 
+> **Плагин — единственная единица установки**: скиллы отдельно не ставятся,
+> они живут внутри плагина (`skills/<имя>/SKILL.md`). `arch skills …` —
+> плоский индекс скиллов со всех плагинов, а не отдельный реестр.
+
 - Шесть встроенных плагинов (`arch init` раскладывает в `~/.arch-harness/plugins`):
   **arch-core** (14 методических скиллов архитектора, вкл. мета-скилл `skill-authoring`),
   **patterns-integration** (сага, outbox, CQRS, strangler+ACL, идемпотентность —
@@ -315,6 +319,10 @@ BMAD, Spec Kit, OpenSpec, and more):
   loop detectors, secret redaction in tool output and journals.
 
 **Skills library & plugins** ([agent-plugins.org](https://agent-plugins.org) layout)
+
+> **The plugin is the only install unit**: skills never install separately —
+> they live inside a plugin (`skills/<name>/SKILL.md`). `arch skills …` is a
+> flat index over all plugins, not a separate registry.
 
 - Six built-in plugins (deployed by `arch init`): **arch-core** (14 architecture
   method skills incl. the `skill-authoring` meta-skill), **patterns-integration**
