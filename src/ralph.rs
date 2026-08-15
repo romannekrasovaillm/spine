@@ -472,6 +472,8 @@ mod tests {
         let mut cfg = Config::default();
         cfg.paths.sessions_dir = dir.join("sessions");
         cfg.paths.reports_dir = dir.join("reports");
+        // Изоляция тестов от плагинных хуков реальной библиотеки.
+        cfg.plugins.include_hooks = false;
         ToolContext::new(dir.to_path_buf(), Arc::new(cfg))
     }
 

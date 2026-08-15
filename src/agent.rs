@@ -651,6 +651,74 @@ impl AgentSession {
         result
     }
 
+    /// Эффективный бюджет контекста: min(`agent.context_budget_tokens`,
+    /// окно модели из `ModelConfig.context_limit`). Пороги компактификации
+    /// (70%/95%) таким образом привязаны к реальному пределу API активного
+    /// провайдера, а не только к конфигурационному бюджету.
+    fn effective_context_budget(&self) -> usize {
+        let configured = self.config.agent.context_budget_tokens.max(1);
+        self.config
+            .models
+            .get(self.provider.name())
+            .and_then(|m| m.context_limit)
+            .filter(|lim| *lim > 0)
+            .map_or(configured, |lim| configured.min(lim))
+    }
+
+    /// L1: маскирование старых tool-результатов (усечение до
+    /// [`COMPACT_TOOL_CHARS`] с пометкой, кроме [`COMPACT_KEEP_TOOL']
+    /// последних). Возвращает число усечённых сообщений.
+    fn mask_old_tool_results(&mut self) -> usize {
+        let tool_idx: Vec<usize> = self
+            .history
+            .iter()
+            .enumerate()
+            .filter(|(_, m)| m.role == Role::Tool)
+            .map(|(i, _)| i)
+            .collect();
+        let cut = tool_idx.len().saturating_sub(COMPACT_KEEP_TOOL);
+        let mut truncated = 0usize;
+        for &i in &tool_idx[..cut] {
+            let msg = &mut self.history[i];
+            if msg.content.chars().count() > COMPACT_TOOL_CHARS {
+                let mut short: String = msg.content.chars().take(COMPACT_TOOL_CHARS).collect();
+                short.push_str("\n[контекст усечён]");
+                msg.content = short;
+                truncated += 1;
+            }
+        }
+        truncated
+    }
+
+    /// Принудительная компактификация по слэш-команде `/compact`:
+    /// L1-маскирование + L3-саммари ВНЕ порогов (и даже при `l3_futile` —
+    /// явная воля пользователя). Возвращает (токенов до, после, свёрнуто
+    /// сообщений, усечено tool-результатов).
+    ///
+    /// # Errors
+    /// Ошибка модели-саммаризатора.
+    pub async fn compact_now(&mut self) -> Result<(usize, usize, usize, usize)> {
+        let before: usize = self.history.iter().map(ChatMessage::rough_tokens).sum();
+        self.fire_hook(crate::hooks::HookEvent::PreCompact, None, "{}");
+        let truncated = self.mask_old_tool_results();
+        let folded = self.l3_summarize().await?;
+        let after: usize = self.history.iter().map(ChatMessage::rough_tokens).sum();
+        self.log_event(
+            "event",
+            serde_json::json!({
+                "event": "compact_manual",
+                "before": before,
+                "after": after,
+                "folded": folded,
+                "truncated_tools": truncated,
+            }),
+        );
+        if truncated > 0 || folded > 0 {
+            self.fire_hook(crate::hooks::HookEvent::PostCompact, None, "{}");
+        }
+        Ok((before, after, folded, truncated))
+    }
+
     /// Компактификация истории (трёхуровневая, по Theseus/Grok/Codex):
     /// - L1 (≥ `compact_l1_pct`% бюджета): маскирование старых tool-результатов
     ///   — усечение до [`COMPACT_TOOL_CHARS`] с пометкой, кроме
@@ -663,7 +731,7 @@ impl AgentSession {
     ///   дальнейшие попытки (иначе каждый ход жёг бы API впустую).
     /// Факт компактификации пишется в журнал.
     async fn compact_history(&mut self, events: &Option<mpsc::Sender<AgentEvent>>) {
-        let budget = self.config.agent.context_budget_tokens.max(1);
+        let budget = self.effective_context_budget();
         let l1 = budget * self.config.agent.compact_l1_pct.min(100) / 100;
         let l3 = budget * self.config.agent.compact_l3_pct / 100;
         let mut total: usize = self.history.iter().map(ChatMessage::rough_tokens).sum();
@@ -673,24 +741,7 @@ impl AgentSession {
         self.fire_hook(crate::hooks::HookEvent::PreCompact, None, "{}");
 
         // L1: маскирование старых tool-сообщений.
-        let mut truncated = 0usize;
-        let tool_idx: Vec<usize> = self
-            .history
-            .iter()
-            .enumerate()
-            .filter(|(_, m)| m.role == Role::Tool)
-            .map(|(i, _)| i)
-            .collect();
-        let cut = tool_idx.len().saturating_sub(COMPACT_KEEP_TOOL);
-        for &i in &tool_idx[..cut] {
-            let msg = &mut self.history[i];
-            if msg.content.chars().count() > COMPACT_TOOL_CHARS {
-                let mut short: String = msg.content.chars().take(COMPACT_TOOL_CHARS).collect();
-                short.push_str("\n[контекст усечён]");
-                msg.content = short;
-                truncated += 1;
-            }
-        }
+        let truncated = self.mask_old_tool_results();
 
         // Прунинг: только при реальном переполнении (>100%).
         total = self.history.iter().map(ChatMessage::rough_tokens).sum();
@@ -1065,6 +1116,8 @@ mod tests {
         let mut cfg = Config::default();
         cfg.paths.sessions_dir = dir.join("sessions");
         cfg.agent.stream = false;
+        // Изоляция тестов: плагинные хуки реальной библиотеки не подхватываем.
+        cfg.plugins.include_hooks = false;
         configure(&mut cfg);
         let config = Arc::new(cfg);
         let tools = ToolRegistry::new().with(Arc::new(EchoTool));
@@ -1349,6 +1402,51 @@ mod tests {
                 Ok(ChatMessage::assistant("ответ после повтора", Vec::new()))
             }
         }
+    }
+
+    #[tokio::test]
+    async fn compaction_thresholds_follow_model_context_limit() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        // Конфиг-бюджет огромный, но у модели окно 1000 токенов → пороги от него.
+        let mut s = make_session(tmp.path(), Arc::new(FakeLlm::new()), |cfg| {
+            cfg.agent.context_budget_tokens = 10_000_000;
+            cfg.models.insert(
+                "fake".into(),
+                crate::config::ModelConfig {
+                    context_limit: Some(1000),
+                    ..crate::config::ModelConfig::default()
+                },
+            );
+        });
+        // ~1000 токенов history (грубо): 5 tool-сообщений по ~800 символов.
+        s.history.push(ChatMessage::user("старт"));
+        for _ in 0..5 {
+            s.history.push(ChatMessage::tool_result("c", "x".repeat(800)));
+        }
+        s.history.push(ChatMessage::user("хвост"));
+        s.compact_history(&None).await;
+        // L1 при 70% от 1000 = 700: старые tool-результаты усечены,
+        // несмотря на гигантский конфиг-бюджет.
+        let masked = s
+            .messages()
+            .iter()
+            .filter(|m| m.content.contains("[контекст усечён]"))
+            .count();
+        assert_eq!(masked, 1, "усечено всё, кроме {} последних", 4);
+    }
+
+    #[tokio::test]
+    async fn compact_now_forces_fold_outside_thresholds() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let mut s = make_session(tmp.path(), Arc::new(SumLlm), |_| {});
+        s.history.push(ChatMessage::user("x".repeat(800)));
+        s.history
+            .push(ChatMessage::assistant("y".repeat(800), Vec::new()));
+        s.history.push(ChatMessage::user("актуальная задача"));
+        let (before, after, folded, _trunc) = s.compact_now().await.expect("compact_now");
+        assert_eq!(folded, 2, "свёрнуто до последнего user");
+        assert!(after < before, "после < до: {before} → {after}");
+        assert!(s.messages()[0].content.contains("САММАРИ"));
     }
 
     #[tokio::test]

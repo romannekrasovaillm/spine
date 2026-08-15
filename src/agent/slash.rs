@@ -63,6 +63,7 @@ pub async fn execute(
 
     match cmd {
         "/help" => Ok(SlashOutcome::Handled(help_text())),
+        "/compact" => cmd_compact(session).await,
         "/model" => cmd_model(rest, session, ctx),
         "/think" => cmd_think(rest, session, ctx),
         "/clear" => {
@@ -110,6 +111,7 @@ pub async fn execute(
 pub fn catalog() -> Vec<(&'static str, &'static str)> {
     vec![
         ("/help", "справка по командам"),
+        ("/compact", "сжать контекст сейчас (L1 + LLM-саммари L3)"),
         ("/model [name]", "сменить модель; без имени — пикер моделей"),
         ("/think [on|off]", "ризонинг-режим модели (thinking)"),
         ("/clear", "очистить контекст"),
@@ -175,6 +177,28 @@ fn tools_text(session: &AgentSession) -> String {
     }
     out.push_str("\nСправочник с параметрами и примерами — docs/tools.md репозитория харнесса.");
     out
+}
+
+/// `/compact`: принудительная компактификация контекста (L1-маскирование
+/// старых tool-результатов + L3-саммари), вне автоматических порогов.
+async fn cmd_compact(session: &mut AgentSession) -> Result<SlashOutcome> {
+    match session.compact_now().await {
+        Ok((before, after, folded, truncated)) => {
+            let text = if folded == 0 && truncated == 0 {
+                format!("компактить нечего: история ~{before} ток. (грубая оценка)")
+            } else {
+                format!(
+                    "компактификация: ~{before} → ~{after} ток.; свёрнуто сообщений: {folded}, \
+                     усечено tool-результатов: {truncated}. Автопороги: L1 70% / L3 95% от \
+                     min(бюджет, окно модели)."
+                )
+            };
+            Ok(SlashOutcome::Handled(text))
+        }
+        Err(e) => Ok(SlashOutcome::Handled(format!(
+            "компактификация не удалась (модель-саммаризатор): {e}"
+        ))),
+    }
 }
 
 /// `/model [name]`: без аргумента — пикер моделей (TUI; исход
@@ -1002,6 +1026,8 @@ mod tests {
         cfg.paths.sessions_dir = dir.join("sessions");
         cfg.paths.assets_dir = dir.join("assets");
         cfg.agent.stream = false;
+        // Изоляция тестов: плагинные хуки реальной библиотеки не подхватываем.
+        cfg.plugins.include_hooks = false;
         let config = Arc::new(cfg);
         let session = AgentSession::new(
             config.clone(),
@@ -1140,6 +1166,37 @@ mod tests {
         match execute("/model", &mut s, &ctx).await.expect("ok") {
             SlashOutcome::PickModel => {}
             other => panic!("ожидался PickModel, получено {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn compact_command_reports_fold_stats() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let (mut s, ctx) = make_fixture(tmp.path());
+        // Пустая история — честное «нечего компактить».
+        match execute("/compact", &mut s, &ctx).await.expect("ok") {
+            SlashOutcome::Handled(text) => assert!(text.contains("нечего"), "{text}"),
+            other => panic!("ожидался Handled, получено {other:?}"),
+        }
+        // С историей — свёртка и статистика.
+        s.restore_from_log(&{
+            let p = tmp.path().join("old-session-1.jsonl");
+            std::fs::write(
+                &p,
+                "{\"kind\":\"user\",\"content\":\"первая задача про саги и платежи\"}\n\
+                 {\"kind\":\"assistant\",\"content\":\"разбор вариантов саги: оркестрация vs хореография\"}\n\
+                 {\"kind\":\"user\",\"content\":\"актуальная задача\"}\n",
+            )
+            .expect("write");
+            p
+        })
+        .expect("restore");
+        match execute("/compact", &mut s, &ctx).await.expect("ok") {
+            SlashOutcome::Handled(text) => {
+                assert!(text.contains("→"), "статистика: {text}");
+                assert!(text.contains("свёрнуто"), "{text}");
+            }
+            other => panic!("ожидался Handled, получено {other:?}"),
         }
     }
 

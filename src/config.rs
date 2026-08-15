@@ -65,6 +65,11 @@ pub struct ModelConfig {
     pub temperature: Option<f32>,
     /// Бюджет тишины (сек): ожидание заголовков и пауза между чанками стрима.
     pub timeout_secs: u64,
+    /// Окно контекста модели в токенах (если задано): автоматическая
+    /// компактификация работает от min(agent.context_budget_tokens, этого
+    /// окна) — пороги `compact_l1_pct`/`compact_l3_pct` (70%/95%) привязаны
+    /// к реальному пределу API, а не к статичному бюджету.
+    pub context_limit: Option<usize>,
     /// JSON-объект, сливаемый в тело запроса при включённом ризонинге
     /// (`/think on`): напр. `{"thinking": {"type": "enabled"}}` (DeepSeek V4,
     /// GLM-4.x) или `{"reasoning_effort": "max"}` (Kimi K3).
@@ -85,6 +90,7 @@ impl Default for ModelConfig {
             max_tokens: Some(8192),
             temperature: None,
             timeout_secs: 180,
+            context_limit: None,
             thinking_on: None,
             thinking_off: None,
         }
@@ -450,6 +456,7 @@ impl Default for Config {
                 base_url: "https://api.deepseek.com/v1".into(),
                 model: "deepseek-v4-flash".into(),
                 api_key_env: "DEEPSEEK_API_KEY".into(),
+                context_limit: Some(131_072),
                 thinking_on: think_on.clone(),
                 thinking_off: think_off.clone(),
                 ..ModelConfig::default()
@@ -462,6 +469,7 @@ impl Default for Config {
                 model: "deepseek-v4-pro".into(),
                 api_key_env: "DEEPSEEK_API_KEY".into(),
                 timeout_secs: 300,
+                context_limit: Some(131_072),
                 thinking_on: think_on.clone(),
                 thinking_off: think_off,
                 ..ModelConfig::default()
@@ -479,23 +487,25 @@ impl Default for Config {
                 model: "k3".into(),
                 api_key_env: "KIMI_API_KEY".into(),
                 api_key_file: Some("~/.kimi_api_key".into()),
+                context_limit: Some(262_144),
                 ..ModelConfig::default()
             },
         );
         let (glm_on, glm_off) = thinking_type_maps();
-        let glm_entry = |model: &str, timeout: u64| ModelConfig {
+        let glm_entry = |model: &str, timeout: u64, context_limit: usize| ModelConfig {
             base_url: "https://open.bigmodel.cn/api/paas/v4".into(),
             model: model.into(),
             api_key_env: "ZHIPU_API_KEY".into(),
             timeout_secs: timeout,
+            context_limit: Some(context_limit),
             thinking_on: glm_on.clone(),
             thinking_off: glm_off.clone(),
             ..ModelConfig::default()
         };
-        models.insert("glm".into(), glm_entry("glm-5.2", 180));
-        models.insert("glm-4.7".into(), glm_entry("glm-4.7", 180));
-        models.insert("glm-air".into(), glm_entry("glm-4.5-air", 120));
-        models.insert("glm-flash".into(), glm_entry("glm-4.7-flash", 120));
+        models.insert("glm".into(), glm_entry("glm-5.2", 180, 204_800));
+        models.insert("glm-4.7".into(), glm_entry("glm-4.7", 180, 204_800));
+        models.insert("glm-air".into(), glm_entry("glm-4.5-air", 120, 131_072));
+        models.insert("glm-flash".into(), glm_entry("glm-4.7-flash", 120, 204_800));
 
         let harness = |binary: &str, args: &[&str], mode: PromptMode| CodingHarnessConfig {
             binary: binary.into(),

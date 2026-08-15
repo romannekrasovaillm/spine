@@ -38,6 +38,7 @@ model = "deepseek-v4-flash"           # быстрая модель для по�
 api_key_env = "DEEPSEEK_API_KEY"
 max_tokens = 8192
 timeout_secs = 180
+context_limit = 131072
 thinking_on  = { thinking = { type = "enabled" } }
 thinking_off = { thinking = { type = "disabled" } }
 
@@ -47,6 +48,7 @@ model = "deepseek-v4-pro"             # тяжёлый ризонинг: сос�
 api_key_env = "DEEPSEEK_API_KEY"
 max_tokens = 8192
 timeout_secs = 300                    # pro думает дольше — бюджет тишины выше
+context_limit = 131072
 thinking_on  = { thinking = { type = "enabled" } }
 thinking_off = { thinking = { type = "disabled" } }
 
@@ -61,6 +63,7 @@ api_key_env = "KIMI_API_KEY"
 api_key_file = "~/.kimi_api_key"      # запасной путь, если env не задан
 max_tokens = 8192
 timeout_secs = 180
+context_limit = 262144
 
 [models.glm]
 # Китайская площадка Zhipu (ключ ZHIPU_API_KEY); международный аналог —
@@ -70,6 +73,7 @@ model = "glm-5.2"                     # флагман Z.AI (резервный 
 api_key_env = "ZHIPU_API_KEY"
 max_tokens = 8192
 timeout_secs = 180
+context_limit = 204800
 thinking_on  = { thinking = { type = "enabled" } }
 thinking_off = { thinking = { type = "disabled" } }
 
@@ -79,6 +83,7 @@ model = "glm-4.7"                     # прошлое поколение: де�
 api_key_env = "ZHIPU_API_KEY"
 max_tokens = 8192
 timeout_secs = 180
+context_limit = 204800
 thinking_on  = { thinking = { type = "enabled" } }
 thinking_off = { thinking = { type = "disabled" } }
 
@@ -88,6 +93,7 @@ model = "glm-4.5-air"                 # дешёвый рабочий (~$0.14/$0
 api_key_env = "ZHIPU_API_KEY"
 max_tokens = 8192
 timeout_secs = 120
+context_limit = 131072
 thinking_on  = { thinking = { type = "enabled" } }
 thinking_off = { thinking = { type = "disabled" } }
 
@@ -97,6 +103,7 @@ model = "glm-4.7-flash"               # бесплатный тариф: чер�
 api_key_env = "ZHIPU_API_KEY"
 max_tokens = 8192
 timeout_secs = 120
+context_limit = 204800
 thinking_on  = { thinking = { type = "enabled" } }
 thinking_off = { thinking = { type = "disabled" } }
 
@@ -105,7 +112,9 @@ thinking_off = { thinking = { type = "disabled" } }
 # -----------------------------------------------------------------------------
 [agent]
 max_tool_turns = 4800                 # максимум итераций за один ход (по исчерпании — финальный ответ без инструментов; петли ловят детекторы)
-context_budget_tokens = 6000000       # бюджет контекста (грубо: 4 символа ≈ 1 токен); 6M ≈ «лимит задаёт провайдер»: компактификация до 413, дальше on-error compact&resubmit
+context_budget_tokens = 6000000       # потолок бюджета контекста; авто-компактификация работает от
+                                      # min(этого бюджета, context_limit модели): L1-маскирование на 70%,
+                                      # L3-саммари на 95% окна модели; принудительно — /compact в TUI
 stream = true                         # стримить дельты ответа в TUI/stdout
 
 # -----------------------------------------------------------------------------
