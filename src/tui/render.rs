@@ -658,20 +658,22 @@ fn draw_input(f: &mut Frame, area: Rect, app: &App, theme: &Theme) {
     }
 }
 
-/// Статус-бар: бейдж модели | ~токены истории | cwd | заметки | подсказки.
+/// Статус-бар: бейдж модели | индикатор контекста | cwd | заметки | подсказки.
 fn draw_status(f: &mut Frame, area: Rect, app: &App, theme: &Theme) {
     let hint = "F1–F3 вкладки · F4 — на весь экран · q — выход";
     let hint_w = u16_sat(UnicodeWidthStr::width(hint) + 1);
     let cols = Layout::horizontal([Constraint::Min(0), Constraint::Length(hint_w)]).split(area);
 
-    let mut spans = vec![
-        Span::styled(format!(" {} ", app.model_name), theme.badge()),
-        Span::styled(format!(" ◈ ~{} ток.", app.history_tokens()), theme.muted()),
-        Span::styled(
-            format!("  {}", shorten_path(&app.tool_ctx.cwd)),
-            theme.muted(),
-        ),
-    ];
+    let mut spans = vec![Span::styled(
+        format!(" {} ", app.model_name),
+        theme.badge(),
+    )];
+    // Индикатор заполнения контекста — сразу после бейджа модели.
+    spans.extend(context_spans(app, theme));
+    spans.push(Span::styled(
+        format!("  {}", shorten_path(&app.tool_ctx.cwd)),
+        theme.muted(),
+    ));
     if let Some(extra) = app.status_extra() {
         spans.push(Span::styled(
             format!("  · {extra}"),
@@ -692,6 +694,55 @@ fn draw_status(f: &mut Frame, area: Rect, app: &App, theme: &Theme) {
             .alignment(Alignment::Right),
         cols[1],
     );
+}
+
+/// Индикатор заполнения контекста: «◈ 12.3k/1.0M ▰▰▱▱▱▱▱▱ 1%».
+/// Цвет шкалы — по порогам компактификации из конфига: зелёный до L1,
+/// оранжевый до L3, дальше красный (авто-компактификация уже близко/идёт).
+fn context_spans(app: &App, theme: &Theme) -> Vec<Span<'static>> {
+    let used = app.history_tokens();
+    let budget = app.context_budget();
+    if budget == 0 {
+        return vec![Span::styled(
+            format!(" ◈ ~{} ток.", used),
+            theme.muted(),
+        )];
+    }
+    let pct = used.saturating_mul(100) / budget;
+    let agent_cfg = &app.tool_ctx.config.agent;
+    let color = if pct >= agent_cfg.compact_l3_pct {
+        theme.red
+    } else if pct >= agent_cfg.compact_l1_pct {
+        theme.orange
+    } else {
+        theme.green
+    };
+    const WIDTH: usize = 8;
+    let filled = (used.saturating_mul(WIDTH) / budget).min(WIDTH);
+    let bar = format!("{}{}", "▰".repeat(filled), "▱".repeat(WIDTH - filled));
+    vec![
+        Span::styled(
+            format!(" ◈ {}/{} ", fmt_tokens(used), fmt_tokens(budget)),
+            theme.muted(),
+        ),
+        Span::styled(
+            format!("{bar} {pct}%"),
+            Style::default().fg(color).bg(theme.bg),
+        ),
+    ]
+}
+
+/// Человекочитаемый размер токенов: 999 → «999», 12_345 → «12.3k»,
+/// 1_000_000 → «1.0M».
+#[allow(clippy::cast_precision_loss)]
+fn fmt_tokens(n: usize) -> String {
+    if n >= 1_000_000 {
+        format!("{:.1}M", n as f64 / 1_000_000.0)
+    } else if n >= 1_000 {
+        format!("{:.1}k", n as f64 / 1_000.0)
+    } else {
+        n.to_string()
+    }
 }
 
 /// Схлопывает домашний каталог в `~` для компактного статус-бара.
@@ -894,6 +945,84 @@ mod tests {
         let text = buffer_text(&terminal);
         assert!(text.contains("субагенты: 1"), "индикатор в статус-баре:\n{text}");
         assert!(app.needs_tick(), "тики идут, пока крутятся субагенты");
+    }
+
+    /// Цвет заливки первой ячейки шкалы контекста в буфере (None — не найдена).
+    fn gauge_color(term: &Terminal<TestBackend>) -> Option<ratatui::style::Color> {
+        let buf = term.backend().buffer();
+        let area = buf.area;
+        for y in 0..area.height {
+            for x in 0..area.width {
+                let cell = &buf[(x, y)];
+                if cell.symbol() == "▰" {
+                    return Some(cell.fg);
+                }
+            }
+        }
+        None
+    }
+
+    #[test]
+    fn status_bar_shows_context_gauge() {
+        use crate::tui::app::testing::set_context_usage;
+        let mut app = test_app();
+        app.screen = Screen::Chat;
+        // Половина окна 1M: зелёная шкала, подпись «500.0k/1.0M … 50%».
+        set_context_usage(&mut app, 500_000, 1_000_000);
+        let mut terminal = Terminal::new(TestBackend::new(120, 24)).expect("terminal");
+        terminal.draw(|f| app.render(f)).expect("draw");
+        let text = buffer_text(&terminal);
+        assert!(text.contains("500.0k/1.0M"), "токены окна:\n{text}");
+        assert!(text.contains("▰▰▰▰▱▱▱▱ 50%"), "шкала 50%:\n{text}");
+        assert_eq!(
+            gauge_color(&terminal),
+            Some(ratatui::style::Color::Rgb(0x9e, 0xce, 0x6a)),
+            "до L1 шкала зелёная"
+        );
+    }
+
+    #[test]
+    fn status_bar_gauge_turns_red_near_l3_threshold() {
+        use crate::tui::app::testing::set_context_usage;
+        let mut app = test_app();
+        app.screen = Screen::Chat;
+        // 96% окна: за порогом L3 (95%) — шкала красная.
+        set_context_usage(&mut app, 960_000, 1_000_000);
+        let mut terminal = Terminal::new(TestBackend::new(120, 24)).expect("terminal");
+        terminal.draw(|f| app.render(f)).expect("draw");
+        let text = buffer_text(&terminal);
+        assert!(text.contains("96%"), "процент заполнения:\n{text}");
+        assert_eq!(
+            gauge_color(&terminal),
+            Some(ratatui::style::Color::Rgb(0xf7, 0x76, 0x8e)),
+            "за L3 шкала красная"
+        );
+    }
+
+    #[test]
+    fn status_bar_gauge_orange_between_l1_and_l3() {
+        use crate::tui::app::testing::set_context_usage;
+        let mut app = test_app();
+        app.screen = Screen::Chat;
+        // 80% окна: между L1 (70%) и L3 (95%) — шкала оранжевая.
+        set_context_usage(&mut app, 800_000, 1_000_000);
+        let mut terminal = Terminal::new(TestBackend::new(120, 24)).expect("terminal");
+        terminal.draw(|f| app.render(f)).expect("draw");
+        assert_eq!(
+            gauge_color(&terminal),
+            Some(ratatui::style::Color::Rgb(0xff, 0x9e, 0x64)),
+            "между L1 и L3 шкала оранжевая"
+        );
+    }
+
+    #[test]
+    fn fmt_tokens_human_readable() {
+        assert_eq!(fmt_tokens(0), "0");
+        assert_eq!(fmt_tokens(999), "999");
+        assert_eq!(fmt_tokens(1_500), "1.5k");
+        assert_eq!(fmt_tokens(12_345), "12.3k");
+        assert_eq!(fmt_tokens(1_000_000), "1.0M");
+        assert_eq!(fmt_tokens(6_000_000), "6.0M");
     }
 
     #[test]

@@ -438,6 +438,8 @@ pub(crate) struct App {
     pub(crate) model_name: String,
     /// Грубая оценка токенов истории.
     history_tokens: usize,
+    /// Эффективный бюджет контекста активной модели (0 — неизвестен).
+    context_budget: usize,
     /// Тема оформления.
     pub(crate) theme: Theme,
     /// Канал событий в event loop.
@@ -513,6 +515,9 @@ impl App {
         mcp: Option<Arc<McpManager>>,
         status_extra: Option<String>,
     ) -> Self {
+        let context_budget = session
+            .as_ref()
+            .map_or(0, AgentSession::effective_context_budget);
         Self {
             screen: Screen::Splash,
             ask: None,
@@ -537,6 +542,7 @@ impl App {
             should_quit: false,
             model_name: "—".into(),
             history_tokens: 0,
+            context_budget,
             theme: Theme::default(),
             msg_tx: None,
         }
@@ -596,6 +602,11 @@ impl App {
     /// Грубая оценка токенов истории.
     pub(crate) fn history_tokens(&self) -> usize {
         self.history_tokens
+    }
+
+    /// Эффективный бюджет контекста активной модели (0 — неизвестен).
+    pub(crate) fn context_budget(&self) -> usize {
+        self.context_budget
     }
 
     /// Доп. сообщение статус-бара (ошибки MCP и т.п.).
@@ -1191,6 +1202,8 @@ impl App {
             .iter()
             .map(ChatMessage::rough_tokens)
             .sum();
+        // Бюджет перечитываем: `/model` мог сменить провайдера и окно.
+        self.context_budget = session.effective_context_budget();
         self.session = Some(session);
     }
 
@@ -1310,6 +1323,12 @@ pub(crate) mod testing {
         let session = stub_session(&cfg);
         let ctx = ToolContext::new(PathBuf::from("/tmp"), cfg);
         App::new(Some(session), ctx, None, None)
+    }
+
+    /// Подменяет показания контекста для тестов статус-бара.
+    pub(crate) fn set_context_usage(app: &mut App, used: usize, budget: usize) {
+        app.history_tokens = used;
+        app.context_budget = budget;
     }
 }
 

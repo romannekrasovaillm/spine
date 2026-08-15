@@ -654,8 +654,10 @@ impl AgentSession {
     /// Эффективный бюджет контекста: min(`agent.context_budget_tokens`,
     /// окно модели из `ModelConfig.context_limit`). Пороги компактификации
     /// (70%/95%) таким образом привязаны к реальному пределу API активного
-    /// провайдера, а не только к конфигурационному бюджету.
-    fn effective_context_budget(&self) -> usize {
+    /// провайдера, а не только к конфигурационному бюджету. Публичен для
+    /// индикатора заполнения контекста в статус-баре TUI.
+    #[must_use]
+    pub fn effective_context_budget(&self) -> usize {
         let configured = self.config.agent.context_budget_tokens.max(1);
         self.config
             .models

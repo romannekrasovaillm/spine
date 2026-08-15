@@ -103,6 +103,9 @@ BMAD, Spec Kit, OpenSpec и др.):
 - Промышленная закалка стрима: ретрай обрыва SSE на любой фазе (с заметкой
   в чате), таймаут тишины вместо общего таймаута, компактификация L1/L3,
   детекторы петель, редакция секретов в выводе и журнале.
+- **Индикатор контекста** в статус-баре: `◈ 12.3k/1.0M ▰▰▱▱▱▱▱▱ 1%` —
+  заполнение окна активной модели; шкала зелёная до порога L1, оранжевая
+  до L3, дальше красная.
 
 #### Библиотека скиллов и плагины (agent-plugins.org)
 
@@ -318,6 +321,9 @@ BMAD, Spec Kit, OpenSpec, and more):
 - Hardened streaming: mid-stream break auto-retry with an in-chat note,
   silence-timeout instead of a whole-request timeout, L1/L3 compaction,
   loop detectors, secret redaction in tool output and journals.
+- **Context gauge** in the status bar: `◈ 12.3k/1.0M ▰▰▱▱▱▱▱▱ 1%` — live
+  fill of the active model's context window; the bar is green up to the L1
+  threshold, orange up to L3, red beyond.
 
 **Skills library & plugins** ([agent-plugins.org](https://agent-plugins.org) layout)
 
