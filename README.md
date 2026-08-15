@@ -266,6 +266,7 @@ arch [--config <path>] <command>   # без команды — TUI
 ### Документация
 
 - `docs/architecture.md` — устройство, контракты, как расширять.
+- `AGENTS.md` — путеводитель для агентов и контрибьюторов (установка, карта модулей, конвенции).
 - `docs/slash_commands.md` — слэш-команды TUI; `docs/tools.md` — инструменты.
 - `docs/models.md` — подключение LLM (DeepSeek/Kimi/GLM, свои endpoint'ы).
 - `docs/plugins_and_skills.md` — плагины и библиотека скиллов.
@@ -418,6 +419,7 @@ Fully commented sample: `config.example.toml`.
 ### Documentation
 
 - `docs/architecture.md` — system design, contracts, how to extend.
+- `AGENTS.md` — guide for agents and contributors (install, module map, conventions).
 - `docs/tools.md` — full tool reference (30+ tools with parameters).
 - `docs/slash_commands.md`, `docs/models.md`, `docs/plugins_and_skills.md`,
   `docs/rubrics_and_benchmarks.md`, `docs/harness_integrations.md`,
