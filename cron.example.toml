@@ -1,0 +1,45 @@
+# =============================================================================
+# arch-harness — пример расписания md-задач (cron.toml)
+# =============================================================================
+# Принцип: задача — это markdown-инструкция; исполнитель — LLM с ядерными
+# инструментами (bash-пайпы!); тайминг — 5-полевое cron-выражение
+# (минута час день-месяца месяц день-недели).
+#
+# Поля задачи:
+#   name     — уникальное имя (по нему `arch cron run <name>`);
+#   schedule — 5-полевое cron-выражение;
+#   task_md  — файл с md-инструкцией (образцы — examples/cron/*.md в репо;
+#              `arch init` копирует их в ~/.arch-harness/cron/);
+#   model    — опционально: модель из [models] (иначе — default_model);
+#   out      — опционально: каталог отчётов (иначе <reports_dir>/cron).
+#
+# ВНИМАНИЕ: тильда в task_md НЕ раскрывается автоматически — после `arch init`
+# при необходимости замените на абсолютные пути. Запуск из системного cron:
+#   */15 * * * * arch cron tick >> ~/.arch-harness/reports/cron/tick.log 2>&1
+# =============================================================================
+
+# Ежедневный дайджест новых материалов базы знаний (каталоги [knowledge]).
+# Отчёт: markdown + headless JSON-статус в конце; индекс — reports/cron/INDEX.md.
+[[job]]
+name = "kb-digest"
+schedule = "30 9 * * *"
+task_md = "~/.arch-harness/cron/kb_digest.md"
+model = "deepseek"
+
+# Дрейф-чек спецификаций (гейт A5 по расписанию): свежесть docs/specs/*.md
+# против свежих коммитов кода, расхождения — только со свидетельствами.
+# Будни в 18:00, рассуждающая модель: нужна аккуратная работа со свидетельствами.
+[[job]]
+name = "spec-drift"
+schedule = "0 18 * * 1-5"
+task_md = "~/.arch-harness/cron/spec_drift.md"
+model = "deepseek-pro"
+out = "~/.arch-harness/reports/cron/spec-drift"
+
+# Дрейф-контроль AGENTS.md по флоту репозиториев: свежесть сгенерированных зон,
+# покрытие флота, error-проблемы. Реестр: ~/.arch-harness/repos.txt.
+[[job]]
+name = "agents-md-drift"
+schedule = "20 8 * * 1-5"
+task_md = "~/.arch-harness/cron/agents_md_drift.md"
+model = "deepseek"

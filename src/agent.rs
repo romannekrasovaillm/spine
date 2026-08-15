@@ -1,0 +1,1541 @@
+//! Агентный цикл харнесса: сообщения ↔ вызовы инструментов, слэш-команды,
+//! библиотека промптов, append-only журнал сессии (memlog-паттерн).
+//!
+//! КОНТРАКТ (владелец: агент `agent`):
+//! - [`AgentSession`] — цикл: user → (LLM → tool_calls → ToolRegistry::dispatch
+//!   → tool_result)* → финальный текст; лимит итераций из `AgentConfig`,
+//!   при исчерпании — финальный ответ без инструментов (не ошибка);
+//!   бюджет контекста: грубая оценка токенов ([`ChatMessage::rough_tokens`]),
+//!   при переполнении — склейка старых tool-результатов (усечение) с пометкой;
+//! - события [`AgentEvent`] через mpsc для TUI/стриминга в CLI;
+//! - журнал сессии: JSONL append-only в `paths.sessions_dir` (ISO-метки,
+//!   события user/assistant/tool/system) — воспроизводимость и resume;
+//! - [`slash`] — слэш-команды (см. файл); [`prompts`] — библиотека шаблонов.
+
+use std::fmt::Write as _;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::Duration;
+
+use serde_json::Value;
+use tokio::sync::mpsc;
+
+use crate::config::Config;
+use crate::error::{HarnessError, Result};
+use crate::llm::{ChatMessage, ChatRequest, LlmEvent, LlmProvider, Role};
+use crate::tool::{ToolContext, ToolOutput, ToolRegistry};
+
+pub mod prompts;
+pub mod slash;
+
+/// Таймаут одного вызова инструмента, секунды.
+const TOOL_TIMEOUT_SECS: u64 = 300;
+/// Таймаут интерактивного вопроса пользователю (`propose_options`): человеку
+/// на архитектурное решение нужно больше пяти минут — час, не 300 секунд.
+const ASK_TIMEOUT_SECS: u64 = 3600;
+/// Максимум символов результата инструмента, сохраняемых в истории.
+const TOOL_RESULT_MAX_CHARS: usize = 8192;
+/// Длина tool-сообщения после усечения при компактификации.
+const COMPACT_TOOL_CHARS: usize = 500;
+/// Сколько последних tool-сообщений не усечь при компактификации.
+const COMPACT_KEEP_TOOL: usize = 4;
+/// Сколько последних сообщений не удалять при жёсткой компактификации.
+const COMPACT_KEEP_TAIL: usize = 6;
+
+/// Событие агентного цикла (для TUI/CLI-стриминга).
+#[derive(Debug, Clone)]
+pub enum AgentEvent {
+    /// Порция текста ответа.
+    Delta(String),
+    /// Начался вызов инструмента.
+    ToolStart {
+        /// Имя инструмента.
+        name: String,
+        /// Аргументы (JSON).
+        args: Value,
+    },
+    /// Инструмент завершился.
+    ToolEnd {
+        /// Имя инструмента.
+        name: String,
+        /// Признак ошибки.
+        is_error: bool,
+        /// Краткий итог (первая строка вывода).
+        summary: String,
+        /// Полный вывод (после редакции секретов и усечения) — для вкладок
+        /// правой панели (mermaid-арт, рубрики): summary их обрезал до
+        /// первой строки.
+        content: String,
+    },
+    /// Служебная заметка (детекторы циклов, компактификация, хуки).
+    Note(String),
+    /// Ход завершён.
+    TurnDone,
+}
+
+/// Сессия агента: история сообщений + реестр инструментов + провайдер.
+pub struct AgentSession {
+    /// Конфигурация харнесса.
+    config: Arc<Config>,
+    /// Активный провайдер LLM.
+    provider: Arc<dyn LlmProvider>,
+    /// Реестр инструментов.
+    tools: ToolRegistry,
+    /// Контекст вызова инструментов.
+    tool_ctx: ToolContext,
+    /// Системный промпт (первым сообщением каждого запроса).
+    system_prompt: String,
+    /// История хода (без системного сообщения).
+    history: Vec<ChatMessage>,
+    /// Путь к журналу сессии (None — журнал не удалось открыть).
+    log_path: Option<PathBuf>,
+    /// Append-only файл журнала (JSONL). Записи малы, флашим каждую —
+    /// синхронный файл здесь осознанно: журнал должен переживать падение.
+    log_file: Option<std::fs::File>,
+    /// Детекторы циклов (doom-loop / doom-text / exploration spiral).
+    detectors: crate::detectors::LoopDetectors,
+    /// Редактор секретов: маскировка ключей/токенов в выводе инструментов
+    /// до записи в историю и журнал (в журнал секрет не попадает никогда).
+    redactor: crate::secrets::Redactor,
+    /// Хуки жизненного цикла из конфига (`[hooks]`).
+    hooks: crate::hooks::HookSet,
+    /// L3-саммаризация признана бесполезной (после неё всё равно выше
+    /// порога): больше не вызывать — защита от сжигания API каждый ход.
+    l3_futile: bool,
+    /// Переключатель ризонинга (`/think on|off`): None — дефолт провайдера.
+    thinking: Option<bool>,
+}
+
+impl AgentSession {
+    /// Новая сессия: создаёт `sessions_dir`, открывает журнал
+    /// `session-<yyyymmdd-hhmmss>.jsonl` и пишет событие `system`.
+    /// Журнал недоступен — не фатально: сессия работает без записи
+    /// (предупреждение в tracing).
+    pub fn new(
+        config: Arc<Config>,
+        provider: Arc<dyn LlmProvider>,
+        tools: ToolRegistry,
+        tool_ctx: ToolContext,
+        system_prompt: String,
+    ) -> Self {
+        let (log_path, log_file) = match open_journal(&config.paths.sessions_dir) {
+            Ok((path, file)) => (Some(path), Some(file)),
+            Err(e) => {
+                tracing::warn!("журнал сессии недоступен: {e}");
+                (None, None)
+            }
+        };
+        let hooks = crate::hooks::HookSet::from_specs(&config.hooks.specs);
+        let mut tool_ctx = tool_ctx;
+        // Активная модель в контексте инструментов: субагенты и дистилляция
+        // наследуют её (и следят за /model через set_provider).
+        tool_ctx.provider = Some(provider.clone());
+        let mut session = Self {
+            config,
+            provider,
+            tools,
+            tool_ctx,
+            system_prompt,
+            history: Vec::new(),
+            log_path,
+            log_file,
+            detectors: crate::detectors::LoopDetectors::new(),
+            redactor: crate::secrets::Redactor::from_environment(),
+            hooks,
+            l3_futile: false,
+            thinking: None,
+        };
+        let prompt = session.system_prompt.clone();
+        session.log_event("system", serde_json::json!({ "content": prompt }));
+        session.fire_hook(crate::hooks::HookEvent::SessionStart, None, "{}");
+        session
+    }
+
+    /// Полный ход: пользовательский ввод → ответ ассистента (с инструментами).
+    /// `events` — опциональный канал стриминга (None — тихий режим).
+    /// При исчерпании лимита итераций ход не падает: добирается финальный
+    /// ответ без инструментов (заметка в UI + событие `tool_turn_limit`
+    /// в журнале).
+    ///
+    /// # Errors
+    /// Ошибка модели (сеть, API, лимит контекста без прогресса).
+    pub async fn send(
+        &mut self,
+        input: &str,
+        events: Option<mpsc::Sender<AgentEvent>>,
+    ) -> Result<String> {
+        // UserPromptSubmit: exit 2 хука отклоняет промпт целиком.
+        let prompt_ctx = serde_json::json!({
+            "prompt": input.chars().take(2000).collect::<String>(),
+        })
+        .to_string();
+        let outcomes = self.fire_hook(crate::hooks::HookEvent::UserPromptSubmit, None, &prompt_ctx);
+        if crate::hooks::any_blocked(&outcomes) {
+            return Err(HarnessError::Agent(format!(
+                "промпт отклонён хуком: {}",
+                crate::hooks::block_reason(&outcomes)
+            )));
+        }
+        self.history.push(ChatMessage::user(input));
+        self.log_event("user", serde_json::json!({ "content": input }));
+
+        let max_turns = self.config.agent.max_tool_turns;
+        for _turn in 0..max_turns {
+            self.compact_history(&events).await;
+            let request = self.build_request();
+            let first = match (&events, self.config.agent.stream) {
+                (Some(tx), true) => self.stream_request(request, tx).await,
+                _ => self.provider.complete(request).await,
+            };
+            // On-error compact & resubmit (Grok/Theseus): «контекст не влез»
+            // (HTTP 413, context length) — принудительная L3-саммаризация
+            // и ровно один повтор хода; дальше ошибка отдаётся наверх.
+            let reply = match first {
+                Ok(r) => r,
+                Err(e) => {
+                    let overflow = crate::retry::is_context_overflow(None, &e.to_string());
+                    if overflow && !self.l3_futile {
+                        self.emit_note(
+                            &events,
+                            "⚠ контекст не влезает — L3-компактификация и повтор хода".into(),
+                        );
+                        match self.l3_summarize().await {
+                            Ok(_) => {
+                                let request = self.build_request();
+                                match (&events, self.config.agent.stream) {
+                                    (Some(tx), true) => {
+                                        self.stream_request(request, tx).await?
+                                    }
+                                    _ => self.provider.complete(request).await?,
+                                }
+                            }
+                            Err(_) => return Err(e),
+                        }
+                    } else {
+                        return Err(e);
+                    }
+                }
+            };
+
+            if reply.tool_calls.is_empty() {
+                let (_, note) = self.detectors.note_reply_text(&reply.content);
+                if let Some(note) = note {
+                    self.emit_note(&events, note.text);
+                }
+                self.history.push(reply.clone());
+                // reasoning_content — в журнал (аудит цепочек рассуждений;
+                // restore его игнорирует — обратная совместимость сохранена).
+                self.log_event(
+                    "assistant",
+                    serde_json::json!({
+                        "content": reply.content,
+                        "reasoning_content": reply.reasoning_content,
+                    }),
+                );
+                if let Some(tx) = &events {
+                    let _ = tx.send(AgentEvent::TurnDone).await;
+                }
+                return Ok(reply.content);
+            }
+
+            // Аргументы вызовов тоже проходят редакцию: модель могла
+            // процитировать прочитанный секрет в параметрах инструмента.
+            let logged_calls = serde_json::to_string(&reply.tool_calls)
+                .map(|s| self.redactor.redact(&s))
+                .ok()
+                .and_then(|s| serde_json::from_str::<Value>(&s).ok())
+                .unwrap_or(Value::Null);
+            self.log_event(
+                "assistant",
+                serde_json::json!({
+                    "content": reply.content,
+                    "tool_calls": logged_calls,
+                    "reasoning_content": reply.reasoning_content,
+                }),
+            );
+            // doom-text на промежуточном ответе: напоминание вклеивается
+            // после результатов инструментов (контракт tool-пар не нарушается).
+            let (reminder, note) = self.detectors.note_reply_text(&reply.content);
+            if let Some(note) = note {
+                self.emit_note(&events, note.text);
+            }
+            self.history.push(reply.clone());
+
+            for call in &reply.tool_calls {
+                if let Some(tx) = &events {
+                    let _ = tx
+                        .send(AgentEvent::ToolStart {
+                            name: call.name.clone(),
+                            args: call.arguments.clone(),
+                        })
+                        .await;
+                }
+                // Хук PreToolUse (exit 2) отменяет вызов — до детекторов:
+                // заблокированный вызов не должен копить doom-окно.
+                let hook_ctx = serde_json::json!({ "tool": call.name, "args": call.arguments }).to_string();
+                let pre = self.fire_hook(crate::hooks::HookEvent::PreToolUse, Some(&call.name), &hook_ctx);
+                let hook_verdict = if crate::hooks::any_blocked(&pre) {
+                    Some(format!(
+                        "BLOCKED by hook: {}",
+                        crate::hooks::block_reason(&pre)
+                    ))
+                } else {
+                    None
+                };
+                // Детекторы циклов: вердикт подменяет исполнение — контракт
+                // tool-сообщений сохраняется (каждый id получает ровно один ответ).
+                let (verdict, note) = match hook_verdict {
+                    Some(v) => (Some(v), None),
+                    None => self.detectors.check_call(&call.name, &call.arguments),
+                };
+                if let Some(note) = note {
+                    self.emit_note(&events, note.text);
+                }
+                let out = match verdict {
+                    Some(text) => ToolOutput::err(text),
+                    None => {
+                        // Интерактивный выбор (propose_options) ждёт человека —
+                        // ему расширенный таймаут; остальным — стандартный.
+                        let wait = if call.name == crate::tools::ask::PROPOSE_OPTIONS {
+                            ASK_TIMEOUT_SECS
+                        } else {
+                            TOOL_TIMEOUT_SECS
+                        };
+                        match tokio::time::timeout(
+                            Duration::from_secs(wait),
+                            self.tools
+                                .dispatch(&call.name, call.arguments.clone(), &self.tool_ctx),
+                        )
+                        .await
+                        {
+                            Ok(out) => out,
+                            Err(_) => ToolOutput::err(format!(
+                                "{}: таймаут {}с",
+                                call.name, wait
+                            )),
+                        }
+                    }
+                };
+                // Редакция секретов до событий/истории/журнала: вывод
+                // инструмента мог содержать ключи из .env, конфигов, PEM.
+                let mut redacted = self.redactor.redact(&out.content);
+                if redacted != out.content {
+                    self.log_event(
+                        "event",
+                        serde_json::json!({ "event": "secrets_redacted", "tool": call.name }),
+                    );
+                }
+                // Аудит интерактивных выборов: метрика «approval theater»
+                // (обзоры _24_августа: >90–95% авто-согласий = театр) в arch metrics.
+                if call.name == crate::tools::ask::PROPOSE_OPTIONS {
+                    if let Some((choice, declined)) = crate::tools::ask::classify_answer(&out.content)
+                    {
+                        let recommended = call
+                            .arguments
+                            .get("recommended")
+                            .and_then(Value::as_str)
+                            .unwrap_or("");
+                        self.log_event(
+                            "event",
+                            serde_json::json!({
+                                "event": "ask",
+                                "question": call
+                                    .arguments
+                                    .get("question")
+                                    .and_then(Value::as_str)
+                                    .unwrap_or("")
+                                    .chars()
+                                    .take(200)
+                                    .collect::<String>(),
+                                "recommended": recommended,
+                                "choice": choice,
+                                "declined": declined,
+                                "chose_recommended": !declined
+                                    && !recommended.is_empty()
+                                    && choice == recommended,
+                            }),
+                        );
+                    }
+                }
+                // PostToolUse-хуки: stdout дописывается к результату (маркер).
+                let post_ctx = serde_json::json!({
+                    "tool": call.name,
+                    "is_error": out.is_error,
+                    "output_head": redacted.chars().take(500).collect::<String>(),
+                })
+                .to_string();
+                let post =
+                    self.fire_hook(crate::hooks::HookEvent::PostToolUse, Some(&call.name), &post_ctx);
+                let hook_extra: String = post
+                    .iter()
+                    .map(|o| o.stdout.trim())
+                    .filter(|s| !s.is_empty())
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                if !hook_extra.is_empty() {
+                    let _ = write!(redacted, "\n[hook] {}", hook_extra.chars().take(1000).collect::<String>());
+                }
+                let content = truncate_chars(&redacted, TOOL_RESULT_MAX_CHARS);
+                if let Some(tx) = &events {
+                    let _ = tx
+                        .send(AgentEvent::ToolEnd {
+                            name: call.name.clone(),
+                            is_error: out.is_error,
+                            summary: summarize(&redacted),
+                            content: content.clone(),
+                        })
+                        .await;
+                }
+                self.log_event(
+                    "tool",
+                    serde_json::json!({
+                        "name": call.name,
+                        "tool_call_id": call.id,
+                        "is_error": out.is_error,
+                        "content": content,
+                    }),
+                );
+                self.history
+                    .push(ChatMessage::tool_result(call.id.clone(), content));
+            }
+            if let Some(reminder) = reminder {
+                self.history.push(ChatMessage::user(reminder));
+            }
+        }
+        // Бюджет итераций исчерпан (длинная легитимная работа или петля):
+        // ход НЕ убиваем — добираем финальный ответ БЕЗ инструментов,
+        // чтобы пользователь получил результат, а не мёртвую ошибку.
+        self.emit_note(
+            &events,
+            format!("лимит итераций инструментов ({max_turns}) — собираю финальный ответ без инструментов"),
+        );
+        self.log_event(
+            "event",
+            serde_json::json!({ "event": "tool_turn_limit", "limit": max_turns }),
+        );
+        let mut request = self.build_request();
+        request.tools.clear();
+        // Служебная реплика — только в запрос, в историю не пишется.
+        request.messages.push(ChatMessage::user(
+            "[харнесс] Лимит итераций инструментов исчерпан. Дай финальный ответ по уже \
+             собранным данным, без вызовов инструментов: что сделано, что осталось, \
+             следующий шаг для пользователя.",
+        ));
+        let reply = match (&events, self.config.agent.stream) {
+            (Some(tx), true) => self.stream_request(request, tx).await,
+            _ => self.provider.complete(request).await,
+        }?;
+        let content = reply.content.clone();
+        self.log_event(
+            "assistant",
+            serde_json::json!({
+                "content": reply.content,
+                "reasoning_content": reply.reasoning_content,
+            }),
+        );
+        self.history.push(reply);
+        if let Some(tx) = &events {
+            let _ = tx.send(AgentEvent::TurnDone).await;
+        }
+        Ok(content)
+    }
+
+    /// Текущая история сообщений.
+    #[must_use]
+    pub fn messages(&self) -> &[ChatMessage] {
+        &self.history
+    }
+
+    /// Сменить модель на лету (и в контексте инструментов — для субагентов).
+    pub fn set_provider(&mut self, provider: Arc<dyn LlmProvider>) {
+        self.tool_ctx.provider = Some(provider.clone());
+        self.provider = provider;
+    }
+
+    /// Активный провайдер (для слэш-команд вроде `/distill`).
+    #[must_use]
+    pub fn provider(&self) -> Arc<dyn LlmProvider> {
+        self.provider.clone()
+    }
+
+    /// Устанавливает переключатель ризонинга (`/think on|off`);
+    /// `None` — вернуться к дефолту провайдера.
+    pub fn set_thinking(&mut self, thinking: Option<bool>) {
+        self.thinking = thinking;
+    }
+
+    /// Текущее состояние переключателя ризонинга.
+    #[must_use]
+    pub fn thinking(&self) -> Option<bool> {
+        self.thinking
+    }
+
+    /// Имя активной модели.
+    #[must_use]
+    pub fn model_name(&self) -> String {
+        self.provider.model().to_string()
+    }
+
+    /// Имена зарегистрированных инструментов (для `/tools`).
+    #[must_use]
+    pub fn tool_names(&self) -> Vec<String> {
+        self.tools.names()
+    }
+
+    /// Спецификации инструментов с описаниями (для `/tools`).
+    #[must_use]
+    pub fn tool_specs(&self) -> Vec<crate::llm::ToolSpec> {
+        self.tools.specs()
+    }
+
+    /// Путь к журналу сессии (None — журнал не открыт).
+    #[must_use]
+    pub fn log_path(&self) -> Option<&Path> {
+        self.log_path.as_deref()
+    }
+
+    /// Очистить историю (с записью события в журнал) и сбросить детекторы.
+    pub fn clear(&mut self) {
+        self.history.clear();
+        self.detectors.reset();
+        self.l3_futile = false;
+        self.log_event("event", serde_json::json!({ "event": "clear" }));
+    }
+
+    /// Эмит служебной заметки: событие в канал (если есть) + запись в журнал.
+    fn emit_note(&mut self, events: &Option<mpsc::Sender<AgentEvent>>, text: String) {
+        self.log_event("event", serde_json::json!({ "event": "note", "text": text }));
+        if let Some(tx) = events {
+            let _ = tx.try_send(AgentEvent::Note(text));
+        }
+    }
+
+    /// Исполнить хуки события и записать итоги в журнал. Блокирующие
+    /// события (exit 2) разбирает вызывающая сторона по возвращённым итогам.
+    fn fire_hook(
+        &mut self,
+        event: crate::hooks::HookEvent,
+        tool: Option<&str>,
+        context: &str,
+    ) -> Vec<crate::hooks::HookOutcome> {
+        if self.hooks.is_empty() {
+            return Vec::new();
+        }
+        let outcomes = self.hooks.fire(event, tool, context);
+        if !outcomes.is_empty() {
+            self.log_event(
+                "event",
+                serde_json::json!({
+                    "event": "hook",
+                    "hook_event": event.as_str(),
+                    "tool": tool,
+                    "outcomes": outcomes.iter().map(|o| serde_json::json!({
+                        "command": o.command,
+                        "code": o.code,
+                        "note": o.note,
+                    })).collect::<Vec<_>>(),
+                }),
+            );
+        }
+        outcomes
+    }
+
+    /// Включить внешний текст в контекст как user-сообщение (без обращения
+    /// к модели) — используется `/load`.
+    pub fn inject_context(&mut self, label: &str, content: &str) {
+        let text = format!("Включи в контекст ({label}):\n\n{content}");
+        self.history.push(ChatMessage::user(&text));
+        self.log_event(
+            "user",
+            serde_json::json!({ "content": text, "injected": label }),
+        );
+    }
+
+    /// Восстанавливает историю диалога из журнала прошлой сессии (JSONL).
+    ///
+    /// Переносятся сообщения user/assistant (тексты); вызовы инструментов
+    /// прошлой сессии в историю не попадают (orphan tool_calls недопустимы
+    /// для API), но остаются в файле журнала. Возвращает число
+    /// восстановленных сообщений.
+    ///
+    /// # Errors
+    /// Файл не читается или не является JSONL-журналом сессии.
+    pub fn restore_from_log(&mut self, path: &Path) -> Result<usize> {
+        let text = std::fs::read_to_string(path).map_err(|e| HarnessError::io(path, e))?;
+        let mut restored = 0usize;
+        for (n, line) in text.lines().enumerate() {
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+            let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
+                return Err(HarnessError::Agent(format!(
+                    "{}: строка {} — не JSONL журнала сессии",
+                    path.display(),
+                    n + 1
+                )));
+            };
+            let kind = v.get("kind").and_then(|k| k.as_str()).unwrap_or("");
+            let content = v
+                .get("content")
+                .and_then(|c| c.as_str())
+                .unwrap_or_default()
+                .to_string();
+            match kind {
+                "user" if !content.is_empty() => {
+                    self.history.push(ChatMessage::user(content));
+                    restored += 1;
+                }
+                "assistant" if !content.is_empty() => {
+                    // tool_calls прошлой сессии намеренно не переносим.
+                    self.history.push(ChatMessage::assistant(content, Vec::new()));
+                    restored += 1;
+                }
+                _ => {}
+            }
+        }
+        self.log_event(
+            "event",
+            serde_json::json!({ "event": "resume", "from": path.display().to_string(), "restored": restored }),
+        );
+        Ok(restored)
+    }
+
+    /// Собирает запрос к модели: системный промпт + история, инструменты,
+    /// max_tokens/temperature из `ModelConfig` активного провайдера.
+    fn build_request(&self) -> ChatRequest {
+        let mut messages = Vec::with_capacity(self.history.len() + 1);
+        messages.push(ChatMessage::system(self.system_prompt.clone()));
+        messages.extend(self.history.iter().cloned());
+        let mc = self.config.models.get(self.provider.name());
+        ChatRequest {
+            messages,
+            tools: self.tools.specs(),
+            temperature: mc.and_then(|m| m.temperature),
+            max_tokens: mc.and_then(|m| m.max_tokens),
+            thinking: self.thinking,
+        }
+    }
+
+    /// Стриминговый запрос: дельты провайдера пересылаются как
+    /// [`AgentEvent::Delta`]. Пересыльщик дожидается конца потока, чтобы
+    /// ни одна дельта не потерялась до возврата ответа.
+    async fn stream_request(
+        &self,
+        request: ChatRequest,
+        events: &mpsc::Sender<AgentEvent>,
+    ) -> Result<ChatMessage> {
+        let (ltx, mut lrx) = mpsc::channel::<LlmEvent>(64);
+        let ftx = events.clone();
+        let forward = tokio::spawn(async move {
+            while let Some(ev) = lrx.recv().await {
+                let mapped = match ev {
+                    LlmEvent::Delta(text) => AgentEvent::Delta(text),
+                    LlmEvent::Note(text) => AgentEvent::Note(text),
+                    LlmEvent::Done(_) => continue,
+                };
+                if ftx.send(mapped).await.is_err() {
+                    break;
+                }
+            }
+        });
+        let result = self.provider.stream(request, ltx).await;
+        let _ = forward.await;
+        result
+    }
+
+    /// Компактификация истории (трёхуровневая, по Theseus/Grok/Codex):
+    /// - L1 (≥ `compact_l1_pct`% бюджета): маскирование старых tool-результатов
+    ///   — усечение до [`COMPACT_TOOL_CHARS`] с пометкой, кроме
+    ///   [`COMPACT_KEEP_TOOL`] последних;
+    /// - прунинг (только пока итог > 100% бюджета): удаление старейших
+    ///   не-системных сообщений, хвост из [`COMPACT_KEEP_TAIL`] неприкосновенен;
+    /// - L3 (≥ `compact_l3_pct`% или принудительно при HTTP 413): LLM-саммари
+    ///   истории до последнего user-сообщения ([`Self::l3_summarize`]);
+    ///   если после L3 итог всё равно выше порога — `l3_futile` отключает
+    ///   дальнейшие попытки (иначе каждый ход жёг бы API впустую).
+    /// Факт компактификации пишется в журнал.
+    async fn compact_history(&mut self, events: &Option<mpsc::Sender<AgentEvent>>) {
+        let budget = self.config.agent.context_budget_tokens.max(1);
+        let l1 = budget * self.config.agent.compact_l1_pct.min(100) / 100;
+        let l3 = budget * self.config.agent.compact_l3_pct / 100;
+        let mut total: usize = self.history.iter().map(ChatMessage::rough_tokens).sum();
+        if total <= l1 {
+            return;
+        }
+        self.fire_hook(crate::hooks::HookEvent::PreCompact, None, "{}");
+
+        // L1: маскирование старых tool-сообщений.
+        let mut truncated = 0usize;
+        let tool_idx: Vec<usize> = self
+            .history
+            .iter()
+            .enumerate()
+            .filter(|(_, m)| m.role == Role::Tool)
+            .map(|(i, _)| i)
+            .collect();
+        let cut = tool_idx.len().saturating_sub(COMPACT_KEEP_TOOL);
+        for &i in &tool_idx[..cut] {
+            let msg = &mut self.history[i];
+            if msg.content.chars().count() > COMPACT_TOOL_CHARS {
+                let mut short: String = msg.content.chars().take(COMPACT_TOOL_CHARS).collect();
+                short.push_str("\n[контекст усечён]");
+                msg.content = short;
+                truncated += 1;
+            }
+        }
+
+        // Прунинг: только при реальном переполнении (>100%).
+        total = self.history.iter().map(ChatMessage::rough_tokens).sum();
+        let mut removed = 0usize;
+        while total > budget && self.history.len() > COMPACT_KEEP_TAIL {
+            let Some(pos) = self.history.iter().position(|m| m.role != Role::System) else {
+                break;
+            };
+            total = total.saturating_sub(self.history[pos].rough_tokens());
+            self.history.remove(pos);
+            removed += 1;
+        }
+
+        if truncated > 0 || removed > 0 {
+            self.log_event(
+                "event",
+                serde_json::json!({
+                    "event": "compact",
+                    "truncated_tools": truncated,
+                    "removed_messages": removed,
+                    "history_len": self.history.len(),
+                    "rough_tokens": total,
+                }),
+            );
+        }
+
+        // L3: LLM-саммари при тяжёлом хвосте.
+        total = self.history.iter().map(ChatMessage::rough_tokens).sum();
+        let mut l3_folded = 0usize;
+        if total > l3 && !self.l3_futile {
+            match self.l3_summarize().await {
+                Ok(from) if from > 0 => {
+                    l3_folded = from;
+                    let after: usize =
+                        self.history.iter().map(ChatMessage::rough_tokens).sum();
+                    self.emit_note(
+                        events,
+                        format!("⚠ L3-компактификация: {from} сообщений → саммари (~{after} ток.)"),
+                    );
+                    if after > l3 {
+                        self.l3_futile = true;
+                    }
+                }
+                Ok(_) => self.l3_futile = true, // резать нечего — не вызывать зря
+                Err(e) => {
+                    tracing::warn!("L3-саммаризация не удалась: {e}");
+                    self.l3_futile = true;
+                }
+            }
+        }
+        if truncated > 0 || removed > 0 || l3_folded > 0 {
+            self.fire_hook(crate::hooks::HookEvent::PostCompact, None, "{}");
+        }
+    }
+
+    /// L3: сворачивает историю ДО последнего user-сообщения в одно
+    /// assistant-сообщение с саммари (граница по user никогда не разрывает
+    /// пары tool_call/tool_result). Возвращает число свёрнутых сообщений
+    /// (0 — сворачивать нечего).
+    ///
+    /// # Errors
+    /// Ошибка вызова модели-саммаризатора.
+    async fn l3_summarize(&mut self) -> Result<usize> {
+        let Some(boundary) = self.history.iter().rposition(|m| m.role == Role::User) else {
+            return Ok(0);
+        };
+        if boundary == 0 {
+            return Ok(0);
+        }
+        // Сериализация старого диалога с усечением (общий дамп ≤ 48k символов).
+        let mut dump = String::new();
+        for m in &self.history[..boundary] {
+            let role = match m.role {
+                Role::User => "user",
+                Role::Assistant => "assistant",
+                Role::Tool => "tool",
+                Role::System => "system",
+            };
+            let content: String = m.content.chars().take(1500).collect();
+            let _ = writeln!(dump, "[{role}] {content}");
+            if dump.chars().count() > 48_000 {
+                dump.push_str("\n… [дамп усечён]");
+                break;
+            }
+        }
+        let request = ChatRequest {
+            messages: vec![
+                ChatMessage::system(
+                    "Ты — компактификатор контекста агента-архитектора. Сожми диалог \
+                     в «заметки для продолжения» по-русски: цель задачи, принятые \
+                     решения (со ссылками на артефакты/файлы), что уже сделано, \
+                     открытые вопросы, следующие шаги. До 1500 символов.",
+                ),
+                ChatMessage::user(dump),
+            ],
+            tools: Vec::new(),
+            temperature: Some(0.2),
+            max_tokens: Some(1200),
+            thinking: None,
+        };
+        let summary = self.provider.complete(request).await?.content;
+        let summary = if summary.trim().is_empty() {
+            "(пустая суммаризация)".to_string()
+        } else {
+            summary
+        };
+        let from = boundary;
+        let compacted = ChatMessage::assistant(
+            format!("CONTEXT COMPACTED ({from} сообщений → саммари): {summary}"),
+            Vec::new(),
+        );
+        self.history.splice(..boundary, [compacted]);
+        self.log_event(
+            "event",
+            serde_json::json!({ "event": "compact_l3", "folded": from }),
+        );
+        Ok(from)
+    }
+
+    /// Строка в журнал сессии (JSONL). Ошибки записи — в tracing, не рвут ход.
+    fn log_event(&mut self, kind: &str, extra: Value) {
+        let Some(file) = self.log_file.as_mut() else {
+            return;
+        };
+        let mut obj = serde_json::Map::new();
+        obj.insert("ts".into(), Value::String(now_iso()));
+        obj.insert("kind".into(), Value::String(kind.to_string()));
+        if let Value::Object(map) = extra {
+            obj.extend(map);
+        }
+        let mut line = Value::Object(obj).to_string();
+        line.push('\n');
+        if let Err(e) = std::io::Write::write_all(file, line.as_bytes())
+            .and_then(|()| std::io::Write::flush(file))
+        {
+            tracing::warn!("журнал сессии: {e}");
+        }
+    }
+}
+
+/// Завершение сессии: хук SessionEnd (аудит/нотификации в корпоративном
+/// контуре). Журнал к этому моменту ещё открыт — событие фиксируется.
+impl Drop for AgentSession {
+    fn drop(&mut self) {
+        if !self.hooks.is_empty() {
+            let outcomes = self.hooks.fire(crate::hooks::HookEvent::SessionEnd, None, "{}");
+            if !outcomes.is_empty() {
+                self.log_event(
+                    "event",
+                    serde_json::json!({
+                        "event": "hook",
+                        "hook_event": "SessionEnd",
+                        "outcomes": outcomes.len(),
+                    }),
+                );
+            }
+        }
+    }
+}
+
+/// Открывает append-only журнал `session-<yyyymmdd-hhmmss>-<pid>.jsonl` в
+/// `dir`. Суффикс pid защищает от коллизии двух сессий, стартовавших
+/// в одну секунду (иначе журналы перемешивались бы).
+fn open_journal(dir: &Path) -> Result<(PathBuf, std::fs::File)> {
+    std::fs::create_dir_all(dir).map_err(|e| HarnessError::io(dir, e))?;
+    let name = format!(
+        "session-{}-{}.jsonl",
+        chrono::Local::now().format("%Y%m%d-%H%M%S"),
+        std::process::id()
+    );
+    let path = dir.join(name);
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .map_err(|e| HarnessError::io(&path, e))?;
+    Ok((path, file))
+}
+
+/// Текущее время в ISO 8601 с миллисекундами (для журнала).
+fn now_iso() -> String {
+    chrono::Local::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+}
+
+/// Усекает текст до `max` символов (char-safe) с пометкой об усечении.
+fn truncate_chars(text: &str, max: usize) -> String {
+    let out: String = text.chars().take(max).collect();
+    if out.len() < text.len() {
+        let mut marked = out;
+        let _ = write!(marked, "\n… [усечено до {max} символов]");
+        marked
+    } else {
+        out
+    }
+}
+
+/// Краткий итог вывода инструмента: первая строка, не более 120 символов.
+fn summarize(content: &str) -> String {
+    let first = content.lines().next().unwrap_or("").trim();
+    let mut out: String = first.chars().take(120).collect();
+    if out.len() < first.len() {
+        out.push('…');
+    }
+    out
+}
+
+/// Сводка о журнале сессии (для `/sessions`).
+#[derive(Debug, Clone)]
+pub struct SessionLogInfo {
+    /// Путь к JSONL-журналу.
+    pub path: PathBuf,
+    /// Время модификации (строка для показа).
+    pub modified: String,
+    /// Первая пользовательская реплика (превью).
+    pub first_user_line: String,
+    /// Число сообщений user/assistant в журнале.
+    pub messages: usize,
+}
+
+/// Список журналов сессий каталога (новые первыми).
+pub fn list_session_logs(dir: &Path) -> Vec<SessionLogInfo> {
+    let mut out = Vec::new();
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return out;
+    };
+    for entry in rd.flatten() {
+        let path = entry.path();
+        let is_log = path
+            .file_name()
+            .map(|n| {
+                let n = n.to_string_lossy();
+                n.starts_with("session-") && n.ends_with(".jsonl")
+            })
+            .unwrap_or(false);
+        if !is_log {
+            continue;
+        }
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        let mut first_user_line = String::new();
+        let mut messages = 0usize;
+        for line in text.lines() {
+            let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
+                continue;
+            };
+            let kind = v.get("kind").and_then(|k| k.as_str()).unwrap_or("");
+            if matches!(kind, "user" | "assistant") {
+                messages += 1;
+                if kind == "user" && first_user_line.is_empty() {
+                    let content = v.get("content").and_then(|c| c.as_str()).unwrap_or("");
+                    first_user_line = summarize(content);
+                }
+            }
+        }
+        let modified = entry
+            .metadata()
+            .and_then(|m| m.modified())
+            .map(|t| {
+                let dt: chrono::DateTime<chrono::Local> = t.into();
+                dt.format("%Y-%m-%d %H:%M:%S").to_string()
+            })
+            .unwrap_or_default();
+        out.push(SessionLogInfo {
+            path,
+            modified,
+            first_user_line,
+            messages,
+        });
+    }
+    out.sort_by(|a, b| b.modified.cmp(&a.modified));
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use crate::llm::{ToolCall, ToolSpec};
+    use crate::tool::Tool;
+
+    /// Тестовый провайдер: первый вызов просит инструмент `echo`,
+    /// второй — отвечает финальным текстом.
+    #[derive(Debug)]
+    struct FakeLlm {
+        calls: AtomicUsize,
+    }
+
+    impl FakeLlm {
+        fn new() -> Self {
+            Self {
+                calls: AtomicUsize::new(0),
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl LlmProvider for FakeLlm {
+        fn name(&self) -> &str {
+            "fake"
+        }
+        fn model(&self) -> &str {
+            "fake-1"
+        }
+        async fn complete(&self, _req: ChatRequest) -> Result<ChatMessage> {
+            let n = self.calls.fetch_add(1, Ordering::SeqCst);
+            if n == 0 {
+                Ok(ChatMessage::assistant(
+                    "",
+                    vec![ToolCall {
+                        id: "call-1".into(),
+                        name: "echo".into(),
+                        arguments: serde_json::json!({ "text": "привет" }),
+                    }],
+                ))
+            } else {
+                Ok(ChatMessage::assistant("финальный ответ", Vec::new()))
+            }
+        }
+    }
+
+    /// Провайдер, который бесконечно просит инструмент (для теста лимита).
+    #[derive(Debug)]
+    struct LoopLlm;
+
+    #[async_trait::async_trait]
+    impl LlmProvider for LoopLlm {
+        fn name(&self) -> &str {
+            "loop"
+        }
+        fn model(&self) -> &str {
+            "loop-1"
+        }
+        async fn complete(&self, _req: ChatRequest) -> Result<ChatMessage> {
+            Ok(ChatMessage::assistant(
+                "",
+                vec![ToolCall {
+                    id: "call-x".into(),
+                    name: "echo".into(),
+                    arguments: serde_json::json!({ "text": "ещё" }),
+                }],
+            ))
+        }
+    }
+
+    /// Эхо-инструмент для тестов.
+    #[derive(Debug)]
+    struct EchoTool;
+
+    #[async_trait::async_trait]
+    impl Tool for EchoTool {
+        fn spec(&self) -> ToolSpec {
+            ToolSpec {
+                name: "echo".into(),
+                description: "повторяет аргумент text".into(),
+                parameters: serde_json::json!({ "type": "object" }),
+            }
+        }
+        async fn call(&self, args: Value, _ctx: &ToolContext) -> Result<ToolOutput> {
+            let text = args.get("text").and_then(Value::as_str).unwrap_or("");
+            Ok(ToolOutput::ok(format!("echo: {text}")))
+        }
+    }
+
+    /// Сессия в tempdir: журнал в `dir/sessions`, один инструмент `echo`.
+    fn make_session(
+        dir: &Path,
+        provider: Arc<dyn LlmProvider>,
+        configure: impl FnOnce(&mut Config),
+    ) -> AgentSession {
+        let mut cfg = Config::default();
+        cfg.paths.sessions_dir = dir.join("sessions");
+        cfg.agent.stream = false;
+        configure(&mut cfg);
+        let config = Arc::new(cfg);
+        let tools = ToolRegistry::new().with(Arc::new(EchoTool));
+        let tool_ctx = ToolContext::new(dir.to_path_buf(), config.clone());
+        AgentSession::new(config, provider, tools, tool_ctx, "системный промпт".into())
+    }
+
+    #[tokio::test]
+    async fn send_dispatches_tool_and_builds_history() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let mut s = make_session(tmp.path(), Arc::new(FakeLlm::new()), |_| {});
+        let reply = s.send("привет", None).await.expect("send");
+        assert_eq!(reply, "финальный ответ");
+
+        let roles: Vec<Role> = s.messages().iter().map(|m| m.role).collect();
+        assert_eq!(
+            roles,
+            vec![Role::User, Role::Assistant, Role::Tool, Role::Assistant]
+        );
+        assert_eq!(s.messages()[1].tool_calls.len(), 1);
+        assert_eq!(
+            s.messages()[2].tool_call_id.as_deref(),
+            Some("call-1")
+        );
+        assert!(s.messages()[2].content.contains("echo: привет"));
+        assert_eq!(s.model_name(), "fake-1");
+    }
+
+    #[tokio::test]
+    async fn journal_is_valid_jsonl_with_expected_kinds() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let mut s = make_session(tmp.path(), Arc::new(FakeLlm::new()), |_| {});
+        s.send("привет", None).await.expect("send");
+
+        let log_dir = tmp.path().join("sessions");
+        let files: Vec<_> = std::fs::read_dir(&log_dir)
+            .expect("read_dir")
+            .collect::<std::result::Result<_, _>>()
+            .expect("entries");
+        assert_eq!(files.len(), 1, "ожидался один журнал");
+        let text = std::fs::read_to_string(files[0].path()).expect("read journal");
+
+        let kinds: Vec<String> = text
+            .lines()
+            .map(|line| {
+                let v: Value = serde_json::from_str(line).expect("валидная JSON-строка");
+                assert!(v.get("ts").is_some(), "нет метки времени: {line}");
+                v["kind"].as_str().expect("kind строка").to_string()
+            })
+            .collect();
+        assert_eq!(kinds, ["system", "user", "assistant", "tool", "assistant"]);
+
+        let first: Value = serde_json::from_str(text.lines().next().expect("строка")).expect("json");
+        assert_eq!(first["content"], "системный промпт");
+    }
+
+    #[tokio::test]
+    async fn streaming_mode_emits_events_in_order() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let mut s = make_session(tmp.path(), Arc::new(FakeLlm::new()), |cfg| {
+            cfg.agent.stream = true;
+        });
+        let (tx, mut rx) = mpsc::channel(16);
+        let reply = s.send("ход", Some(tx)).await.expect("send");
+        assert_eq!(reply, "финальный ответ");
+
+        let mut seen = Vec::new();
+        while let Ok(ev) = rx.try_recv() {
+            seen.push(ev);
+        }
+        assert_eq!(seen.len(), 4, "события: {seen:?}");
+        assert!(
+            matches!(&seen[0], AgentEvent::ToolStart { name, .. } if name == "echo"),
+            "первым — ToolStart"
+        );
+        assert!(
+            matches!(&seen[1], AgentEvent::ToolEnd { name, is_error: false, .. } if name == "echo"),
+            "вторым — ToolEnd"
+        );
+        assert!(
+            matches!(&seen[2], AgentEvent::Delta(t) if t == "финальный ответ"),
+            "третьим — Delta"
+        );
+        assert!(matches!(seen[3], AgentEvent::TurnDone), "последним — TurnDone");
+    }
+
+    /// Провайдер, который зовёт инструмент, пока инструменты есть в запросе,
+    /// и отвечает текстом, когда инструменты убраны (финализация по лимиту).
+    #[derive(Debug)]
+    struct LoopThenAnswerLlm;
+
+    #[async_trait::async_trait]
+    impl LlmProvider for LoopThenAnswerLlm {
+        fn name(&self) -> &str {
+            "loop-answer"
+        }
+        fn model(&self) -> &str {
+            "loop-answer-1"
+        }
+        async fn complete(&self, req: ChatRequest) -> Result<ChatMessage> {
+            if req.tools.is_empty() {
+                return Ok(ChatMessage::assistant("финал по собранному", Vec::new()));
+            }
+            Ok(ChatMessage::assistant(
+                "",
+                vec![ToolCall {
+                    id: "call-x".into(),
+                    name: "echo".into(),
+                    arguments: serde_json::json!({ "text": "ещё" }),
+                }],
+            ))
+        }
+    }
+
+    #[tokio::test]
+    async fn exceeding_tool_turns_finalizes_gracefully_without_tools() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let mut s = make_session(tmp.path(), Arc::new(LoopThenAnswerLlm), |cfg| {
+            cfg.agent.max_tool_turns = 3;
+        });
+        let reply = s.send("зациклись", None).await.expect("ход завершается ответом");
+        assert_eq!(reply, "финал по собранному");
+        // user + 3 витка по (assistant + tool) + финальный assistant.
+        assert_eq!(s.messages().len(), 8);
+        let last = s.messages().last().expect("последнее сообщение");
+        assert_eq!(last.content, "финал по собранному");
+        assert!(last.tool_calls.is_empty(), "финал без вызовов");
+        // В журнале — событие лимита.
+        let log = std::fs::read_to_string(s.log_path().expect("журнал")).expect("read");
+        assert!(log.contains("tool_turn_limit"), "журнал: {log}");
+    }
+
+    #[tokio::test]
+    async fn pre_tool_use_hook_blocks_execution() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let mut s = make_session(tmp.path(), Arc::new(FakeLlm::new()), |cfg| {
+            cfg.hooks.specs.push(crate::hooks::HookSpec {
+                event: "PreToolUse".into(),
+                tool: Some("echo".into()),
+                command: "echo 'запрещено политикой'; exit 2".into(),
+                timeout_secs: Some(2),
+            });
+        });
+        let reply = s.send("привет", None).await.expect("send");
+        assert_eq!(reply, "финальный ответ");
+        let tool_msg = s
+            .messages()
+            .iter()
+            .find(|m| m.role == Role::Tool)
+            .expect("tool-сообщение");
+        assert!(
+            tool_msg.content.contains("BLOCKED by hook"),
+            "вызов заблокирован: {}",
+            tool_msg.content
+        );
+        assert!(tool_msg.content.contains("запрещено политикой"));
+        assert!(
+            !tool_msg.content.contains("echo: привет"),
+            "инструмент не исполнялся"
+        );
+    }
+
+    #[tokio::test]
+    async fn tool_output_is_redacted_before_history_and_journal() {
+        /// Провайдер: просит echo с «секретом», затем завершает ход.
+        #[derive(Debug)]
+        struct SecretLlm;
+        #[async_trait::async_trait]
+        impl LlmProvider for SecretLlm {
+            fn name(&self) -> &str {
+                "secret"
+            }
+            fn model(&self) -> &str {
+                "sec-1"
+            }
+            async fn complete(&self, req: ChatRequest) -> Result<ChatMessage> {
+                let has_tool_reply = req.messages.iter().any(|m| m.role == Role::Tool);
+                if has_tool_reply {
+                    Ok(ChatMessage::assistant("готово", Vec::new()))
+                } else {
+                    Ok(ChatMessage::assistant(
+                        "",
+                        vec![ToolCall {
+                            id: "c1".into(),
+                            name: "echo".into(),
+                            arguments: serde_json::json!({
+                                "text": "DEEPSEEK_API_KEY=sk-supersecret123456"
+                            }),
+                        }],
+                    ))
+                }
+            }
+        }
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let mut s = make_session(tmp.path(), Arc::new(SecretLlm), |_| {});
+        s.send("прочитай конфиг", None).await.expect("send");
+
+        let tool_msg = s
+            .messages()
+            .iter()
+            .find(|m| m.role == Role::Tool)
+            .expect("tool-сообщение");
+        assert!(
+            tool_msg.content.contains("DEEPSEEK_API_KEY=***"),
+            "значение замаскировано: {}",
+            tool_msg.content
+        );
+        assert!(!tool_msg.content.contains("supersecret"));
+
+        let log = std::fs::read_to_string(s.log_path().expect("журнал")).expect("read");
+        assert!(!log.contains("supersecret"), "журнал чист");
+        assert!(log.contains("secrets_redacted"), "факт редакции записан");
+    }
+
+    #[tokio::test]
+    async fn doom_guard_substitutes_tool_result_after_repeats() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let mut s = make_session(tmp.path(), Arc::new(LoopLlm), |cfg| {
+            cfg.agent.max_tool_turns = 5;
+        });
+        let _ = s.send("зациклись", None).await;
+        let tool_contents: Vec<&str> = s
+            .messages()
+            .iter()
+            .filter(|m| m.role == Role::Tool)
+            .map(|m| m.content.as_str())
+            .collect();
+        assert!(
+            tool_contents.iter().any(|c| c.contains("doom loop")),
+            "третий идентичный вызов — предупреждение: {tool_contents:?}"
+        );
+        assert!(
+            tool_contents.iter().any(|c| c.starts_with("DENIED")),
+            "рецидив — DENIED: {tool_contents:?}"
+        );
+        // Исполнение подменено: эхо-вывод только первых двух вызовов.
+        assert_eq!(
+            tool_contents.iter().filter(|c| c.contains("echo:")).count(),
+            2,
+            "после срабатывания инструмент не исполнялся: {tool_contents:?}"
+        );
+    }
+
+    /// Провайдер-саммаризатор: всегда отвечает фиксированным саммари.
+    #[derive(Debug)]
+    struct SumLlm;
+
+    #[async_trait::async_trait]
+    impl LlmProvider for SumLlm {
+        fn name(&self) -> &str {
+            "sum"
+        }
+        fn model(&self) -> &str {
+            "sum-1"
+        }
+        async fn complete(&self, _req: ChatRequest) -> Result<ChatMessage> {
+            Ok(ChatMessage::assistant("САММАРИ: цель, решения, шаги", Vec::new()))
+        }
+    }
+
+    /// Провайдер, падающий переполнением контекста, затем отвечающий.
+    #[derive(Debug)]
+    struct OverflowLlm {
+        calls: AtomicUsize,
+    }
+
+    #[async_trait::async_trait]
+    impl LlmProvider for OverflowLlm {
+        fn name(&self) -> &str {
+            "overflow"
+        }
+        fn model(&self) -> &str {
+            "ovf-1"
+        }
+        async fn complete(&self, _req: ChatRequest) -> Result<ChatMessage> {
+            let n = self.calls.fetch_add(1, Ordering::SeqCst);
+            if n == 0 {
+                Err(HarnessError::Llm("test: HTTP 413 Payload Too Large".into()))
+            } else if n == 1 {
+                Ok(ChatMessage::assistant("саммари после 413", Vec::new()))
+            } else {
+                Ok(ChatMessage::assistant("ответ после повтора", Vec::new()))
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn l3_summarize_folds_history_before_last_user() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let mut s = make_session(tmp.path(), Arc::new(SumLlm), |cfg| {
+            cfg.agent.context_budget_tokens = 1000;
+            cfg.agent.compact_l3_pct = 95;
+        });
+        // ~958 токенов: выше l3-порога 950, но не > 100% — прунинга нет.
+        s.history.push(ChatMessage::user("x".repeat(1900)));
+        s.history
+            .push(ChatMessage::assistant("y".repeat(1900), Vec::new()));
+        s.history.push(ChatMessage::user("актуальная задача"));
+        s.compact_history(&None).await;
+
+        let msgs = s.messages();
+        assert_eq!(msgs.len(), 2, "старое свёрнуто, хвост на месте: {msgs:?}");
+        assert_eq!(msgs[0].role, Role::Assistant);
+        assert!(
+            msgs[0].content.contains("CONTEXT COMPACTED (2 сообщений"),
+            "пометка свёртки: {}",
+            msgs[0].content
+        );
+        assert!(msgs[0].content.contains("САММАРИ"));
+        assert_eq!(msgs[1].content, "актуальная задача");
+    }
+
+    #[tokio::test]
+    async fn context_overflow_triggers_l3_and_resubmits() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let provider = Arc::new(OverflowLlm {
+            calls: AtomicUsize::new(0),
+        });
+        let mut s = make_session(tmp.path(), provider, |cfg| {
+            cfg.agent.stream = false;
+        });
+        // История, которую L3 может свернуть (граница — новый user ниже).
+        s.history.push(ChatMessage::user("старая задача"));
+        s.history
+            .push(ChatMessage::assistant("длинный ответ".repeat(100), Vec::new()));
+
+        let reply = s.send("новая задача", None).await.expect("resubmit");
+        assert_eq!(reply, "ответ после повтора");
+        let msgs = s.messages();
+        assert!(
+            msgs.iter().any(|m| m.content.contains("CONTEXT COMPACTED")),
+            "история свёрнута L3: {msgs:?}"
+        );
+        // Вызовы: 1-й ход (413) → саммари (съедает 2-й ответ) → повтор хода.
+        assert_eq!(msgs.len(), 3, "compacted + user + assistant: {msgs:?}");
+    }
+
+    #[tokio::test]
+    async fn overflow_without_foldable_history_returns_error() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        // Провайдер всегда отвечает 413: сворачивать нечего (user первый).
+        #[derive(Debug)]
+        struct AlwaysOverflow;
+        #[async_trait::async_trait]
+        impl LlmProvider for AlwaysOverflow {
+            fn name(&self) -> &str {
+                "ao"
+            }
+            fn model(&self) -> &str {
+                "ao-1"
+            }
+            async fn complete(&self, _req: ChatRequest) -> Result<ChatMessage> {
+                Err(HarnessError::Llm("test: HTTP 413".into()))
+            }
+        }
+        let mut s = make_session(tmp.path(), Arc::new(AlwaysOverflow), |_| {});
+        let err = s.send("первое сообщение", None).await.expect_err("413 наверх");
+        assert!(err.to_string().contains("413"));
+    }
+
+    #[tokio::test]
+    async fn compact_truncates_old_tool_messages_only() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        // Бюджет такой, что после усечения старых tool-сообщений хватает.
+        let mut s = make_session(tmp.path(), Arc::new(FakeLlm::new()), |cfg| {
+            cfg.agent.context_budget_tokens = 2300;
+        });
+        s.history.push(ChatMessage::user("старт"));
+        for i in 0..6 {
+            s.history
+                .push(ChatMessage::tool_result(format!("c{i}"), "x".repeat(2000)));
+        }
+        s.compact_history(&None).await;
+
+        assert_eq!(s.messages().len(), 7, "ничего не должно быть удалено");
+        for msg in &s.messages()[1..3] {
+            assert!(msg.content.contains("[контекст усечён]"), "старые усечены");
+            assert!(msg.content.chars().count() <= 520);
+        }
+        for msg in &s.messages()[3..] {
+            assert_eq!(msg.content.len(), 2000, "последние 4 не тронуты");
+        }
+    }
+
+    #[tokio::test]
+    async fn compact_drops_oldest_when_still_over_budget() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let mut s = make_session(tmp.path(), Arc::new(FakeLlm::new()), |cfg| {
+            cfg.agent.context_budget_tokens = 100;
+        });
+        s.history.push(ChatMessage::user("старт"));
+        for i in 0..6 {
+            s.history
+                .push(ChatMessage::tool_result(format!("c{i}"), "x".repeat(2000)));
+        }
+        s.compact_history(&None).await;
+
+        assert_eq!(s.messages().len(), 6, "оставляем 6 последних");
+        assert!(
+            s.messages().iter().all(|m| m.role == Role::Tool),
+            "стартовый user удалён"
+        );
+    }
+
+    #[tokio::test]
+    async fn inject_context_and_clear_update_history_and_journal() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let mut s = make_session(tmp.path(), Arc::new(FakeLlm::new()), |_| {});
+        s.inject_context("notes.md", "текст заметки");
+        assert_eq!(s.messages().len(), 1);
+        assert_eq!(s.messages()[0].role, Role::User);
+        assert!(s.messages()[0].content.contains("notes.md"));
+        assert!(s.messages()[0].content.contains("текст заметки"));
+
+        s.clear();
+        assert!(s.messages().is_empty());
+
+        let path = s.log_path().expect("журнал открыт").to_path_buf();
+        let text = std::fs::read_to_string(path).expect("read journal");
+        let has_clear = text.lines().any(|line| {
+            serde_json::from_str::<Value>(line)
+                .map(|v| v["event"] == "clear")
+                .unwrap_or(false)
+        });
+        assert!(has_clear, "в журнале должно быть событие clear");
+    }
+
+    #[test]
+    fn truncate_and_summarize_helpers() {
+        assert_eq!(truncate_chars("короткий", 100), "короткий");
+        let long = "я".repeat(300);
+        let cut = truncate_chars(&long, 10);
+        assert!(cut.starts_with(&"я".repeat(10)));
+        assert!(cut.contains("усечено"));
+
+        assert_eq!(summarize("первая\nвторая"), "первая");
+        assert_eq!(summarize(""), "");
+        let wide = "w".repeat(200);
+        assert_eq!(summarize(&wide).chars().count(), 121, "120 + многоточие");
+    }
+
+    #[tokio::test]
+    async fn restore_from_log_rebuilds_dialogue_and_lists_logs() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        // «Прошлая» сессия: пара реплик + tool-событие (не переносится).
+        let log = tmp.path().join("session-20260801-120000.jsonl");
+        std::fs::write(
+            &log,
+            concat!(
+                "{\"ts\":\"t\",\"kind\":\"system\",\"content\":\"sys\"}\n",
+                "{\"ts\":\"t\",\"kind\":\"user\",\"content\":\"привет, архитектор\"}\n",
+                "{\"ts\":\"t\",\"kind\":\"assistant\",\"content\":\"здравствуйте\"}\n",
+                "{\"ts\":\"t\",\"kind\":\"tool\",\"name\":\"bash\"}\n",
+                "{\"ts\":\"t\",\"kind\":\"user\",\"content\":\"сделай ADR\"}\n"
+            ),
+        )
+        .expect("write log");
+
+        let mut s = make_session(tmp.path(), Arc::new(FakeLlm::new()), |_| {});
+        let restored = s.restore_from_log(&log).expect("restore");
+        assert_eq!(restored, 3);
+        let roles: Vec<_> = s.messages().iter().map(|m| m.role).collect();
+        assert_eq!(
+            roles,
+            vec![crate::llm::Role::User, crate::llm::Role::Assistant, crate::llm::Role::User]
+        );
+        // tool_calls не переносятся.
+        assert!(s.messages()[1].tool_calls.is_empty());
+
+        let logs = list_session_logs(tmp.path());
+        assert_eq!(logs.len(), 1, "только восстановленная: {logs:?}");
+        assert!(logs[0].first_user_line.contains("привет"));
+        assert_eq!(logs[0].messages, 3);
+
+        // Битый файл — ошибка, не паника.
+        let bad = tmp.path().join("broken.jsonl");
+        std::fs::write(&bad, "не json\n").expect("write");
+        assert!(s.restore_from_log(&bad).is_err());
+    }
+}
+

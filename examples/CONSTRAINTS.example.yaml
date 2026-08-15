@@ -1,0 +1,64 @@
+# CONSTRAINTS.example.yaml — пример fitness functions для `arch control check`.
+#
+# Схема (src/control.rs, FitnessRule):
+#   rules:
+#     - name: <код правила>                      # обязательно
+#       type: must_contain | must_not_contain | file_exists | command_succeeds
+#       glob: "src/**/*.rs"                      # must_contain/must_not_contain (дефолт **/*)
+#       pattern: "<regex>"                       # must_contain/must_not_contain
+#       path: "docs/adr/INDEX.md"                # file_exists
+#       command: "cargo test"                    # command_succeeds
+#       timeout_secs: 900                        # command_succeeds (дефолт 60)
+#       severity: error | warn                   # дефолт error; error ломает итог (exit 1)
+rules:
+  # Слой API не ходит в БД напрямую (AD-1 слоистости): только через доменный
+  # слой. Находка — импорт драйвера БД в services/api.
+  - name: no_direct_db_from_api_layer
+    type: must_not_contain
+    glob: "services/api/**/*.rs"
+    pattern: "sqlx::|diesel::|rusqlite::"
+    severity: error
+
+  # Кодовая база — без unsafe (в харнессе это lint unsafe_code = forbid);
+  # обход через макросы тоже запрещён.
+  - name: no_unsafe_code
+    type: must_not_contain
+    glob: "src/**/*.rs"
+    pattern: "unsafe\\s*(\\{|fn|impl)"
+    severity: error
+
+  # Каждая спецификация обязана содержать «## Критерии приёмки»
+  # (дублирует сенсор required-sections на уровне кода).
+  - name: spec_has_acceptance_criteria
+    type: must_contain
+    glob: "docs/specs/*.md"
+    pattern: "^## Критерии приёмки$"
+    severity: error
+
+  # Позвоночник инвариантов обязателен для Standard/Critical маршрутов
+  # до старта реализации.
+  - name: spine_present
+    type: file_exists
+    path: "docs/ARCHITECTURE-SPINE.md"
+    severity: warn
+
+  # Реестр ADR ведётся с индексным файлом.
+  - name: adr_index_present
+    type: file_exists
+    path: "docs/adr/INDEX.md"
+    severity: warn
+
+  # Юнит-тесты обязаны проходить на гейте A4 (conformance evidence).
+  - name: unit_tests_pass
+    type: command_succeeds
+    command: "cargo test --quiet"
+    timeout_secs: 900
+    severity: error
+
+  # Заглушки в архитектурных документах запрещены: неготовое решение
+  # оформляется в Deferred с причиной и условием возврата.
+  - name: no_placeholder_markers
+    type: must_not_contain
+    glob: "docs/**/*.md"
+    pattern: "TODO|TBD|FIXME"
+    severity: warn

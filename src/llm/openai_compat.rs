@@ -1,0 +1,1572 @@
+//! Общий OpenAI-совместимый клиент чат-комплишнов с SSE-стримингом.
+//!
+//! Реализует [`LlmProvider`] для endpoint'ов вида `{base_url}/chat/completions`:
+//! function calling (`tools`/`tool_calls`), потоковый разбор `data:`-строк (SSE)
+//! со сборкой инкрементальных `tool_calls`, ретраи по матрице классов ошибок
+//! ([`crate::retry`]: 429/5xx/транспорт — с backoff'ом и джиттером, 4xx/413 —
+//! без повторов). Тонкие фабрики с пресетами `base_url` — [`super::deepseek`],
+//! [`super::kimi`], [`super::glm`]; произвольные endpoint'ы подключаются через
+//! [`generic_provider`].
+
+use std::fmt;
+use std::sync::Arc;
+use std::time::Duration;
+
+use async_trait::async_trait;
+use futures::StreamExt;
+use reqwest::StatusCode;
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use tokio::sync::mpsc;
+
+use crate::config::ModelConfig;
+use crate::error::{HarnessError, Result};
+use crate::llm::{ChatMessage, ChatRequest, LlmEvent, LlmProvider, Role, ToolCall, ToolSpec, Usage};
+
+/// Таймаут установки TCP/TLS-соединения, секунды.
+const CONNECT_TIMEOUT_SECS: u64 = 30;
+
+/// Клиент OpenAI-совместимого чат-комплишн API (`/chat/completions`).
+///
+/// API-ключ читается из переменной окружения [`ModelConfig::api_key_env`]
+/// при создании и нигде не выводится: [`fmt::Debug`] показывает только
+/// имя провайдера, модель и `base_url`.
+pub struct OpenAiCompat {
+    /// Имя провайдера из реестра (ключ `[models]`).
+    name: String,
+    /// Базовый URL API без завершающего `/`.
+    base_url: String,
+    /// Идентификатор модели.
+    model: String,
+    /// Имя переменной окружения с API-ключом (читается лениво, на запросе —
+    /// чтобы отсутствие ключа одного провайдера не роняло весь реестр).
+    api_key_env: String,
+    /// Запасной файл с ключом (читается, если env не задан; `~` раскрывается).
+    api_key_file: Option<String>,
+    /// Ключ, заданный напрямую (тесты; в проде None — читается из окружения).
+    api_key_override: Option<String>,
+    /// Температура из конфига (если запрос не переопределяет).
+    default_temperature: Option<f32>,
+    /// Максимум токенов из конфига (если запрос не переопределяет).
+    default_max_tokens: Option<u32>,
+    /// Бюджет тишины (сек): ожидание заголовков ответа и максимальная пауза
+    /// между чанками SSE-стрима. НЕ общий таймаут запроса: reasoner-модели
+    /// стримят минутами, общий таймаут резал их посреди ответа
+    /// («error decoding response body» на скриншотах пользователей).
+    timeout_secs: u64,
+    /// Карты ризонинга из конфига (сливаются в тело при `/think on|off`).
+    thinking_on: Option<serde_json::Map<String, Value>>,
+    thinking_off: Option<serde_json::Map<String, Value>>,
+    /// HTTP-клиент (rustls; connect/read-таймауты, без общего).
+    client: reqwest::Client,
+}
+
+// Поля с ключом в Debug сознательно не включаем — это секреты.
+#[expect(
+    clippy::missing_fields_in_debug,
+    reason = "api_key_env/api_key_override — секреты, в Debug не выводятся"
+)]
+impl fmt::Debug for OpenAiCompat {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // API-ключ сознательно не выводим.
+        f.debug_struct("OpenAiCompat")
+            .field("name", &self.name)
+            .field("model", &self.model)
+            .field("base_url", &self.base_url)
+            .finish()
+    }
+}
+
+impl OpenAiCompat {
+    /// Создаёт клиента из конфигурации; `base_url` обязателен.
+    /// API-ключ не проверяется — читается лениво на первом запросе.
+    ///
+    /// # Errors
+    /// Пустой `base_url`/`model`, ошибка сборки HTTP-клиента.
+    pub fn new(name: &str, cfg: &ModelConfig) -> Result<Self> {
+        Self::build(name, cfg, cfg.base_url.trim())
+    }
+
+    /// Создаёт клиента из конфигурации; пустой `base_url` заменяется пресетом.
+    /// API-ключ не проверяется — читается лениво на первом запросе.
+    ///
+    /// # Errors
+    /// Пустой `model`, ошибка сборки HTTP-клиента.
+    pub fn with_preset(name: &str, cfg: &ModelConfig, preset_base_url: &str) -> Result<Self> {
+        let configured = cfg.base_url.trim();
+        let base_url = if configured.is_empty() {
+            preset_base_url
+        } else {
+            configured
+        };
+        Self::build(name, cfg, base_url)
+    }
+
+    fn build(name: &str, cfg: &ModelConfig, base_url: &str) -> Result<Self> {
+        let base_url = base_url.trim_end_matches('/');
+        if base_url.is_empty() {
+            return Err(HarnessError::Llm(format!(
+                "провайдер '{name}': пустой base_url (задайте в config.toml)"
+            )));
+        }
+        if cfg.model.trim().is_empty() {
+            return Err(HarnessError::Llm(format!("провайдер '{name}': пустой model")));
+        }
+        let api_key_env = cfg.api_key_env.clone();
+        let api_key_file = cfg.api_key_file.clone();
+        let client = reqwest::Client::builder()
+            // Общий .timeout() здесь НЕ устанавливаем сознательно: он
+            // измеряет весь запрос целиком и обрывает длинный SSE-стрим
+            // посреди ответа. Вместо него — таймаут соединения, таймаут
+            // ожидания заголовков (в post_once) и таймаут каждого чтения
+            // тела (молчание модели дольше timeout_secs — сбой).
+            .connect_timeout(Duration::from_secs(CONNECT_TIMEOUT_SECS))
+            .read_timeout(Duration::from_secs(cfg.timeout_secs.max(1)))
+            .build()?;
+        Ok(Self {
+            name: name.to_string(),
+            base_url: base_url.to_string(),
+            model: cfg.model.clone(),
+            api_key_env,
+            api_key_file,
+            api_key_override: None,
+            default_temperature: cfg.temperature,
+            default_max_tokens: cfg.max_tokens,
+            timeout_secs: cfg.timeout_secs.max(1),
+            thinking_on: cfg.thinking_on.clone(),
+            thinking_off: cfg.thinking_off.clone(),
+            client,
+        })
+    }
+
+    /// API-ключ: переопределение (тесты) → переменная окружения → запасной
+    /// файл (`api_key_file`, `~` раскрывается). Ошибка — на момент запроса,
+    /// не на конструировании; содержимое ключа в ошибку не попадает.
+    fn api_key(&self) -> Result<String> {
+        if let Some(key) = &self.api_key_override {
+            return Ok(key.clone());
+        }
+        if let Ok(raw) = std::env::var(&self.api_key_env) {
+            let key = raw.trim().to_string();
+            if !key.is_empty() {
+                return Ok(key);
+            }
+        }
+        if let Some(path) = &self.api_key_file {
+            let expanded = match path.strip_prefix("~/") {
+                Some(rest) => dirs::home_dir()
+                    .map(|h| h.join(rest))
+                    .unwrap_or_else(|| std::path::PathBuf::from(path)),
+                None => std::path::PathBuf::from(path),
+            };
+            if let Ok(raw) = std::fs::read_to_string(&expanded) {
+                let key = raw.trim().to_string();
+                if !key.is_empty() {
+                    return Ok(key);
+                }
+            }
+        }
+        Err(HarnessError::Llm(format!(
+            "провайдер '{}': нет API-ключа — установите {} или положите ключ в файл {:?}",
+            self.name, self.api_key_env, self.api_key_file
+        )))
+    }
+
+    /// Тело запроса `/chat/completions` (None-поля и пустой `tools` не сериализуются).
+    /// Значения из запроса переопределяют дефолты конфига. При заданном
+    /// переключателе ризонинга (`req.thinking`) в тело сливается карта
+    /// `thinking_on`/`thinking_off` из конфига модели.
+    fn build_body<'a>(&'a self, req: &'a ChatRequest, mode: RequestMode) -> ChatCompletionsBody<'a> {
+        let extra = match req.thinking {
+            Some(true) => self.thinking_on.clone(),
+            Some(false) => self.thinking_off.clone(),
+            None => None,
+        };
+        ChatCompletionsBody {
+            model: &self.model,
+            messages: req.messages.iter().map(OutMessage::from).collect(),
+            tools: req.tools.iter().map(OutTool::from).collect(),
+            temperature: req.temperature.or(self.default_temperature),
+            max_tokens: req.max_tokens.or(self.default_max_tokens),
+            stream: matches!(mode, RequestMode::Stream),
+            stream_options: match mode {
+                RequestMode::Stream => Some(StreamOptions { include_usage: true }),
+                RequestMode::Complete => None,
+            },
+            extra,
+        }
+    }
+
+    /// POST с ретраями по матрице [`crate::retry`]: 429 — терпеливо
+    /// (8 попыток), 5xx — средне, транспортные сбои — быстро; 4xx, 413
+    /// (переполнение контекста) и ошибки авторизации сразу идут наверх —
+    /// их ретрай не лечит. Между попытками — экспоненциальный backoff
+    /// с джиттером; смена класса ошибки пересоздаёт итератор задержек.
+    async fn send_with_retry(&self, body: &ChatCompletionsBody<'_>) -> Result<reqwest::Response> {
+        let url = format!("{}/chat/completions", self.base_url);
+        let seed = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| u64::from(d.subsec_nanos()))
+            .unwrap_or(0);
+        let mut delays: Option<(crate::retry::ErrorKind, crate::retry::Delays)> = None;
+        loop {
+            // Ok(None) — финальный ответ (успех или неретраибельная ошибка);
+            // Err(e) — финальный транспортный сбой; Some(d) — пауза и повтор.
+            let pause: Option<Duration> = match self.post_once(&url, body).await {
+                Ok(resp) => {
+                    if resp.status().is_success() {
+                        return Ok(resp);
+                    }
+                    let kind = crate::retry::classify(Some(resp.status().as_u16()), "");
+                    match crate::retry::RetryPolicy::for_kind(kind) {
+                        None => return Ok(resp), // разбор ошибки — в ensure_success
+                        Some(policy) => match next_delay(&mut delays, kind, policy, seed) {
+                            Some(d) => Some(d),
+                            None => return Ok(resp),
+                        },
+                    }
+                }
+                Err(e) => {
+                    // Классификация по ПОЛНОЙ цепочке причин: верхнее
+                    // «error sending request for url» не несёт причины —
+                    // она в source-цепочке (reset/timeout/DNS).
+                    let kind = crate::retry::classify(None, &error_text(&e));
+                    match crate::retry::RetryPolicy::for_kind(kind) {
+                        None => return Err(send_phase_error(&self.name, &e)),
+                        Some(policy) => match next_delay(&mut delays, kind, policy, seed) {
+                            Some(d) => Some(d),
+                            None => return Err(send_phase_error(&self.name, &e)),
+                        },
+                    }
+                }
+            };
+            if let Some(d) = pause {
+                tokio::time::sleep(d).await;
+            }
+        }
+    }
+
+    async fn post_once(&self, url: &str, body: &ChatCompletionsBody<'_>) -> Result<reqwest::Response> {
+        // send() резолвится на получении заголовков: бюджет тишины покрывает
+        // фазу «запрос ушёл, сервер думает». Дальше страж — read_timeout.
+        let send = self
+            .client
+            .post(url)
+            .bearer_auth(self.api_key()?)
+            .json(body)
+            .send();
+        match tokio::time::timeout(Duration::from_secs(self.timeout_secs), send).await {
+            Ok(res) => res.map_err(HarnessError::Http),
+            Err(_) => Err(HarnessError::Llm(format!(
+                "{}: таймаут: сервер не прислал заголовки ответа за {}с (перегрузка или сеть)",
+                self.name, self.timeout_secs
+            ))),
+        }
+    }
+
+    /// Проверяет HTTP-статус; ошибку превращает в [`HarnessError::Llm`]
+    /// с кодом и первыми 300 символами тела.
+    async fn ensure_success(&self, resp: reqwest::Response) -> Result<reqwest::Response> {
+        let status = resp.status();
+        if status.is_success() {
+            return Ok(resp);
+        }
+        let body = resp.text().await.unwrap_or_default();
+        Err(http_error(&self.name, status, &body))
+    }
+
+    /// Читает тело SSE-стрима до конца. Обрыв потока оформляется как
+    /// [`StreamBreak`] с флагом «контент уже ушёл пользователю».
+    async fn pump_stream(
+        &self,
+        resp: reqwest::Response,
+        tx: &mpsc::Sender<LlmEvent>,
+    ) -> std::result::Result<ChatMessage, StreamBreak> {
+        let mut byte_stream = resp.bytes_stream();
+        let mut decoder = SseDecoder::default();
+        let mut acc = StreamAcc::default();
+        let mut done_sent = false;
+        let mut emitted = false;
+        while let Some(chunk) = byte_stream.next().await {
+            let chunk = match chunk {
+                Ok(c) => c,
+                Err(e) => {
+                    let received_chars = acc.content.chars().count();
+                    return Err(StreamBreak {
+                        emitted,
+                        received_chars,
+                        source: stream_break_error(&self.name, &e, received_chars),
+                    });
+                }
+            };
+            let events = match decoder.feed(&chunk, &mut acc) {
+                Ok(ev) => ev,
+                Err(e) => {
+                    return Err(StreamBreak {
+                        emitted,
+                        received_chars: acc.content.chars().count(),
+                        source: e,
+                    });
+                }
+            };
+            for event in events {
+                done_sent |= matches!(event, LlmEvent::Done(_));
+                emitted |= matches!(event, LlmEvent::Delta(_));
+                if tx.send(event).await.is_err() {
+                    // Приёмник ушёл — прерываем стрим без паники.
+                    return Ok(acc.finish());
+                }
+            }
+            if done_sent {
+                break;
+            }
+        }
+        if !done_sent {
+            // Поток закрылся без `data: [DONE]`: добираем хвост и завершаем сами.
+            match decoder.flush(&mut acc) {
+                Ok(Some(event)) => {
+                    done_sent |= matches!(event, LlmEvent::Done(_));
+                    let _ = tx.send(event).await;
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    return Err(StreamBreak {
+                        emitted,
+                        received_chars: acc.content.chars().count(),
+                        source: e,
+                    });
+                }
+            }
+            if !done_sent {
+                let _ = tx.send(LlmEvent::Done(acc.usage)).await;
+            }
+        }
+        Ok(acc.finish())
+    }
+}
+
+#[async_trait]
+impl LlmProvider for OpenAiCompat {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn model(&self) -> &str {
+        &self.model
+    }
+
+    /// Нестриминговый запрос: `POST /chat/completions`, ответ целиком.
+    async fn complete(&self, req: ChatRequest) -> Result<ChatMessage> {
+        let body = self.build_body(&req, RequestMode::Complete);
+        let resp = self.send_with_retry(&body).await?;
+        let resp = self.ensure_success(resp).await?;
+        let parsed: CompletionResponse = resp.json().await?;
+        let choice = parsed.choices.into_iter().next().ok_or_else(|| {
+            HarnessError::Llm(format!("{}: пустой ответ API (нет choices)", self.name))
+        })?;
+        Ok(choice.message.into_chat_message())
+    }
+
+    /// Стриминговый запрос: дельты в `tx`, собранный ответ — результатом.
+    ///
+    /// Если приёмник `tx` закрыт, стрим тихо прерывается (без паники)
+    /// и возвращается накопленная к этому моменту часть ответа.
+    ///
+    /// Обрыв тела стрима (сеть/DPI/перегрузка, молчание модели дольше
+    /// `timeout_secs`) ретраится по политике [`crate::retry::ErrorKind::Network`]
+    /// — запрос идемпотентен: вызовы инструментов исполняются только после
+    /// полной сборки ответа, так что повтор безопасен на любой фазе. Обрыв
+    /// ДО первой дельты повторяется молча; обрыв ПОСЛЕ контента — с заметкой
+    /// [`LlmEvent::Note`] в UI (фрагмент остаётся в чате, ответ придёт
+    /// целиком заново). Бюджет попыток общий на вызов; при исчерпании —
+    /// ошибка с человеческой причиной и счётчиком полученного.
+    async fn stream(&self, req: ChatRequest, tx: mpsc::Sender<LlmEvent>) -> Result<ChatMessage> {
+        let body = self.build_body(&req, RequestMode::Stream);
+        let seed = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| u64::from(d.subsec_nanos()))
+            .unwrap_or(0);
+        let mut delays = crate::retry::RetryPolicy::for_kind(crate::retry::ErrorKind::Network)
+            .map(|p| p.delays(seed));
+        loop {
+            let resp = self.send_with_retry(&body).await?;
+            let resp = self.ensure_success(resp).await?;
+            match self.pump_stream(resp, &tx).await {
+                Ok(msg) => return Ok(msg),
+                Err(brk) => {
+                    let Some(pause) = delays.as_mut().and_then(Iterator::next) else {
+                        return Err(brk.source);
+                    };
+                    if brk.emitted {
+                        // Фрагмент уже в чате — честно предупреждаем: ответ
+                        // придёт целиком заново, показанный кусок не дублируется
+                        // в журнале (туда попадёт только финальное сообщение).
+                        let _ = tx
+                            .send(LlmEvent::Note(format!(
+                                "поток ответа оборвался (в чат успели уйти {} символов — \
+                                 фрагмент выше неполный); повторяю запрос…",
+                                brk.received_chars
+                            )))
+                            .await;
+                    }
+                    tokio::time::sleep(pause).await;
+                }
+            }
+        }
+    }
+}
+
+/// Generic-провайдер для произвольного OpenAI-совместимого endpoint'а
+/// из конфигурации (неизвестное имя в `[models]`).
+///
+/// # Errors
+/// Отсутствует API-ключ в окружении, пустой `base_url`/`model`.
+pub fn generic_provider(name: &str, cfg: &ModelConfig) -> Result<Arc<dyn LlmProvider>> {
+    Ok(Arc::new(OpenAiCompat::new(name, cfg)?))
+}
+
+/// Режим запроса: разовый ответ или SSE-стрим.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RequestMode {
+    /// Обычный комплишн: ответ целиком.
+    Complete,
+    /// `stream: true` + `stream_options.include_usage`.
+    Stream,
+}
+
+/// Тело запроса `/chat/completions` в формате `OpenAI`.
+#[derive(Debug, Serialize)]
+struct ChatCompletionsBody<'a> {
+    model: &'a str,
+    messages: Vec<OutMessage<'a>>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    tools: Vec<OutTool<'a>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    temperature: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_tokens: Option<u32>,
+    stream: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stream_options: Option<StreamOptions>,
+    /// Доп. поля верхнего уровня (карта ризонинга `thinking`/`reasoning_effort`).
+    #[serde(skip_serializing_if = "Option::is_none", flatten)]
+    extra: Option<serde_json::Map<String, Value>>,
+}
+
+/// Опции стриминга (`include_usage` — финальный чанк несёт статистику токенов).
+#[derive(Debug, Serialize)]
+struct StreamOptions {
+    include_usage: bool,
+}
+
+/// Сообщение в wire-формате `OpenAI`.
+#[derive(Debug, Serialize)]
+struct OutMessage<'a> {
+    role: Role,
+    content: &'a str,
+    /// Эхо цепочки рассуждений: DeepSeek thinking + `tools` требует возврата
+    /// `reasoning_content` (иначе HTTP 400); прочие провайдеры его игнорируют.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reasoning_content: Option<&'a str>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    tool_calls: Vec<OutToolCall<'a>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_call_id: Option<&'a str>,
+}
+
+impl<'a> From<&'a ChatMessage> for OutMessage<'a> {
+    fn from(msg: &'a ChatMessage) -> Self {
+        Self {
+            role: msg.role,
+            content: &msg.content,
+            reasoning_content: msg.reasoning_content.as_deref(),
+            tool_calls: msg.tool_calls.iter().map(OutToolCall::from).collect(),
+            tool_call_id: msg.tool_call_id.as_deref(),
+        }
+    }
+}
+
+/// Вызов инструмента в wire-формате (`type: "function"`).
+#[derive(Debug, Serialize)]
+struct OutToolCall<'a> {
+    id: &'a str,
+    #[serde(rename = "type")]
+    kind: &'static str,
+    function: OutFunction<'a>,
+}
+
+impl<'a> From<&'a ToolCall> for OutToolCall<'a> {
+    fn from(call: &'a ToolCall) -> Self {
+        Self {
+            id: &call.id,
+            kind: "function",
+            function: OutFunction {
+                name: &call.name,
+                arguments: call.arguments.to_string(),
+            },
+        }
+    }
+}
+
+/// `function` внутри вызова: `arguments` — строка с JSON.
+#[derive(Debug, Serialize)]
+struct OutFunction<'a> {
+    name: &'a str,
+    arguments: String,
+}
+
+/// Инструмент в wire-формате (`type: "function"`).
+#[derive(Debug, Serialize)]
+struct OutTool<'a> {
+    #[serde(rename = "type")]
+    kind: &'static str,
+    function: OutToolSpec<'a>,
+}
+
+impl<'a> From<&'a ToolSpec> for OutTool<'a> {
+    fn from(spec: &'a ToolSpec) -> Self {
+        Self {
+            kind: "function",
+            function: OutToolSpec {
+                name: &spec.name,
+                description: &spec.description,
+                parameters: &spec.parameters,
+            },
+        }
+    }
+}
+
+/// `function` внутри описания инструмента.
+#[derive(Debug, Serialize)]
+struct OutToolSpec<'a> {
+    name: &'a str,
+    description: &'a str,
+    parameters: &'a Value,
+}
+
+/// Ответ `/chat/completions` (нестриминговый).
+#[derive(Debug, Deserialize)]
+struct CompletionResponse {
+    #[serde(default)]
+    choices: Vec<CompletionChoice>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CompletionChoice {
+    message: CompletionMessage,
+}
+
+/// `message` из ответа: `content` может быть `null` при `tool_calls`.
+#[derive(Debug, Deserialize)]
+struct CompletionMessage {
+    #[serde(default)]
+    content: Option<String>,
+    /// Цепочка рассуждений ризонинг-модели (DeepSeek V4/Kimi/GLM).
+    #[serde(default)]
+    reasoning_content: Option<String>,
+    #[serde(default)]
+    tool_calls: Vec<CompletionToolCall>,
+}
+
+impl CompletionMessage {
+    /// Конвертирует wire-ответ в доменное сообщение ассистента.
+    fn into_chat_message(self) -> ChatMessage {
+        let tool_calls = self
+            .tool_calls
+            .into_iter()
+            .map(|call| ToolCall {
+                id: call.id,
+                name: call.function.name,
+                arguments: parse_arguments(&call.function.arguments),
+            })
+            .collect();
+        let mut msg = ChatMessage::assistant(self.content.unwrap_or_default(), tool_calls);
+        msg.reasoning_content = self.reasoning_content.filter(|r| !r.is_empty());
+        normalize_reply(msg)
+    }
+}
+
+/// Нормализация исхода на границе API (defensive pattern: «контракт с обеих
+/// сторон»). GLM-4.7 quirk: на коротких ответах с thinking=on модель
+/// недетерминированно кладёт весь ответ в `reasoning_content`, оставляя
+/// `content` пустым (проверено прогонами: ~2/3 случаев, finish_reason=stop).
+/// Без нормализации ход возвращал бы пустую строку — подменяем пустой ответ
+/// цепочкой рассуждений (там и есть ответ). Сообщения с tool_calls не
+/// трогаем: у них пустой content — норма.
+fn normalize_reply(mut msg: ChatMessage) -> ChatMessage {
+    if msg.tool_calls.is_empty()
+        && msg.content.trim().is_empty()
+        && let Some(reasoning) = &msg.reasoning_content
+        && !reasoning.trim().is_empty()
+    {
+        msg.content = reasoning.trim().to_string();
+    }
+    msg
+}
+
+#[derive(Debug, Deserialize)]
+struct CompletionToolCall {
+    #[serde(default)]
+    id: String,
+    function: CompletionFunction,
+}
+
+#[derive(Debug, Deserialize)]
+struct CompletionFunction {
+    #[serde(default)]
+    name: String,
+    #[serde(default, deserialize_with = "de_arguments")]
+    arguments: String,
+}
+
+/// Чанк SSE-стрима (`data: {...}`).
+#[derive(Debug, Deserialize)]
+struct StreamChunk {
+    #[serde(default)]
+    choices: Vec<StreamChoice>,
+    #[serde(default)]
+    usage: Option<StreamUsage>,
+}
+
+#[derive(Debug, Deserialize)]
+struct StreamChoice {
+    #[serde(default)]
+    delta: StreamDelta,
+}
+
+/// Дельта стрима: кусок текста и/или инкрементальные `tool_calls`.
+#[derive(Debug, Default, Deserialize)]
+struct StreamDelta {
+    #[serde(default)]
+    content: Option<String>,
+    /// Кусок цепочки рассуждений (ризонинг-модели); копится, но не стримится
+    /// в чат — CoT не смешиваем с текстом ответа.
+    #[serde(default)]
+    reasoning_content: Option<String>,
+    #[serde(default)]
+    tool_calls: Vec<StreamToolCall>,
+}
+
+/// Инкрементальный вызов инструмента: поля приходят по частям (по `index`).
+#[derive(Debug, Deserialize)]
+struct StreamToolCall {
+    #[serde(default)]
+    index: usize,
+    #[serde(default)]
+    id: Option<String>,
+    #[serde(default)]
+    function: Option<StreamFunction>,
+}
+
+#[derive(Debug, Deserialize)]
+struct StreamFunction {
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    arguments: Option<String>,
+}
+
+/// Статистика токенов из финального чанка (`stream_options.include_usage`).
+#[derive(Debug, Deserialize)]
+struct StreamUsage {
+    #[serde(default)]
+    prompt_tokens: u64,
+    #[serde(default)]
+    completion_tokens: u64,
+}
+
+/// Накопленные части одного вызова инструмента из стрима.
+#[derive(Debug, Default)]
+struct ToolCallAcc {
+    id: String,
+    name: String,
+    arguments: String,
+}
+
+/// Аккумулятор состояния стрима: текст, `tool_calls`, usage.
+#[derive(Debug, Default)]
+struct StreamAcc {
+    content: String,
+    /// Накопленная цепочка рассуждений (эхо для следующих запросов).
+    reasoning: String,
+    tool_calls: Vec<ToolCallAcc>,
+    usage: Usage,
+}
+
+/// Исход разбора одной SSE-строки.
+#[derive(Debug)]
+enum LineOutcome {
+    /// Служебная/пустая строка — событий нет.
+    None,
+    /// Текстовая дельта для отправки в канал.
+    Delta(String),
+    /// Терминатор `data: [DONE]`.
+    Done,
+}
+
+impl StreamAcc {
+    /// Разбирает одну SSE-строку и применяет к аккумулятору.
+    ///
+    /// # Errors
+    /// Битый JSON в `data:`-строке.
+    fn apply_line(&mut self, line: &str) -> Result<LineOutcome> {
+        let Some(data) = line.strip_prefix("data:") else {
+            // Пустые строки, комментарии (`:...`), служебные поля (event:, id:).
+            return Ok(LineOutcome::None);
+        };
+        let data = data.trim();
+        if data == "[DONE]" {
+            return Ok(LineOutcome::Done);
+        }
+        let chunk: StreamChunk = serde_json::from_str(data)?;
+        Ok(self.apply_chunk(&chunk))
+    }
+
+    /// Применяет распарсенный чанк: склеивает текст и куски `tool_calls`.
+    fn apply_chunk(&mut self, chunk: &StreamChunk) -> LineOutcome {
+        let mut text = String::new();
+        for choice in &chunk.choices {
+            if let Some(content) = &choice.delta.content {
+                self.content.push_str(content);
+                text.push_str(content);
+            }
+            if let Some(reasoning) = &choice.delta.reasoning_content {
+                self.reasoning.push_str(reasoning);
+            }
+            for call in &choice.delta.tool_calls {
+                if self.tool_calls.len() <= call.index {
+                    self.tool_calls.resize_with(call.index + 1, ToolCallAcc::default);
+                }
+                // Слот гарантированно существует после resize_with выше.
+                let slot = &mut self.tool_calls[call.index];
+                if let Some(id) = &call.id {
+                    slot.id.push_str(id);
+                }
+                if let Some(function) = &call.function {
+                    if let Some(name) = &function.name {
+                        slot.name.push_str(name);
+                    }
+                    if let Some(arguments) = &function.arguments {
+                        slot.arguments.push_str(arguments);
+                    }
+                }
+            }
+        }
+        if let Some(usage) = &chunk.usage {
+            self.usage = Usage {
+                prompt_tokens: usage.prompt_tokens,
+                completion_tokens: usage.completion_tokens,
+            };
+        }
+        if text.is_empty() {
+            LineOutcome::None
+        } else {
+            LineOutcome::Delta(text)
+        }
+    }
+
+    /// Собирает финальное сообщение ассистента из накопленного.
+    fn finish(self) -> ChatMessage {
+        let tool_calls = self
+            .tool_calls
+            .into_iter()
+            .filter(|call| !call.id.is_empty() || !call.name.is_empty())
+            .map(|call| ToolCall {
+                id: call.id,
+                name: call.name,
+                arguments: parse_arguments(&call.arguments),
+            })
+            .collect();
+        let mut msg = ChatMessage::assistant(self.content, tool_calls);
+        if !self.reasoning.is_empty() {
+            msg.reasoning_content = Some(self.reasoning);
+        }
+        normalize_reply(msg)
+    }
+}
+
+/// Декодер SSE: режет поток байт на строки и разбирает `data:`-события.
+///
+/// UTF-8 безопасен: строки режутся только по `\n`, а этот байт не встречается
+/// внутри многобайтовых последовательностей.
+#[derive(Debug, Default)]
+struct SseDecoder {
+    buf: Vec<u8>,
+}
+
+impl SseDecoder {
+    /// Скармливает порцию байт, возвращает готовые события.
+    ///
+    /// # Errors
+    /// Битый JSON в `data:`-строке.
+    fn feed(&mut self, chunk: &[u8], acc: &mut StreamAcc) -> Result<Vec<LlmEvent>> {
+        self.buf.extend_from_slice(chunk);
+        let mut events = Vec::new();
+        while let Some(pos) = self.buf.iter().position(|b| *b == b'\n') {
+            let raw: Vec<u8> = self.buf.drain(..=pos).collect();
+            let line = String::from_utf8_lossy(&raw);
+            match acc.apply_line(line.trim_end_matches(['\r', '\n']))? {
+                LineOutcome::Delta(text) => events.push(LlmEvent::Delta(text)),
+                LineOutcome::Done => events.push(LlmEvent::Done(acc.usage)),
+                LineOutcome::None => {}
+            }
+        }
+        Ok(events)
+    }
+
+    /// Добирает последнюю строку без завершающего `\n` в конце потока.
+    ///
+    /// # Errors
+    /// Битый JSON в `data:`-строке.
+    fn flush(&mut self, acc: &mut StreamAcc) -> Result<Option<LlmEvent>> {
+        if self.buf.is_empty() {
+            return Ok(None);
+        }
+        let line = String::from_utf8_lossy(&self.buf).into_owned();
+        self.buf.clear();
+        Ok(match acc.apply_line(line.trim_end_matches('\r'))? {
+            LineOutcome::Delta(text) => Some(LlmEvent::Delta(text)),
+            LineOutcome::Done => Some(LlmEvent::Done(acc.usage)),
+            LineOutcome::None => None,
+        })
+    }
+}
+
+/// Разбирает строку аргументов инструмента в JSON.
+///
+/// Битый JSON возвращается как [`Value::String`] — модель иногда присылает
+/// невалидные аргументы, терять их текст нельзя. Пустая строка → `{}`.
+fn parse_arguments(raw: &str) -> Value {
+    if raw.trim().is_empty() {
+        return Value::Object(serde_json::Map::new());
+    }
+    serde_json::from_str(raw).unwrap_or_else(|_| Value::String(raw.to_string()))
+}
+
+/// Аргументы инструмента: у OpenAI/DeepSeek это строка с JSON, но некоторые
+/// провайдеры отдают уже объект — принимаем оба варианта.
+fn de_arguments<'de, D>(deserializer: D) -> std::result::Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Value::deserialize(deserializer)?;
+    Ok(match value {
+        Value::String(s) => s,
+        other => other.to_string(),
+    })
+}
+
+/// Следующая задержка из итератора ретраев; при смене класса ошибки
+/// итератор пересоздаётся (политика 429 сильно терпеливее политики 5xx).
+fn next_delay(
+    delays: &mut Option<(crate::retry::ErrorKind, crate::retry::Delays)>,
+    kind: crate::retry::ErrorKind,
+    policy: crate::retry::RetryPolicy,
+    seed: u64,
+) -> Option<Duration> {
+    let matches_kind = matches!(delays, Some((k, _)) if *k == kind);
+    if !matches_kind {
+        *delays = Some((kind, policy.delays(seed)));
+    }
+    delays.as_mut().and_then(|(_, it)| it.next())
+}
+
+/// Ошибка HTTP-статуса: код + первые 300 символов тела.
+fn http_error(provider: &str, status: StatusCode, body: &str) -> HarnessError {
+    let excerpt: String = body.trim().chars().take(300).collect();
+    HarnessError::Llm(format!("{provider}: HTTP {status}: {excerpt}"))
+}
+
+/// Обрыв SSE-стрима в середине тела ответа.
+#[derive(Debug)]
+struct StreamBreak {
+    /// Успела ли уйти пользователю хотя бы одна текстовая дельта
+    /// (true → повтор запроса покажет ответ целиком, фрагмент останется —
+    /// перед ретраем пользователю уходит [`LlmEvent::Note`]).
+    emitted: bool,
+    /// Сколько символов контента накоплено к моменту обрыва (для заметки).
+    received_chars: usize,
+    /// Ошибка с человеческой причиной обрыва.
+    source: HarnessError,
+}
+
+/// Ошибка обрыва потока с человеческой причиной: reqwest сверху пишет
+/// только «error decoding response body» — реальная причина (таймаут
+/// чтения, reset, раннее закрытие) прячется в цепочке источников.
+fn stream_break_error(provider: &str, err: &reqwest::Error, received_chars: usize) -> HarnessError {
+    let chain = error_chain(err);
+    let lower = chain.to_lowercase();
+    let reason = if lower.contains("timed out") || lower.contains("timeout") {
+        "таймаут чтения: модель молчала дольше timeout_secs".to_string()
+    } else if lower.contains("connection reset")
+        || lower.contains("connection closed")
+        || lower.contains("broken pipe")
+    {
+        "соединение сброшено (сеть/DPI/перегрузка сервера)".to_string()
+    } else if lower.contains("eof") || lower.contains("incomplete") || lower.contains("closed") {
+        "сервер закрыл поток раньше времени".to_string()
+    } else if lower.contains("decode") || lower.contains("gzip") || lower.contains("utf8") {
+        "сбой декодирования тела ответа".to_string()
+    } else {
+        let short: String = chain.trim().chars().take(160).collect();
+        format!("сетевой сбой ({short})")
+    };
+    let got = if received_chars > 0 {
+        format!("; успело прийти {received_chars} символов — текст выше НЕПОЛНЫЙ")
+    } else {
+        String::new()
+    };
+    HarnessError::Llm(format!(
+        "{provider}: поток ответа оборвался{got}: {reason}. \
+         Автоматические ретраи исчерпаны. Повторите ход; при повторах — \
+         увеличьте timeout_secs у модели в config.toml."
+    ))
+}
+
+/// Полная цепочка причин ошибки reqwest (само сообщение + source-цепочка).
+fn error_chain(err: &reqwest::Error) -> String {
+    let mut out = err.to_string();
+    let mut src = std::error::Error::source(err);
+    while let Some(e) = src {
+        out.push_str(": ");
+        out.push_str(&e.to_string());
+        src = e.source();
+    }
+    out
+}
+
+/// Текст ошибки харнесса для классификации ретраев: для HTTP-ошибок —
+/// полная цепочка причин, для остальных — Display.
+fn error_text(err: &HarnessError) -> String {
+    match err {
+        HarnessError::Http(r) => error_chain(r),
+        other => other.to_string(),
+    }
+}
+
+/// Ошибка фазы отправки запроса («error sending request for url») с
+/// человеческой причиной из цепочки источников — вместо сырого текста reqwest.
+fn send_phase_error(provider: &str, err: &HarnessError) -> HarnessError {
+    let chain = error_text(err);
+    let lower = chain.to_lowercase();
+    let reason = if lower.contains("timed out") || lower.contains("timeout") || lower.contains("таймаут") {
+        "таймаут соединения (сервер недоступен или сеть/DPI режет запрос)"
+    } else if lower.contains("connection refused") {
+        "соединение отклонено (сервер down или порт закрыт)"
+    } else if lower.contains("connection reset") || lower.contains("broken pipe") {
+        "соединение сброшено сетью/DPI"
+    } else if lower.contains("dns") || lower.contains("resolve") || lower.contains("no such host") {
+        "DNS не разрешил хост (проверьте сеть/VPN)"
+    } else if lower.contains("certificate") || lower.contains("tls") {
+        "TLS-ошибка (сертификат/прокси)"
+    } else {
+        "сетевой сбой"
+    };
+    let short: String = chain.trim().chars().take(200).collect();
+    HarnessError::Llm(format!(
+        "{provider}: не удалось отправить запрос: {reason}. \
+         Проверьте сеть/VPN и повторите ход. [детали: {short}]"
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    /// Провайдер с фиктивным ключом (env в тестах не трогаем: `set_var` unsafe в 2024).
+    fn test_provider() -> OpenAiCompat {
+        OpenAiCompat {
+            name: "test".into(),
+            base_url: "https://example.test/v1".into(),
+            model: "test-model".into(),
+            api_key_env: "ARCH_HARNESS_TEST_MISSING_KEY_XYZ".into(),
+            api_key_file: None,
+            api_key_override: Some("sk-secret-dummy".into()),
+            default_temperature: Some(0.25),
+            default_max_tokens: Some(1024),
+            timeout_secs: 30,
+            thinking_on: None,
+            thinking_off: None,
+            client: reqwest::Client::new(),
+        }
+    }
+
+    #[test]
+    fn api_key_falls_back_to_file_when_env_missing() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let key_path = tmp.path().join("key");
+        std::fs::write(&key_path, "  sk-file-key-xyz\n").expect("write");
+        let mut provider = test_provider();
+        provider.api_key_override = None;
+        provider.api_key_file = Some(key_path.to_string_lossy().into_owned());
+        assert_eq!(
+            provider.api_key().expect("ключ из файла"),
+            "sk-file-key-xyz",
+            "читается и обрезается от пробелов"
+        );
+        // Нет ни env, ни файла — внятная ошибка без содержимого.
+        provider.api_key_file = Some(tmp.path().join("missing").to_string_lossy().into_owned());
+        let err = provider.api_key().expect_err("нет ключа — ошибка");
+        let msg = err.to_string();
+        assert!(msg.contains("ARCH_HARNESS_TEST_MISSING_KEY_XYZ"), "{msg}");
+        assert!(!msg.contains("sk-"), "содержимое ключа не светится: {msg}");
+    }
+
+    #[test]
+    fn serializes_request_body_in_openai_wire_format() {
+        let provider = test_provider();
+        let req = ChatRequest {
+            messages: vec![
+                ChatMessage::system("Ты — архитектор."),
+                ChatMessage::user("Сравни Kafka и NATS"),
+                ChatMessage::assistant(
+                    "",
+                    vec![ToolCall {
+                        id: "call_1".into(),
+                        name: "kb_search".into(),
+                        arguments: serde_json::json!({"query": "Kafka vs NATS"}),
+                    }],
+                ),
+                ChatMessage::tool_result("call_1", "Kafka: лог; NATS: очередь"),
+            ],
+            tools: vec![ToolSpec {
+                name: "kb_search".into(),
+                description: "Поиск по базе знаний".into(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {"query": {"type": "string"}},
+                    "required": ["query"]
+                }),
+            }],
+            // 0.5 точно представимо в f32/f64 — сравнение Value без сюрпризов.
+            temperature: Some(0.5),
+            max_tokens: None,
+            thinking: None,
+        };
+        let body = serde_json::to_value(provider.build_body(&req, RequestMode::Complete))
+            .expect("to_value");
+        let want = serde_json::json!({
+            "model": "test-model",
+            "messages": [
+                {"role": "system", "content": "Ты — архитектор."},
+                {"role": "user", "content": "Сравни Kafka и NATS"},
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [{
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {"name": "kb_search", "arguments": "{\"query\":\"Kafka vs NATS\"}"}
+                    }]
+                },
+                {"role": "tool", "content": "Kafka: лог; NATS: очередь", "tool_call_id": "call_1"}
+            ],
+            "tools": [{
+                "type": "function",
+                "function": {
+                    "name": "kb_search",
+                    "description": "Поиск по базе знаний",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"query": {"type": "string"}},
+                        "required": ["query"]
+                    }
+                }
+            }],
+            "temperature": 0.5,
+            "max_tokens": 1024,
+            "stream": false
+        });
+        assert_eq!(body, want);
+    }
+
+    #[test]
+    fn stream_body_skips_none_fields_and_adds_stream_options() {
+        let provider = test_provider();
+        let req = ChatRequest::chat(vec![ChatMessage::user("hi")]);
+        let body = serde_json::to_value(provider.build_body(&req, RequestMode::Stream))
+            .expect("to_value");
+        let want = serde_json::json!({
+            "model": "test-model",
+            "messages": [{"role": "user", "content": "hi"}],
+            "temperature": 0.25,
+            "max_tokens": 1024,
+            "stream": true,
+            "stream_options": {"include_usage": true}
+        });
+        assert_eq!(body, want);
+    }
+
+    #[test]
+    fn glm_quirk_empty_content_falls_back_to_reasoning() {
+        // GLM-4.7 с thinking=on: весь ответ в reasoning_content, content пуст.
+        let msg = CompletionMessage {
+            content: Some(String::new()),
+            reasoning_content: Some("\n3".into()),
+            tool_calls: Vec::new(),
+        }
+        .into_chat_message();
+        assert_eq!(msg.content, "3", "ответ поднят из цепочки рассуждений");
+        assert_eq!(
+            msg.reasoning_content.as_deref(),
+            Some("\n3"),
+            "reasoning сохранён для эха (DeepSeek-контракт)"
+        );
+        // С tool_calls пустой content — норма протокола, подмены нет.
+        let with_call = CompletionMessage {
+            content: None,
+            reasoning_content: Some("думаю".into()),
+            tool_calls: vec![CompletionToolCall {
+                id: "c1".into(),
+                function: CompletionFunction {
+                    name: "bash".into(),
+                    arguments: "{}".into(),
+                },
+            }],
+        }
+        .into_chat_message();
+        assert_eq!(with_call.content, "");
+        // Непустой content никогда не подменяется.
+        let plain = CompletionMessage {
+            content: Some("ответ".into()),
+            reasoning_content: Some("cot".into()),
+            tool_calls: Vec::new(),
+        }
+        .into_chat_message();
+        assert_eq!(plain.content, "ответ");
+    }
+
+    #[test]
+    fn thinking_toggle_merges_config_maps_into_body() {
+        let mut provider = test_provider();
+        let mut inner = serde_json::Map::new();
+        inner.insert("type".into(), Value::String("enabled".into()));
+        let mut on = serde_json::Map::new();
+        on.insert("thinking".into(), Value::Object(inner));
+        provider.thinking_on = Some(on);
+        let mut off_inner = serde_json::Map::new();
+        off_inner.insert("type".into(), Value::String("disabled".into()));
+        let mut off = serde_json::Map::new();
+        off.insert("thinking".into(), Value::Object(off_inner));
+        provider.thinking_off = Some(off);
+
+        let mut req = ChatRequest::chat(vec![ChatMessage::user("hi")]);
+        // None — карты не шлются (дефолт провайдера).
+        let body = serde_json::to_value(provider.build_body(&req, RequestMode::Complete))
+            .expect("to_value");
+        assert!(body.get("thinking").is_none(), "без флага поля нет: {body}");
+        // on/off — соответствующая карта на верхнем уровне тела.
+        req.thinking = Some(true);
+        let body = serde_json::to_value(provider.build_body(&req, RequestMode::Complete))
+            .expect("to_value");
+        assert_eq!(body["thinking"]["type"], "enabled", "on: {body}");
+        req.thinking = Some(false);
+        let body = serde_json::to_value(provider.build_body(&req, RequestMode::Complete))
+            .expect("to_value");
+        assert_eq!(body["thinking"]["type"], "disabled", "off: {body}");
+    }
+
+    #[test]
+    fn reasoning_content_is_collected_from_stream_and_echoed_back() {
+        // Приём: reasoning_content в дельтах копится отдельно от контента.
+        let raw = "data: {\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\"считаю\",\"content\":\"отв\"}}]}\n\ndata: {\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\" дальше\",\"content\":\"ет\"}}]}\n\ndata: [DONE]\n\n";
+        let mut decoder = SseDecoder::default();
+        let mut acc = StreamAcc::default();
+        let events = decoder.feed(raw.as_bytes(), &mut acc).expect("feed");
+        let text: String = events
+            .iter()
+            .filter_map(|e| match e {
+                LlmEvent::Delta(t) => Some(t.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(text, "ответ", "CoT не смешивается с текстом ответа");
+        let msg = acc.finish();
+        assert_eq!(msg.reasoning_content.as_deref(), Some("считаю дальше"));
+        // Эхо: OutMessage возвращает reasoning_content в API (DeepSeek 400-trap).
+        let out = OutMessage::from(&msg);
+        let v = serde_json::to_value(&out).expect("to_value");
+        assert_eq!(v["reasoning_content"], "считаю дальше", "эхо: {v}");
+        // Без ризонинга поле не сериализуется вовсе.
+        let plain_msg = ChatMessage::user("hi");
+        let plain = OutMessage::from(&plain_msg);
+        let v = serde_json::to_value(&plain).expect("to_value");
+        assert!(v.get("reasoning_content").is_none(), "нет поля: {v}");
+    }
+
+    #[test]
+    fn sse_decoder_parses_deltas_and_done_usage() {
+        let raw: &[u8] = b"data: {\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"Hel\"}}]}\n\n\
+data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"lo\"}}]}\n\n\
+data: {\"choices\":[],\"usage\":{\"prompt_tokens\":12,\"completion_tokens\":2}}\n\n\
+data: [DONE]\n\n";
+        let mut decoder = SseDecoder::default();
+        let mut acc = StreamAcc::default();
+        // Две порции, чтобы проверить склейку строк на границе чанков.
+        let mid = raw.len() / 2;
+        let mut events = decoder.feed(&raw[..mid], &mut acc).expect("feed 1");
+        events.extend(decoder.feed(&raw[mid..], &mut acc).expect("feed 2"));
+        let text: String = events
+            .iter()
+            .filter_map(|e| match e {
+                LlmEvent::Delta(t) => Some(t.as_str()),
+                LlmEvent::Note(_) | LlmEvent::Done(_) => None,
+            })
+            .collect();
+        assert_eq!(text, "Hello");
+        assert!(
+            matches!(events.last(), Some(LlmEvent::Done(u)) if *u == Usage { prompt_tokens: 12, completion_tokens: 2 }),
+            "events: {events:?}"
+        );
+        let msg = acc.finish();
+        assert_eq!(msg.content, "Hello");
+        assert!(msg.tool_calls.is_empty());
+    }
+
+    #[test]
+    fn assembles_tool_call_arguments_split_across_three_chunks() {
+        // Аргументы приходят тремя кусками, id/name — первым чанком.
+        let raw = r#"data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"kb_search","arguments":"{\"que"}}]}}]}
+
+data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"ry\":\"арх"}}]}}]}
+
+data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"итектура\"}"}}]}}]}
+
+data: [DONE]
+
+"#;
+        let mut decoder = SseDecoder::default();
+        let mut acc = StreamAcc::default();
+        // Граница порции режет строку (и, возможно, многобайтовый UTF-8) — декодер обязан склеить.
+        let mid = raw.len() / 2;
+        let mut events = decoder.feed(&raw.as_bytes()[..mid], &mut acc).expect("feed 1");
+        events.extend(decoder.feed(&raw.as_bytes()[mid..], &mut acc).expect("feed 2"));
+        assert!(
+            events.iter().any(|e| matches!(e, LlmEvent::Done(_))),
+            "events: {events:?}"
+        );
+        let msg = acc.finish();
+        assert_eq!(msg.tool_calls.len(), 1, "tool_calls: {:?}", msg.tool_calls);
+        let call = &msg.tool_calls[0];
+        assert_eq!(call.id, "call_1");
+        assert_eq!(call.name, "kb_search");
+        assert_eq!(call.arguments, serde_json::json!({"query": "архитектура"}));
+    }
+
+    #[test]
+    fn broken_tool_call_arguments_fall_back_to_raw_string() {
+        let raw = "data: {\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"c2\",\"type\":\"function\",\"function\":{\"name\":\"bash\",\"arguments\":\"{битый-json\"}}]}}]}\n\ndata: [DONE]\n\n";
+        let mut decoder = SseDecoder::default();
+        let mut acc = StreamAcc::default();
+        decoder.feed(raw.as_bytes(), &mut acc).expect("feed");
+        let msg = acc.finish();
+        assert_eq!(msg.tool_calls.len(), 1);
+        assert_eq!(
+            msg.tool_calls[0].arguments,
+            Value::String("{битый-json".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_arguments_handles_empty_valid_and_broken() {
+        assert_eq!(parse_arguments(""), Value::Object(serde_json::Map::new()));
+        assert_eq!(parse_arguments("{\"a\": 1}"), serde_json::json!({"a": 1}));
+        assert_eq!(parse_arguments("{oops"), Value::String("{oops".into()));
+    }
+
+    #[test]
+    fn http_error_maps_status_and_truncates_body() {
+        let body = "x".repeat(500);
+        let err = http_error("test", StatusCode::UNAUTHORIZED, &body);
+        let msg = match err {
+            HarnessError::Llm(m) => m,
+            other => panic!("ожидался Llm, получено: {other:?}"),
+        };
+        assert!(msg.contains("401"), "нет кода статуса: {msg}");
+        assert!(msg.len() < 400, "тело не обрезано до 300 символов: {}", msg.len());
+    }
+
+    #[test]
+    fn retryable_only_on_429_and_5xx() {
+        use crate::retry::{ErrorKind, RetryPolicy, classify};
+        for status in [
+            StatusCode::TOO_MANY_REQUESTS,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            StatusCode::BAD_GATEWAY,
+        ] {
+            let kind = classify(Some(status.as_u16()), "");
+            assert!(
+                RetryPolicy::for_kind(kind).is_some(),
+                "{status} должен ретраиться"
+            );
+        }
+        for status in [
+            StatusCode::OK,
+            StatusCode::BAD_REQUEST,
+            StatusCode::UNAUTHORIZED,
+            StatusCode::PAYLOAD_TOO_LARGE,
+        ] {
+            let kind = classify(Some(status.as_u16()), "");
+            assert!(
+                RetryPolicy::for_kind(kind).is_none() || kind == ErrorKind::Unknown,
+                "{status} не должен ретраиться"
+            );
+        }
+    }
+
+    #[test]
+    fn debug_hides_api_key() {
+        let dbg = format!("{:?}", test_provider());
+        assert!(dbg.contains("test-model"), "debug: {dbg}");
+        assert!(dbg.contains("https://example.test/v1"), "debug: {dbg}");
+        assert!(!dbg.contains("sk-secret-dummy"), "ключ утёк в Debug: {dbg}");
+    }
+
+    #[test]
+    fn new_rejects_empty_base_url_but_not_missing_key() {
+        let mut cfg = ModelConfig {
+            base_url: "  ".into(),
+            model: "m".into(),
+            api_key_env: "ARCH_HARNESS_TEST_MISSING_KEY_XYZ".into(),
+            ..ModelConfig::default()
+        };
+        let err = OpenAiCompat::new("x", &cfg).expect_err("пустой base_url");
+        assert!(matches!(err, HarnessError::Llm(_)), "err: {err:?}");
+        // Ключ читается лениво: конструирование без ключа — ОК, ошибка — на запросе.
+        cfg.base_url = "https://example.test/v1".into();
+        let provider = OpenAiCompat::new("x", &cfg).expect("без ключа конструируется");
+        let err = provider.api_key().expect_err("нет ключа в окружении");
+        assert!(matches!(err, HarnessError::Llm(_)), "err: {err:?}");
+    }
+
+    /// Одноразовый HTTP-сервер на loopback: читает заголовки запроса, отдаёт готовый ответ.
+    async fn serve_once(response: String) -> (u16, tokio::task::JoinHandle<()>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let port = listener.local_addr().expect("local_addr").port();
+        let handle = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("accept");
+            let mut buf = [0u8; 4096];
+            let mut request = Vec::new();
+            loop {
+                let n = socket.read(&mut buf).await.expect("read");
+                if n == 0 {
+                    break;
+                }
+                request.extend_from_slice(&buf[..n]);
+                if request.windows(4).any(|w| w == b"\r\n\r\n") {
+                    break;
+                }
+            }
+            socket.write_all(response.as_bytes()).await.expect("write");
+            socket.shutdown().await.expect("shutdown");
+        });
+        (port, handle)
+    }
+
+    fn loopback_provider(port: u16) -> OpenAiCompat {
+        OpenAiCompat {
+            base_url: format!("http://127.0.0.1:{port}"),
+            ..test_provider()
+        }
+    }
+
+    #[tokio::test]
+    async fn maps_http_401_response_to_llm_error() {
+        let body = r#"{"error":{"message":"invalid authentication credentials"}}"#;
+        let response = format!(
+            "HTTP/1.1 401 Unauthorized\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        let (port, server) = serve_once(response).await;
+        let provider = loopback_provider(port);
+        let err = provider
+            .complete(ChatRequest::chat(vec![ChatMessage::user("hi")]))
+            .await
+            .expect_err("ожидалась ошибка 401");
+        server.await.expect("join");
+        let msg = match err {
+            HarnessError::Llm(m) => m,
+            other => panic!("ожидался Llm, получено: {other:?}"),
+        };
+        assert!(msg.contains("401"), "нет кода статуса: {msg}");
+        assert!(msg.contains("invalid authentication"), "нет выдержки тела: {msg}");
+    }
+
+    #[tokio::test]
+    async fn streams_deltas_and_done_over_http() {
+        let body = "data: {\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"При\"}}]}\n\n\
+data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"вет\"}}]}\n\n\
+data: {\"choices\":[],\"usage\":{\"prompt_tokens\":7,\"completion_tokens\":3}}\n\n\
+data: [DONE]\n\n";
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        let (port, server) = serve_once(response).await;
+        let provider = loopback_provider(port);
+        let (tx, mut rx) = mpsc::channel(16);
+        let msg = provider
+            .stream(ChatRequest::chat(vec![ChatMessage::user("hi")]), tx)
+            .await
+            .expect("stream");
+        server.await.expect("join");
+        assert_eq!(msg.content, "Привет");
+        assert!(msg.tool_calls.is_empty());
+        // tx дропнут при выходе из stream(): recv дочитает буфер и вернёт None.
+        let mut events = Vec::new();
+        while let Some(ev) = rx.recv().await {
+            events.push(ev);
+        }
+        assert_eq!(events.len(), 3, "events: {events:?}");
+        assert!(matches!(&events[0], LlmEvent::Delta(t) if t == "При"));
+        assert!(matches!(&events[1], LlmEvent::Delta(t) if t == "вет"));
+        assert!(matches!(&events[2], LlmEvent::Done(u) if *u == Usage { prompt_tokens: 7, completion_tokens: 3 }));
+    }
+
+    /// Сервер, обслуживающий несколько соединений подряд своими ответами
+    /// (для тестов ретраев: первый ответ битый, второй — полноценный).
+    async fn serve_sequence(responses: Vec<String>) -> (u16, tokio::task::JoinHandle<()>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let port = listener.local_addr().expect("local_addr").port();
+        let handle = tokio::spawn(async move {
+            for response in responses {
+                let (mut socket, _) = listener.accept().await.expect("accept");
+                let mut buf = [0u8; 4096];
+                let mut request = Vec::new();
+                loop {
+                    let n = socket.read(&mut buf).await.expect("read");
+                    if n == 0 {
+                        break;
+                    }
+                    request.extend_from_slice(&buf[..n]);
+                    if request.windows(4).any(|w| w == b"\r\n\r\n") {
+                        break;
+                    }
+                }
+                socket.write_all(response.as_bytes()).await.expect("write");
+                socket.shutdown().await.expect("shutdown");
+            }
+        });
+        (port, handle)
+    }
+
+    /// SSE-ответ с заголовками; `declared_len` позволяет соврать о длине
+    /// (больше реальной → клиент увидит обрыв тела при закрытии соединения).
+    fn sse_response(body: &str, declared_len: usize) -> String {
+        format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {declared_len}\r\nConnection: close\r\n\r\n{body}"
+        )
+    }
+
+    #[tokio::test]
+    async fn stream_break_before_content_is_retried_and_recovers() {
+        // Первое соединение: заголовки обещают тело, но соединение закрывается
+        // ни с чем — классический «error decoding response body».
+        let full = "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ок\"}}]}\n\ndata: [DONE]\n\n";
+        let (port, server) = serve_sequence(vec![
+            sse_response("", 4096),
+            sse_response(full, full.len()),
+        ])
+        .await;
+        let provider = loopback_provider(port);
+        let (tx, _rx) = mpsc::channel(16);
+        let msg = provider
+            .stream(ChatRequest::chat(vec![ChatMessage::user("hi")]), tx)
+            .await
+            .expect("стрим обязан восстановиться ретраем");
+        server.await.expect("join");
+        assert_eq!(msg.content, "ок");
+    }
+
+    #[tokio::test]
+    async fn stream_break_after_content_is_retried_with_note_and_recovers() {
+        // Первая попытка: дельта ушла, потом обрыв (как на скриншоте —
+        // модель «замолчала» посреди ответа). Вторая — полный ответ.
+        // Ретрай безопасен: инструменты исполняются только после полной
+        // сборки, дублей вызовов нет; фрагмент остаётся в чате + Note.
+        let partial = "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Пол\"}}]}\n\n";
+        let full = "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Полный ответ\"}}]}\n\ndata: [DONE]\n\n";
+        let (port, server) = serve_sequence(vec![
+            sse_response(partial, 4096),
+            sse_response(full, full.len()),
+        ])
+        .await;
+        let provider = loopback_provider(port);
+        let (tx, mut rx) = mpsc::channel(16);
+        let msg = provider
+            .stream(ChatRequest::chat(vec![ChatMessage::user("hi")]), tx)
+            .await
+            .expect("стрим обязан восстановиться ретраем после частичного контента");
+        server.await.expect("join");
+        // Собранное сообщение — ТОЛЬКО успешная попытка (фрагмент не склеен).
+        assert_eq!(msg.content, "Полный ответ");
+        let mut events = Vec::new();
+        while let Some(ev) = rx.recv().await {
+            events.push(ev);
+        }
+        let notes = events
+            .iter()
+            .filter(|e| matches!(e, LlmEvent::Note(_)))
+            .count();
+        assert_eq!(notes, 1, "одна заметка о ретрае: {events:?}");
+        let note = events.iter().find_map(|e| match e {
+            LlmEvent::Note(t) => Some(t.as_str()),
+            _ => None,
+        });
+        assert!(
+            note.is_some_and(|t| t.contains("3 символов") && t.contains("повторяю")),
+            "заметка со счётчиком фрагмента: {note:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn stream_break_after_content_exhaustion_returns_friendly_russian_error() {
+        // Все 5 попыток обрываются после первой дельты — финальная ошибка
+        // обязана объяснять причину, неполноту текста и исчерпание ретраев.
+        let partial = "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Пол\"}}]}\n\n";
+        let broken: Vec<String> = (0..5).map(|_| sse_response(partial, 4096)).collect();
+        let (port, server) = serve_sequence(broken).await;
+        let provider = loopback_provider(port);
+        let (tx, mut rx) = mpsc::channel(64);
+        let err = provider
+            .stream(ChatRequest::chat(vec![ChatMessage::user("hi")]), tx)
+            .await
+            .expect_err("ретраи исчерпаны — ошибка наверх");
+        server.await.expect("join");
+        let msg = err.to_string();
+        assert!(msg.contains("оборвался"), "человеческая причина: {msg}");
+        assert!(msg.contains("НЕПОЛНЫЙ"), "предупреждение о неполноте: {msg}");
+        assert!(msg.contains("ретраи исчерпаны"), "исчерпание ретраев: {msg}");
+        assert!(msg.contains("Повторите ход"), "подсказка действия: {msg}");
+        // 4 повтора → 4 заметки (после попыток 1–4).
+        let mut notes = 0;
+        while let Some(ev) = rx.recv().await {
+            if matches!(ev, LlmEvent::Note(_)) {
+                notes += 1;
+            }
+        }
+        assert_eq!(notes, 4, "по заметке на каждый повтор");
+    }
+
+    /// Live-прогон: `cargo test -- --ignored live_deepseek`.
+    #[tokio::test]
+    #[ignore = "нужен DEEPSEEK_API_KEY и доступ к api.deepseek.com"]
+    async fn live_deepseek_complete() {
+        let cfg = ModelConfig {
+            base_url: String::new(),
+            model: "deepseek-chat".into(),
+            api_key_env: "DEEPSEEK_API_KEY".into(),
+            max_tokens: Some(64),
+            ..ModelConfig::default()
+        };
+        let provider = crate::llm::deepseek::provider("deepseek", &cfg).expect("provider");
+        let msg = provider
+            .complete(ChatRequest::chat(vec![ChatMessage::user(
+                "Ответь одним словом: ок",
+            )]))
+            .await
+            .expect("complete");
+        assert!(!msg.content.is_empty());
+    }
+}

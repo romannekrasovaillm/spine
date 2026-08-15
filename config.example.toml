@@ -1,0 +1,302 @@
+# =============================================================================
+# arch-harness — пример конфигурации (config.toml)
+# =============================================================================
+# Порядок поиска конфига при запуске:
+#   1. --config <path>
+#   2. ./arch-harness.toml (текущий каталог)
+#   3. ~/.config/arch-harness/config.toml
+#   4. встроенные дефолты (этот файл их документирует полностью)
+#
+# Все секции опциональны (serde default) — указывайте только отличия.
+# Тильда `~/` в путях раскрывается при загрузке (knowledge dirs, mcp/cron/paths).
+# API-ключи НЕ пишутся в конфиг — только имена переменных окружения.
+# =============================================================================
+
+# Модель по умолчанию — ключ из секции [models.*].
+default_model = "deepseek"
+
+# -----------------------------------------------------------------------------
+# LLM-провайдеры (OpenAI-совместимые endpoint'ы).
+# api_key_env — имя переменной окружения с ключом (значение ключа не хранится!).
+# temperature: не задана = провайдерский дефолт (поле просто опускается).
+#
+# thinking_on / thinking_off — карты ризонинга (JSON-объект, сливается в тело
+# запроса при `/think on|off` в TUI или `arch run --think on|off`):
+#   DeepSeek V4, GLM-4.x:  thinking = { type = "enabled" | "disabled" }
+#   Kimi K3:               reasoning_effort = "max" | "low"  (выключить нельзя)
+# Без `/think` карты не шлются — действует дефолт провайдера (у DeepSeek V4
+# ризонинг по умолчанию ВКЛЮЧЁН с effort=high). Для thinking + tools DeepSeek
+# требует эха reasoning_content — харнесс хранит его и возвращает сам.
+#
+# Актуальность id моделей сверена с официальной документацией (август 2026):
+# deepseek-chat/reasoner сняты 2026-07-24 → v4-flash/v4-pro; kimi-k2 снят
+# 2025-05-25 → kimi-k3; glm-4.6 → glm-4.7.
+# -----------------------------------------------------------------------------
+[models.deepseek]
+base_url = "https://api.deepseek.com/v1"
+model = "deepseek-v4-flash"           # быстрая модель для повседневных задач
+api_key_env = "DEEPSEEK_API_KEY"
+max_tokens = 8192
+timeout_secs = 180
+thinking_on  = { thinking = { type = "enabled" } }
+thinking_off = { thinking = { type = "disabled" } }
+
+[models.deepseek-pro]
+base_url = "https://api.deepseek.com/v1"
+model = "deepseek-v4-pro"             # тяжёлый ризонинг: состязательное ревью, гейты
+api_key_env = "DEEPSEEK_API_KEY"
+max_tokens = 8192
+timeout_secs = 300                    # pro думает дольше — бюджет тишины выше
+thinking_on  = { thinking = { type = "enabled" } }
+thinking_off = { thinking = { type = "disabled" } }
+
+[models.kimi]
+# Официальная coding-поверхность Kimi Code (доки kimi.com/code): модели
+# k3 / k3-256k; старая /v1 отдаёт 404, api.moonshot.ai душится DPI (флапает).
+# Thinking-параметры поверхность не принимает (K3 ризонит всегда); temperature
+# — только 1 (поэтому не шлём). Ключ: env KIMI_API_KEY или файл api_key_file.
+base_url = "https://api.kimi.com/coding/v1"
+model = "k3"                          # флагман Kimi Code, 256k контекст
+api_key_env = "KIMI_API_KEY"
+api_key_file = "~/.kimi_api_key"      # запасной путь, если env не задан
+max_tokens = 8192
+timeout_secs = 180
+
+[models.glm]
+# Китайская площадка Zhipu (ключ ZHIPU_API_KEY); международный аналог —
+# https://api.z.ai/api/paas/v4 (свой ключ с docs.z.ai).
+base_url = "https://open.bigmodel.cn/api/paas/v4"
+model = "glm-5.2"                     # флагман Z.AI (резервный провайдер)
+api_key_env = "ZHIPU_API_KEY"
+max_tokens = 8192
+timeout_secs = 180
+thinking_on  = { thinking = { type = "enabled" } }
+thinking_off = { thinking = { type = "disabled" } }
+
+[models."glm-4.7"]
+base_url = "https://open.bigmodel.cn/api/paas/v4"
+model = "glm-4.7"                     # прошлое поколение: дешевле флагмана вдвое
+api_key_env = "ZHIPU_API_KEY"
+max_tokens = 8192
+timeout_secs = 180
+thinking_on  = { thinking = { type = "enabled" } }
+thinking_off = { thinking = { type = "disabled" } }
+
+[models.glm-air]
+base_url = "https://open.bigmodel.cn/api/paas/v4"
+model = "glm-4.5-air"                 # дешёвый рабочий (~$0.14/$0.86 за 1М)
+api_key_env = "ZHIPU_API_KEY"
+max_tokens = 8192
+timeout_secs = 120
+thinking_on  = { thinking = { type = "enabled" } }
+thinking_off = { thinking = { type = "disabled" } }
+
+[models.glm-flash]
+base_url = "https://open.bigmodel.cn/api/paas/v4"
+model = "glm-4.7-flash"               # бесплатный тариф: черновики, крон, дайджесты
+api_key_env = "ZHIPU_API_KEY"
+max_tokens = 8192
+timeout_secs = 120
+thinking_on  = { thinking = { type = "enabled" } }
+thinking_off = { thinking = { type = "disabled" } }
+
+# -----------------------------------------------------------------------------
+# Агентный цикл «модель ↔ инструменты».
+# -----------------------------------------------------------------------------
+[agent]
+max_tool_turns = 48                   # максимум итераций за один ход (по исчерпании — финальный ответ без инструментов, ход не падает)
+context_budget_tokens = 60000         # бюджет контекста (грубо: 4 символа ≈ 1 токен)
+stream = true                         # стримить дельты ответа в TUI/stdout
+
+# -----------------------------------------------------------------------------
+# Локальная база знаний для `arch kb` и инструмента kb_search.
+# Каталоги — доменные документы архитектора (разборы, концепты, скиллы);
+# принцип Context Supply Chain: сужайте до релевантных доменов, не «вся Wiki».
+# -----------------------------------------------------------------------------
+[knowledge]
+dirs = [
+  "~/knowledge/architecture",      # разборы и статьи (ЗАМЕНИТЕ на свои каталоги)
+  "~/knowledge/papers",            # научные статьи/концепты
+  "~/knowledge/skills",            # ваша библиотека скиллов
+]
+extensions = ["md", "txt", "rst"]     # какие расширения индексировать
+
+# -----------------------------------------------------------------------------
+# Веб-доступ: поиск (DuckDuckGo HTML), фетч страниц, кураторские сайты.
+# Кураторский список используется `arch web search --arch` и инструментом
+# web_arch_sites: версии технологий проверяются по первоисточникам, не по памяти.
+# -----------------------------------------------------------------------------
+[web]
+search_base = "https://html.duckduckgo.com/html/"
+user_agent = "arch-harness/0.1 (+solution-architect harness)"
+timeout_secs = 30
+max_fetch_chars = 24000               # усечение текста страницы после html→text
+
+[[web.arch_sites]]
+name = "aws-arch"
+base_url = "https://docs.aws.amazon.com/architecture/"
+domain = "docs.aws.amazon.com"
+description = "AWS Architecture Center: reference architectures, Well-Architected"
+
+[[web.arch_sites]]
+name = "azure-arch"
+base_url = "https://learn.microsoft.com/azure/architecture/"
+domain = "learn.microsoft.com"
+description = "Azure Architecture Center: паттерны, reference architectures"
+
+[[web.arch_sites]]
+name = "gcp-arch"
+base_url = "https://cloud.google.com/architecture"
+domain = "cloud.google.com"
+description = "Google Cloud Architecture Center"
+
+[[web.arch_sites]]
+name = "fowler"
+base_url = "https://martinfowler.com/architecture/"
+domain = "martinfowler.com"
+description = "Мартин Фаулер: эссе по архитектуре, микросервисам, эволюционному дизайну"
+
+[[web.arch_sites]]
+name = "infoq-arch"
+base_url = "https://www.infoq.com/architecture-design/"
+domain = "infoq.com"
+description = "InfoQ Architecture & Design: статьи и тренды"
+
+[[web.arch_sites]]
+name = "microservices-io"
+base_url = "https://microservices.io/"
+domain = "microservices.io"
+description = "Каталог паттернов микросервисов (Крис Ричардсон)"
+
+[[web.arch_sites]]
+name = "c4"
+base_url = "https://c4model.com/"
+domain = "c4model.com"
+description = "C4 model: нотация визуализации архитектуры"
+
+[[web.arch_sites]]
+name = "arc42"
+base_url = "https://docs.arc42.org/"
+domain = "docs.arc42.org"
+description = "arc42: шаблон документирования архитектуры"
+
+[[web.arch_sites]]
+name = "togaf"
+base_url = "https://pubs.opengroup.org/togaf-standard/"
+domain = "pubs.opengroup.org"
+description = "TOGAF Standard (Open Group)"
+
+[[web.arch_sites]]
+name = "sei"
+base_url = "https://insights.sei.cmu.edu/library/"
+domain = "insights.sei.cmu.edu"
+description = "SEI/CAD: ATAM, архитектурные тактики, quality attributes"
+
+[[web.arch_sites]]
+name = "awesome-arch"
+base_url = "https://awesome-architecture.com/"
+domain = "awesome-architecture.com"
+description = "Кураторский список ресурсов по software architecture"
+
+# -----------------------------------------------------------------------------
+# Кодовые харнессы — адаптеры запуска внешних агентов реализации.
+# prompt_mode: positional (промпт — аргумент) | flag ({prompt} в args) | stdin.
+# handoff-пакет кладётся в <repo>/.arch-handoff/ командой `arch handoff`.
+# -----------------------------------------------------------------------------
+[harnesses.claude-code]
+binary = "claude"
+args = ["-p"]
+prompt_mode = "stdin"
+timeout_secs = 1800
+
+[harnesses.qwen-code]
+binary = "qwen"
+args = []
+prompt_mode = "stdin"
+timeout_secs = 1800
+
+[harnesses.openclaw]
+binary = "openclaw"
+args = ["agent", "--message"]         # промпт подставится вместо {prompt} по prompt_mode = "flag"
+prompt_mode = "flag"
+timeout_secs = 1800
+
+[harnesses.hermes]
+binary = "hermes"
+args = ["-p"]
+prompt_mode = "stdin"
+timeout_secs = 1800
+
+[harnesses.theseus]
+binary = "theseus"
+args = ["run", "--task"]
+prompt_mode = "flag"
+timeout_secs = 1800
+
+[harnesses.codewhale]
+binary = "codewhale"
+args = ["-p"]
+prompt_mode = "stdin"
+timeout_secs = 1800
+
+# -----------------------------------------------------------------------------
+# MCP: файл серверов в формате Claude Code (см. examples/mcp.example.json).
+# `arch init` кладёт образец в ~/.arch-harness/mcp.json.
+# -----------------------------------------------------------------------------
+[mcp]
+servers_file = "~/.arch-harness/mcp.json"
+connect_on_start = false              # false — ленивое подключение по первому вызову
+timeout_secs = 60
+
+# -----------------------------------------------------------------------------
+# Политика автономии инструментов (R-уровни, AI-Disrupt PDLC): автономия
+# калибруется риском действия, а не брендом модели. Проверка — в dispatch
+# каждого инструмента; решения журналируются в сессии.
+# -----------------------------------------------------------------------------
+[policy]
+autonomy = "R2"   # R0 только чтения | R2 +изменения (дефолт) | R4 деструктив с подтверждением | R5 полная (красный флаг аудита)
+
+# -----------------------------------------------------------------------------
+# Изоляция окружения bash-команд (defensive pattern DeepSeek Harness:
+# недоверенному выводу — не ambient-окружение). Из окружения процесса,
+# порождённого инструментом bash, выбрасываются переменные с
+# секретоподобными именами (токены имени KEY/SECRET/TOKEN/PASSWORD/PASSWD/
+# PASS/CREDENTIAL(S)/AUTH): DEEPSEEK_API_KEY, GH_TOKEN, SSH_AUTH_SOCK и т.п.
+# не видны команде, которую написала модель. env_allow — точные имена-
+# исключения, пропускаемые несмотря на scrub (понадобятся, если рабочему
+# контуру нужен, например, GH_TOKEN для `gh`).
+# -----------------------------------------------------------------------------
+[bash]
+env_scrub = true
+env_allow = []      # пример: ["GH_TOKEN"]
+
+# -----------------------------------------------------------------------------
+# Плагины (открытый стандарт agent-plugins.org): пакеты «скиллы + MCP».
+# Каждый прямой потомок каталога — плагин: plugin.json + skills/<name>/SKILL.md
+# + mcp.json/.mcp.json (+ agents/, hooks/ как клиентские расширения).
+# Первый каталог — локальная библиотека (arch init кладёт туда arch-core и
+# плагины паттернов), второй — общая библиотека скиллов пользователя.
+# -----------------------------------------------------------------------------
+[plugins]
+dirs = [
+    "~/.arch-harness/plugins",
+    # "~/knowledge/skills",   # раскомментируйте и укажите свою библиотеку плагинов
+]
+include_mcp = true   # MCP-серверы из плагинов (имена plugin.server) попадают в общий пул
+
+# -----------------------------------------------------------------------------
+# Планировщик md-задач (см. cron.example.toml).
+# out_dir не задан — отчёты пишутся в <reports_dir>/cron.
+# -----------------------------------------------------------------------------
+[cron]
+file = "~/.arch-harness/cron.toml"
+# out_dir = "~/.arch-harness/reports/cron"
+
+# -----------------------------------------------------------------------------
+# Пути к ассетам и данным. assets_dir: prompts/, rubrics/, benchmarks/, ascii/
+# (раскладываются `arch init` из встроенных). sessions — append-only журналы.
+# -----------------------------------------------------------------------------
+[paths]
+assets_dir = "~/.arch-harness/assets"
+reports_dir = "~/.arch-harness/reports"
+sessions_dir = "~/.arch-harness/sessions"
