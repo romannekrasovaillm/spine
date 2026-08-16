@@ -221,6 +221,62 @@ impl InputState {
         self.cursor += c.len_utf8();
     }
 
+    /// Вставляет перевод строки (многострочный ввод: Ctrl+J / Shift+Enter).
+    fn insert_newline(&mut self) {
+        self.completion = None;
+        self.text.insert(self.cursor, '\n');
+        self.cursor += 1;
+    }
+
+    /// Логическая строка (по '\n') и колонка в символах под курсором.
+    fn line_col(&self) -> (usize, usize) {
+        let before = &self.text[..self.cursor];
+        let line = before.matches('\n').count();
+        let col = before
+            .rsplit('\n')
+            .next()
+            .map_or(0, |s| s.chars().count());
+        (line, col)
+    }
+
+    /// Байтовый индекс колонки `col` логической строки `line`
+    /// (col клампится по длине строки).
+    fn byte_at_line_col(&self, line: usize, col: usize) -> usize {
+        let mut start = 0;
+        for (n, part) in self.text.split('\n').enumerate() {
+            if n == line {
+                return part
+                    .char_indices()
+                    .nth(col)
+                    .map_or(start + part.len(), |(i, _)| start + i);
+            }
+            start += part.len() + 1; // + '\n'
+        }
+        self.text.len()
+    }
+
+    /// Up внутри многострочного ввода: true, если курсор ушёл на строку выше
+    /// (false — курсор на первой строке, Up свободен для истории).
+    fn move_up_line(&mut self) -> bool {
+        let (line, col) = self.line_col();
+        if line == 0 {
+            return false;
+        }
+        self.cursor = self.byte_at_line_col(line - 1, col);
+        true
+    }
+
+    /// Down внутри многострочного ввода: true, если курсор ушёл на строку
+    /// ниже (false — курсор на последней строке, Down свободен для истории).
+    fn move_down_line(&mut self) -> bool {
+        let (line, col) = self.line_col();
+        if line >= self.text.matches('\n').count() {
+            return false;
+        }
+        self.cursor = self.byte_at_line_col(line + 1, col);
+        true
+    }
+
     /// Удаляет символ перед курсором.
     fn backspace(&mut self) {
         self.completion = None;
@@ -261,14 +317,17 @@ impl InputState {
         }
     }
 
-    /// Курсор в начало строки.
+    /// Курсор в начало текущей логической строки (по '\n').
     fn move_home(&mut self) {
-        self.cursor = 0;
+        let (line, _) = self.line_col();
+        self.cursor = self.byte_at_line_col(line, 0);
     }
 
-    /// Курсор в конец строки.
+    /// Курсор в конец текущей логической строки (по '\n').
     fn move_end(&mut self) {
-        self.cursor = self.text.len();
+        let (line, _) = self.line_col();
+        let len = self.text.split('\n').nth(line).map_or(0, |s| s.chars().count());
+        self.cursor = self.byte_at_line_col(line, len);
     }
 
     /// Забирает введённую строку, сохраняя непустую в истории.
@@ -729,6 +788,13 @@ impl App {
             {
                 self.enqueue_typed(true);
             }
+            // Перевод строки в поле ввода: Shift+Enter (kitty-протокол),
+            // Alt+Enter (вне хода) или Ctrl+J (работает в любом терминале).
+            KeyCode::Enter
+                if key.modifiers.intersects(KeyModifiers::SHIFT | KeyModifiers::ALT) =>
+            {
+                self.input.insert_newline();
+            }
             KeyCode::Enter if self.thinking => self.enqueue_typed(false),
             KeyCode::Enter => self.submit(),
             KeyCode::Tab => {
@@ -736,14 +802,27 @@ impl App {
                     self.right_tab = self.right_tab.next();
                 }
             }
-            KeyCode::Up => self.input.history_up(),
-            KeyCode::Down => self.input.history_down(),
+            // Up/Down — по строкам многострочного ввода; на крайней строке —
+            // навигация по истории.
+            KeyCode::Up => {
+                if !self.input.move_up_line() {
+                    self.input.history_up();
+                }
+            }
+            KeyCode::Down => {
+                if !self.input.move_down_line() {
+                    self.input.history_down();
+                }
+            }
             KeyCode::Left => self.input.move_left(),
             KeyCode::Right => self.input.move_right(),
             KeyCode::Home => self.input.move_home(),
             KeyCode::End => self.input.move_end(),
             KeyCode::Backspace => self.input.backspace(),
             KeyCode::Delete => self.input.delete(),
+            KeyCode::Char('j') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.input.insert_newline();
+            }
             KeyCode::Char('q') if self.input.text.is_empty() && key.modifiers.is_empty() => {
                 self.should_quit = true;
             }
@@ -1843,6 +1922,66 @@ mod tests {
             vec!["ещё срочнее", "срочное", "обычное"],
             "срочные — в начало очереди (Alt+Enter и «!!»)"
         );
+    }
+
+    #[test]
+    fn newline_keys_insert_line_break() {
+        let mut app = test_app();
+        app.screen = Screen::Chat;
+        // Ctrl+J — перевод строки в любом терминале.
+        app.handle_key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::CONTROL));
+        app.handle_key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::NONE));
+        assert_eq!(app.input.text(), "a\nb");
+        // Shift+Enter (kitty-протокол).
+        app.input.set_text("x".into());
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT));
+        assert_eq!(app.input.text(), "x\n");
+        // Alt+Enter вне хода — перевод строки, а не submit.
+        app.input.set_text("y".into());
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT));
+        assert_eq!(app.input.text(), "y\n");
+        assert!(app.blocks.is_empty(), "сообщение не ушло модели");
+    }
+
+    #[test]
+    fn queued_message_keeps_newlines() {
+        let mut app = test_app();
+        app.screen = Screen::Chat;
+        testing::set_thinking(&mut app, true);
+        app.input.set_text("строка 1\nстрока 2".into());
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert_eq!(app.queue[0], "строка 1\nстрока 2", "переносы сохраняются");
+    }
+
+    #[test]
+    fn up_down_navigate_lines_then_history() {
+        let mut app = test_app();
+        app.screen = Screen::Chat;
+        app.input.set_text("старая".into());
+        let _ = app.input.submit();
+        app.input.set_text("ab\ncde".into()); // курсор в конце: строка 1, кол 3
+        app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
+        assert_eq!(app.input.cursor(), 2, "строка 0, колонка клампится до 2");
+        app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        assert_eq!(app.input.cursor(), 5, "строка 1, колонка 2 (памяти нет)");
+        // На первой строке Up уходит в историю.
+        app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
+        assert_eq!(app.input.text(), "старая", "Up на первой строке — история");
+    }
+
+    #[test]
+    fn home_end_are_line_aware() {
+        let mut input = InputState::default();
+        input.set_text("ab\ncde".into());
+        input.move_home();
+        assert_eq!(input.cursor(), 3, "начало второй строки");
+        input.move_end();
+        assert_eq!(input.cursor(), 6, "конец второй строки");
+        input.move_up_line();
+        input.move_home();
+        assert_eq!(input.cursor(), 0, "начало первой строки");
     }
 
     #[tokio::test]

@@ -204,7 +204,7 @@ mod tests {
 
     use crate::tui::app::{
         ChatBlock, RightTab, Screen, ToolState,
-        testing::{set_context_usage, test_app},
+        testing::{set_context_usage, set_thinking, test_app},
     };
 
     use super::*;
@@ -259,11 +259,6 @@ mod tests {
             state: ToolState::Ok,
             summary: "AWS Builders' Library: 3 статьи по outbox и сверке".into(),
         });
-        app.push_block(ChatBlock::Tool {
-            name: "subagent_run".into(),
-            state: ToolState::Ok,
-            summary: "фон: sa-01 разведка репо ТСП, sa-02 черновик ADR-002".into(),
-        });
         app.push_block(ChatBlock::Assistant(
             "## Контур шлюза (C4 — контейнеры)\n\
              **Ядро:** API ТСП → статусная машина платежа (единый источник истины) → outbox.\n\
@@ -286,10 +281,6 @@ mod tests {
             "Готово к передаче: `/handoff claude-code ./sbp-gateway` — пакет с инвариантами, \
              критериями приёмки и рубрикой.".into(),
         ));
-        app.push_block(ChatBlock::System {
-            command: "детектор".into(),
-            text: "контекст: L1-маскирование — 12 старых tool-результатов усечены".into(),
-        });
         app.panels.mermaid = crate::mermaid::render(
             "flowchart TD\n  API[API ТСП] --> SM[Ядро: статусная машина]\n  \
              SM --> OB[(Outbox)]\n  SM --> OP[Адаптер ОПКЦ]\n  OB --> ABS[Адаптер АБС]\n  \
@@ -315,7 +306,15 @@ mod tests {
         }
         let ctx = app.tool_ctx.clone().with_subagents(registry);
         app.tool_ctx = ctx;
-        app.input.set_text("покажи fitness-функции для outbox и сверки".into());
+        // Модель ещё работает: в очереди два сообщения (карточка в окне логов),
+        // в поле ввода — многострочный черновик.
+        set_thinking(&mut app, true);
+        app.queue
+            .push_back("а теперь NFR: p95 шлюза и деградация НСПК".into());
+        app.queue
+            .push_back("потом /handoff claude-code ./sbp-gateway\nс инвариантами и рубрикой".into());
+        app.input
+            .set_text("покажи fitness-функции для outbox и сверки\nи пороги для p95".into());
         write(&out, "02-chat-mermaid.svg", &snap(&mut app, 150, 40, "arch — чат + mermaid"));
 
         // 3. Пикер моделей (модалка поверх чата).

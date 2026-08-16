@@ -12,9 +12,10 @@ use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
-    Block, BorderType, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap,
+    Block, BorderType, Borders, Clear, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
+    Wrap,
 };
-use unicode_width::UnicodeWidthStr;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::assets;
 
@@ -214,11 +215,16 @@ fn draw_fatal(f: &mut Frame, area: Rect, theme: &Theme, error: &str) {
 /// Поверх — модалка выбора вариантов (propose_options), если она открыта.
 fn draw_chat(f: &mut Frame, app: &mut App) {
     let theme = app.theme;
-    // Под очередь сообщений (во время хода) добавляем строки: до 3 + «ещё N».
-    let queue_rows = u16_sat(app.queue.len().min(3) + usize::from(app.queue.len() > 3));
+    // Поле ввода многострочное: высота растёт с текстом (перенос по ширине
+    // и явные '\n'), максимум MAX_INPUT_ROWS видимых строк + рамка.
+    let input_h = {
+        let w = usize::from(f.area().width.saturating_sub(2)).max(1);
+        let (lines, _, _) = wrap_input(app.input.text(), app.input.cursor(), w);
+        u16_sat(lines.len().min(MAX_INPUT_ROWS)) + 2
+    };
     let rows = Layout::vertical([
         Constraint::Min(6),
-        Constraint::Length(3 + queue_rows),
+        Constraint::Length(input_h),
         Constraint::Length(1),
     ])
     .split(f.area());
@@ -227,6 +233,10 @@ fn draw_chat(f: &mut Frame, app: &mut App) {
         .split(rows[0]);
 
     draw_dialog(f, cols[0], app, &theme);
+    // Очередь сообщений — плавающей карточкой внизу окна логов (над вводом).
+    if !app.queue.is_empty() {
+        draw_queue_overlay(f, cols[0], app, &theme);
+    }
     draw_right(f, cols[1], app, &theme);
     draw_input(f, rows[1], app, &theme);
     draw_status(f, rows[2], app, &theme);
@@ -695,8 +705,103 @@ fn draw_right(f: &mut Frame, area: Rect, app: &App, theme: &Theme) {
     f.render_widget(Paragraph::new(lines).block(block), area);
 }
 
-/// Нижняя строка ввода с prompt'ом, курсором, подсказкой-дополнением и
-/// строками очереди сообщений (набранных во время хода агента).
+/// Максимум видимых строк поля ввода (дальше окно следует за курсором).
+const MAX_INPUT_ROWS: usize = 8;
+
+/// Prompt первой строки ввода; продолжение — отступ той же ширины (2).
+const PROMPT: &str = "❯ ";
+const PROMPT_CONT: &str = "  ";
+
+/// Раскладывает текст поля ввода на визуальные строки ширины `width`:
+/// перенос по ширине + жёсткие '\n'. Возвращает (строки, строка курсора,
+/// x курсора); x включает prompt/отступ (2 ячейки).
+fn wrap_input(text: &str, cursor: usize, width: usize) -> (Vec<String>, usize, usize) {
+    let avail = width.saturating_sub(2).max(1);
+    let mut rows: Vec<String> = Vec::new();
+    let mut row = String::new();
+    let mut row_w = 0usize;
+    let mut cur: Option<(usize, usize)> = None;
+    for (i, c) in text.char_indices() {
+        if i == cursor {
+            cur = Some((rows.len(), 2 + row_w));
+        }
+        if c == '\n' {
+            rows.push(std::mem::take(&mut row));
+            row_w = 0;
+            continue;
+        }
+        let cw = UnicodeWidthChar::width(c).unwrap_or(0);
+        if row_w + cw > avail {
+            rows.push(std::mem::take(&mut row));
+            row_w = 0;
+        }
+        row.push(c);
+        row_w += cw;
+    }
+    rows.push(row);
+    let (cur_row, cur_x) = cur.unwrap_or((rows.len() - 1, 2 + row_w));
+    (rows, cur_row, cur_x)
+}
+
+/// Плавающая карточка очереди сообщений внизу окна логов: следующее на
+/// запуск сообщение подсвечено (▶), остальные — приглушены (•); не более
+/// трёх строк + «ещё N». Нижний ряд диалога оставлен кнопке «▼».
+fn draw_queue_overlay(f: &mut Frame, dialog: Rect, app: &App, theme: &Theme) {
+    if dialog.width < 24 || dialog.height < 8 {
+        return;
+    }
+    let shown = app.queue.len().min(3);
+    let more = usize::from(app.queue.len() > 3);
+    let h = u16_sat(shown + more + 2);
+    let area = Rect {
+        x: dialog.x + 1,
+        y: dialog.y + dialog.height.saturating_sub(h + 2),
+        width: dialog.width - 2,
+        height: h,
+    };
+    f.render_widget(Clear, area);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(theme.purple).bg(theme.bg))
+        .style(Style::default().bg(theme.bg))
+        .title(Span::styled(
+            format!(" ⏷ очередь · {} ", app.queue.len()),
+            theme.purple(),
+        ));
+    let inner_w = usize::from(area.width.saturating_sub(6)).max(1);
+    let mut lines: Vec<Line<'static>> = Vec::new();
+    for (i, q) in app.queue.iter().take(3).enumerate() {
+        // Многострочное сообщение показываем первой строкой с маркером ↵.
+        let first = q.lines().next().unwrap_or("");
+        let fold = if q.contains('\n') { " ↵" } else { "" };
+        let text: String = first.chars().take(inner_w).collect();
+        let style = if i == 0 {
+            Style::default()
+                .fg(theme.green)
+                .bg(theme.bg)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            theme.muted()
+        };
+        let marker = if i == 0 { "▶" } else { "•" };
+        lines.push(Line::from(Span::styled(
+            format!("{marker} {}. {text}{fold}", i + 1),
+            style,
+        )));
+    }
+    if more == 1 {
+        lines.push(Line::from(Span::styled(
+            format!("… ещё {}", app.queue.len() - 3),
+            theme.muted(),
+        )));
+    }
+    f.render_widget(Paragraph::new(lines).block(block), area);
+}
+
+/// Нижнее поле ввода: многострочное (перенос по ширине; перевод строки —
+/// Shift+Enter / Alt+Enter / Ctrl+J), растёт до MAX_INPUT_ROWS строк, дальше
+/// видимое окно следует за курсором. Плюс ghost-подсказка автодополнения.
 fn draw_input(f: &mut Frame, area: Rect, app: &App, theme: &Theme) {
     let thinking = app.thinking();
     let title = if thinking {
@@ -726,46 +831,44 @@ fn draw_input(f: &mut Frame, area: Rect, app: &App, theme: &Theme) {
         .border_style(border)
         .title(Span::styled(title, theme.purple()));
 
-    let prompt = "❯ ";
-    let mut spans = vec![
-        Span::styled(prompt, theme.heading()),
-        Span::styled(app.input.text().to_string(), theme.base()),
-    ];
-    if let Some(hint) = app.input.ghost_hint() {
-        spans.push(Span::styled(hint, theme.muted()));
-    }
-    let mut lines = vec![Line::from(spans)];
-    // Очередь: до трёх строк под строкой ввода; первая — следующая на запуск.
-    // Маркеры — только узкие глифы (▶/•, ширина 1): двухширинные эмодзи
-    // съедают соседнюю ячейку и ломают сетку.
-    let inner_w = usize::from(area.width.saturating_sub(4)).max(1);
-    for (i, q) in app.queue.iter().take(3).enumerate() {
-        let marker = if i == 0 { "▶" } else { "•" };
-        let text: String = q.chars().take(inner_w.saturating_sub(6)).collect();
-        lines.push(Line::from(Span::styled(
-            format!("{marker} {}. {text}", i + 1),
-            theme.muted(),
-        )));
-    }
-    if app.queue.len() > 3 {
-        lines.push(Line::from(Span::styled(
-            format!("… ещё {}", app.queue.len() - 3),
-            theme.muted(),
-        )));
+    let inner_w = usize::from(area.width.saturating_sub(2)).max(1);
+    let (rows, cur_row, cur_x) = wrap_input(app.input.text(), app.input.cursor(), inner_w);
+    let visible = usize::from(area.height.saturating_sub(2)).max(1);
+    let skip = cur_row.saturating_sub(visible.saturating_sub(1));
+    let multiline = app.input.text().contains('\n');
+    let mut lines: Vec<Line<'static>> = Vec::new();
+    for (i, row) in rows.iter().enumerate().skip(skip).take(visible) {
+        let mut spans = vec![
+            Span::styled(if i == 0 { PROMPT } else { PROMPT_CONT }, theme.heading()),
+            Span::styled(row.clone(), theme.base()),
+        ];
+        // Ghost-подсказка — только у однострочного ввода, на последней строке.
+        if !multiline && i == rows.len() - 1 {
+            if let Some(hint) = app.input.ghost_hint() {
+                spans.push(Span::styled(hint, theme.muted()));
+            }
+        }
+        lines.push(Line::from(spans));
     }
     f.render_widget(Paragraph::new(lines).block(block), area);
 
     // Ввод активен и во время хода (очередь) — курсор нужен всегда.
-    let before = UnicodeWidthStr::width(&app.input.text()[..app.input.cursor()]);
-    let offset = UnicodeWidthStr::width(prompt) + before;
-    let x = area.x.saturating_add(1).saturating_add(u16_sat(offset));
+    let x = area.x.saturating_add(1).saturating_add(u16_sat(cur_x));
     let max_x = area.x.saturating_add(area.width.saturating_sub(2));
-    f.set_cursor_position((x.min(max_x), area.y + 1));
+    let y = area.y.saturating_add(1).saturating_add(u16_sat(cur_row - skip));
+    let max_y = area.y.saturating_add(area.height.saturating_sub(2));
+    f.set_cursor_position((x.min(max_x), y.min(max_y)));
 }
 
 /// Статус-бар: бейдж модели | индикатор контекста | cwd | заметки | подсказки.
 fn draw_status(f: &mut Frame, area: Rect, app: &App, theme: &Theme) {
-    let hint = "F1–F3 вкладки · F4 — на весь экран · q — выход";
+    // Хинт клавиш: полный на широком терминале, компактный на узком —
+    // иначе он вытесняет индикаторы модели, контекста и субагентов.
+    let hint = if area.width >= 125 {
+        "F1–F3 вкладки · F4 — на весь экран · Ctrl+J — новая строка · q — выход"
+    } else {
+        "F1–F3 · F4 · Ctrl+J · q — выход"
+    };
     let hint_w = u16_sat(UnicodeWidthStr::width(hint) + 1);
     let cols = Layout::horizontal([Constraint::Min(0), Constraint::Length(hint_w)]).split(area);
 
@@ -1158,23 +1261,72 @@ mod tests {
     }
 
     #[test]
-    #[test]
-    fn input_area_lists_queued_messages_while_thinking() {
+    fn queue_overlay_in_dialog_area_above_input() {
         use crate::tui::app::testing::set_thinking;
         let mut app = test_app();
         app.screen = Screen::Chat;
         set_thinking(&mut app, true);
         app.queue.push_back("первое в очереди".into());
-        app.queue.push_back("второе срочное".into());
+        app.queue.push_back("второе\nмногострочное".into());
         let mut terminal = Terminal::new(TestBackend::new(100, 30)).expect("terminal");
         terminal.draw(|f| app.render(f)).expect("draw");
         let text = buffer_text(&terminal);
-        assert!(text.contains("очередь: 2"), "счётчик в заголовке:\n{text}");
+        assert!(text.contains("очередь · 2"), "заголовок карточки:\n{text}");
         assert!(
             text.contains("▶ 1. первое в очереди"),
             "первое — следующее на запуск:\n{text}"
         );
-        assert!(text.contains("• 2. второе срочное"), "вторая строка:\n{text}");
+        // Многострочное сообщение — первой строкой с маркером ↵.
+        assert!(
+            text.contains("• 2. второе ↵"),
+            "вторая строка с маркером переноса:\n{text}"
+        );
+        // Карточка очереди — В окне логов: выше поля ввода (строки с «❯»).
+        let q_row = text.lines().position(|l| l.contains("▶ 1.")).expect("▶");
+        let i_row = text.lines().position(|l| l.contains('❯')).expect("❯");
+        assert!(q_row < i_row, "очередь ({q_row}) над вводом ({i_row}):\n{text}");
+        // В поле ввода строк очереди больше нет — оно однострочное по дефолту.
+        let input_rows = text
+            .lines()
+            .skip(i_row)
+            .take_while(|l| !l.contains("F1"))
+            .count();
+        assert!(input_rows <= 4, "поле ввода не раздувается очередью:\n{text}");
+    }
+
+    #[test]
+    fn wrap_input_cases() {
+        // Пустой ввод: одна строка, курсор за prompt'ом (ширина 2).
+        let (rows, cr, cx) = wrap_input("", 0, 20);
+        assert_eq!(rows, vec![String::new()]);
+        assert_eq!((cr, cx), (0, 2));
+        // Жёсткий перенос: две строки, курсор в конце второй.
+        let (rows, cr, cx) = wrap_input("ab\ncd", 5, 20);
+        assert_eq!(rows, vec!["ab".to_string(), "cd".to_string()]);
+        assert_eq!((cr, cx), (1, 4));
+        // Курсор в середине первой строки.
+        let (_, cr, cx) = wrap_input("ab\ncd", 1, 20);
+        assert_eq!((cr, cx), (0, 3));
+        // Перенос по ширине: avail = 10-2 = 8, «0123456789» → 8 + 2.
+        let (rows, cr, cx) = wrap_input("0123456789", 10, 10);
+        assert_eq!(rows, vec!["01234567".to_string(), "89".to_string()]);
+        assert_eq!((cr, cx), (1, 4));
+    }
+
+    #[test]
+    fn input_grows_with_multiline_text() {
+        let mut app = test_app();
+        app.screen = Screen::Chat;
+        app.input.set_text("первая строка\nвторая строка".into());
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).expect("terminal");
+        terminal.draw(|f| app.render(f)).expect("draw");
+        let text = buffer_text(&terminal);
+        assert!(text.contains("первая строка"), "первая:\n{text}");
+        assert!(text.contains("вторая строка"), "вторая:\n{text}");
+        // Обе строки — внутри поля ввода: над статус-баром не более 4 строк.
+        let first = text.lines().position(|l| l.contains("первая строка")).unwrap();
+        let second = text.lines().position(|l| l.contains("вторая строка")).unwrap();
+        assert_eq!(second, first + 1, "строки ввода идут подряд:\n{text}");
     }
 
     #[test]
