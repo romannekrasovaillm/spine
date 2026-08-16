@@ -508,7 +508,8 @@ impl Default for Config {
         );
         let (glm_on, glm_off) = thinking_type_maps();
         let glm_entry = |model: &str, timeout: u64, context_limit: usize| ModelConfig {
-            base_url: "https://open.bigmodel.cn/api/paas/v4".into(),
+            // Международная площадка Z.AI (для Китая — open.bigmodel.cn).
+            base_url: "https://api.z.ai/api/paas/v4".into(),
             model: model.into(),
             api_key_env: "ZHIPU_API_KEY".into(),
             timeout_secs: timeout,

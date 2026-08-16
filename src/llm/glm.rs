@@ -1,4 +1,4 @@
-//! Провайдер GLM/Zhipu (`https://open.bigmodel.cn/api/paas/v4`, OpenAI-совместимый).
+//! Провайдер GLM/Zhipu (`https://api.z.ai/api/paas/v4`, OpenAI-совместимый).
 
 use std::sync::Arc;
 
@@ -8,7 +8,9 @@ use crate::llm::LlmProvider;
 use crate::llm::openai_compat::OpenAiCompat;
 
 /// Базовый URL GLM API (применяется, когда в конфиге `base_url` пуст).
-const DEFAULT_BASE_URL: &str = "https://open.bigmodel.cn/api/paas/v4";
+/// Международная площадка Z.AI; китайский аналог — open.bigmodel.cn
+/// (тот же аккаунт/ключ, но извне Китая ловит DPI-таймауты и вдвое медленнее).
+const DEFAULT_BASE_URL: &str = "https://api.z.ai/api/paas/v4";
 
 /// Фабрика провайдера GLM поверх [`super::openai_compat`].
 /// API-ключ читается лениво на запросе, здесь не проверяется.

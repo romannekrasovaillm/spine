@@ -42,7 +42,7 @@ thinking_off = { thinking = { type = "disabled" } }   # опционально: 
 | `deepseek` | `https://api.deepseek.com/v1`, `deepseek-v4-flash` | `thinking.type` | `DEEPSEEK_API_KEY` |
 | `deepseek-pro` | тот же, `deepseek-v4-pro` | `thinking.type` | `DEEPSEEK_API_KEY` |
 | `kimi` | `https://api.kimi.com/coding/v1`, `k3` (coding-поверхность Kimi Code, 256k) | встроенный (параметры не принимает) | `KIMI_API_KEY` или файл `~/.kimi_api_key` |
-| `glm` | `https://open.bigmodel.cn/api/paas/v4`, `glm-5.2` (флагман) | `thinking.type` | `ZHIPU_API_KEY` |
+| `glm` | `https://api.z.ai/api/paas/v4` (международная площадка Z.AI; для Китая — `open.bigmodel.cn`, тот же ключ), `glm-5.2` (флагман) | `thinking.type` | `ZHIPU_API_KEY` |
 | `glm-4.7` | тот же, `glm-4.7` (дешевле флагмана вдвое) | `thinking.type` | `ZHIPU_API_KEY` |
 | `glm-air` | тот же, `glm-4.5-air` (≈$0.14/$0.86 за 1М) | `thinking.type` | `ZHIPU_API_KEY` |
 | `glm-flash` | тот же, `glm-4.7-flash` (бесплатный тариф: крон, черновики) | `thinking.type` | `ZHIPU_API_KEY` |

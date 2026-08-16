@@ -66,9 +66,10 @@ timeout_secs = 180
 context_limit = 1000000
 
 [models.glm]
-# Китайская площадка Zhipu (ключ ZHIPU_API_KEY); международный аналог —
-# https://api.z.ai/api/paas/v4 (свой ключ с docs.z.ai).
-base_url = "https://open.bigmodel.cn/api/paas/v4"
+# Международная площадка Z.AI (ключ ZHIPU_API_KEY с docs.z.ai — тот же
+# аккаунт работает и на китайском open.bigmodel.cn). Для Китая —
+# base_url = "https://open.bigmodel.cn/api/paas/v4".
+base_url = "https://api.z.ai/api/paas/v4"
 model = "glm-5.2"                     # флагман Z.AI, 1M контекст (резервный провайдер)
 api_key_env = "ZHIPU_API_KEY"
 max_tokens = 8192
@@ -78,7 +79,7 @@ thinking_on  = { thinking = { type = "enabled" } }
 thinking_off = { thinking = { type = "disabled" } }
 
 [models."glm-4.7"]
-base_url = "https://open.bigmodel.cn/api/paas/v4"
+base_url = "https://api.z.ai/api/paas/v4"
 model = "glm-4.7"                     # прошлое поколение: дешевле флагмана вдвое
 api_key_env = "ZHIPU_API_KEY"
 max_tokens = 8192
@@ -88,7 +89,7 @@ thinking_on  = { thinking = { type = "enabled" } }
 thinking_off = { thinking = { type = "disabled" } }
 
 [models.glm-air]
-base_url = "https://open.bigmodel.cn/api/paas/v4"
+base_url = "https://api.z.ai/api/paas/v4"
 model = "glm-4.5-air"                 # дешёвый рабочий (~$0.14/$0.86 за 1М)
 api_key_env = "ZHIPU_API_KEY"
 max_tokens = 8192
@@ -98,7 +99,7 @@ thinking_on  = { thinking = { type = "enabled" } }
 thinking_off = { thinking = { type = "disabled" } }
 
 [models.glm-flash]
-base_url = "https://open.bigmodel.cn/api/paas/v4"
+base_url = "https://api.z.ai/api/paas/v4"
 model = "glm-4.7-flash"               # бесплатный тариф: черновики, крон, дайджесты
 api_key_env = "ZHIPU_API_KEY"
 max_tokens = 8192
