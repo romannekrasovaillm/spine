@@ -194,6 +194,11 @@ BMAD, Spec Kit, OpenSpec и др.):
   Кейс 003 — [`govproc-platform`](кейсы/govproc-platform/) (электронная
   коммерция госсектора: B2G-закупки 44-ФЗ, ЕИС, УКЭП; Kimi K3): 7 AD spine,
   5 ADR, NFR, OpenAPI-контракт, эмулятор внешней системы.
+  Кейс 004 — [`parallel-epics`](кейсы/parallel-epics/) (три параллельных
+  Claude Code по worktree, бэкенд deepseek-v4-pro): спайн AD-1…3 склеил
+  стыки без взаимной видимости исполнителей — 15/15 тестов, интеграция с
+  первой сборки; handoff-пакет по MCP; дефекты прогона → фиксы харнесса;
+  цветные кадры в `screenshots/`.
 
 #### Прочее
 
@@ -472,6 +477,12 @@ fitness constraints targeting Go code, walking-skeleton handoff. Case 003:
 [`govproc-platform`](кейсы/govproc-platform/) (government-sector e-commerce:
 B2G procurement 44-FZ, EIS integration, qualified e-signature; Kimi K3) —
 7 spine invariants, 5 ADRs, NFR, OpenAPI contract, external-system emulator.
+Case 004: [`parallel-epics`](кейсы/parallel-epics/) (three parallel Claude
+Code executors on isolated worktrees, deepseek-v4-pro backend) — the
+AD-1…3 spine glued the module seams with zero cross-visibility: 15/15 tests
+green, first-build integration OK; handoff package served over MCP;
+run-surfaced defects → same-day harness fixes; color frames in
+`screenshots/`.
 
 **Plus**: beautiful Tokyo Night TUI (markdown chat, mermaid→Unicode diagrams —
 the side panel auto-widens up to 60% of the screen so renders are never

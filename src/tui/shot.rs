@@ -429,4 +429,117 @@ mod tests {
         set_context_usage(&mut app, 96_500, 1_000_000);
         write(&out, "05-handoff.svg", &snap(&mut app, 150, 36, "arch — handoff кодовому харнессу"));
     }
+
+    /// Кадры кейса 004 (кейсы/parallel-epics/screenshots): параллельный флот
+    /// Claude Code по worktree + передача пакета через MCP.
+    #[test]
+    fn gen_case04_screenshots() {
+        if std::env::var("ARCH_GEN_SHOTS").is_err() {
+            return; // генерация — только по явному запросу
+        }
+        let out = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("кейсы/parallel-epics/screenshots");
+        std::fs::create_dir_all(&out).expect("mkdir");
+
+        // A. Параллельный флот: три Claude Code в трёх worktree, спайн
+        //    AD-1…AD-3 — единственный канал согласования; гейт зелёный.
+        let mut app = test_app();
+        app.screen = Screen::Chat;
+        app.model_name = "deepseek:deepseek-v4-flash".into();
+        app.tool_ctx.cwd = std::path::PathBuf::from("/home/user/spine-parallel");
+        app.push_block(ChatBlock::User(
+            "три модуля библиотеки spinecalc — тремя параллельными Claude Code: каждому \
+             свой worktree и под-пакет; спайн AD-1…AD-3 — единственный канал согласования"
+                .into(),
+        ));
+        app.push_block(ChatBlock::Tool {
+            name: "handoff_create".into(),
+            state: ToolState::Ok,
+            summary: "3 worktree: пакеты по AD-1/AD-2/AD-3 · baseline 42b5020 · \
+                 epic-context ~416 токенов каждый"
+                .into(),
+        });
+        for (wt, tests, conflicts) in [
+            ("p1-amount", 5, 1),
+            ("p2-logfmt", 6, 0),
+            ("p3-report", 4, 0),
+        ] {
+            app.push_block(ChatBlock::Tool {
+                name: "harness_run".into(),
+                state: ToolState::Ok,
+                summary: format!(
+                    "{wt}: claude-code · код 0 · pytest {tests} passed · \
+                     контракт complete · conflicts {conflicts}"
+                ),
+            });
+        }
+        app.push_block(ChatBlock::Tool {
+            name: "control_check".into(),
+            state: ToolState::Ok,
+            summary: "fitness 6/6 PASS по трём worktree · сигнатуры AD-1…AD-3 соблюдены".into(),
+        });
+        app.push_block(ChatBlock::Tool {
+            name: "spine_lint".into(),
+            state: ToolState::Ok,
+            summary: "spine: нарушений нет".into(),
+        });
+        app.push_block(ChatBlock::Assistant(
+            "**Ландшафт не разошёлся.** Три параллельных исполнителя сошлись на контрактах\n\
+             без взаимной видимости: склейка `spinecalc` — `INTEGRATION OK` с первой сборки.\n\
+             Конфликт p1 (аннотации в AD-1 против regex приёмки) эскалирован архитектору,\n\
+             а не скрыт в коде — поле conflicts сработало по назначению."
+                .into(),
+        ));
+        app.panels.mermaid = crate::mermaid::render(
+            "flowchart LR\n  S[spine AD-1…3] --> P1(Claude Code №1)\n  \
+             S --> P2(Claude Code №2)\n  S --> P3(Claude Code №3)\n  \
+             P1 --> I[пакет spinecalc]\n  P2 --> I\n  P3 --> I\n  \
+             I --> G[гейт: 15/15 PASS]",
+        )
+        .expect("рендер mermaid");
+        set_context_usage(&mut app, 148_200, 1_000_000);
+        write(&out, "run.svg", &snap(&mut app, 150, 38, "arch — параллельные эпики (кейс 004)"));
+
+        // B. Handoff как сервис: пакет читается через MCP-сервер arch-handoff;
+        //    прогон p4 честно прерван стражем тишины (медленный прокси).
+        let mut app = test_app();
+        app.screen = Screen::Chat;
+        app.model_name = "deepseek:deepseek-v4-flash".into();
+        app.tool_ctx.cwd = std::path::PathBuf::from("/home/user/spine-parallel");
+        app.push_block(ChatBlock::User(
+            "тот же пакет отдай четвёртому исполнителю через MCP — сервер arch-handoff".into(),
+        ));
+        app.push_block(ChatBlock::Tool {
+            name: "arch-handoff__list_packets".into(),
+            state: ToolState::Ok,
+            summary: "4 пакета: p1-amount · p2-logfmt · p3-report · p4-mcp".into(),
+        });
+        app.push_block(ChatBlock::Tool {
+            name: "arch-handoff__read_packet".into(),
+            state: ToolState::Ok,
+            summary: "read_packet(\"p4-mcp\") → TASK.md + ARCHITECTURE.md + \
+                 CONSTRAINTS.yaml + spine (дословные Rule AD-1…3)"
+                .into(),
+        });
+        app.push_block(ChatBlock::Tool {
+            name: "harness_run".into(),
+            state: ToolState::Error,
+            summary: "p4-mcp: прерван по тишине 600 с (медленный прокси) — группа \
+                 завершена, сирот нет, вывод частичный"
+                .into(),
+        });
+        app.push_block(ChatBlock::Assistant(
+            "**Пакет по MCP доставлен и прочитан** исполнителем; прогон остановил страж\n\
+             тишины — heartbeat по mtime не увидел работы за 10 минут. Урок влит в\n\
+             харнесс: heartbeat по файлам + таймауты по маршруту значимости."
+                .into(),
+        ));
+        app.panels.mermaid = crate::mermaid::render(
+            "flowchart TD\n  A[архитектор] -->|пакет по id| M[MCP arch-handoff]\n  \
+             M -->|read_packet| P4(Claude Code №4)",
+        )
+        .expect("рендер mermaid");
+        set_context_usage(&mut app, 122_700, 1_000_000);
+        write(&out, "mcp.svg", &snap(&mut app, 150, 30, "arch — handoff через MCP (кейс 004)"));
+    }
 }
