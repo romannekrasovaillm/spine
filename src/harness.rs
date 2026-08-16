@@ -656,7 +656,7 @@ pub async fn run_harness(
             break Termination::AbsoluteTimeout;
         }
         if let Some(idle) = idle_limit {
-            if scan_due.elapsed() >= Duration::ZERO {
+            if Instant::now() >= scan_due {
                 scan_due = Instant::now() + scan_interval;
                 let scan_start = std::time::SystemTime::now();
                 if repo_changed_since(repo, last_scan) {
@@ -903,6 +903,21 @@ impl Tool for HarnessRunTool {
                 "required": ["harness", "repo"]
             }),
         }
+    }
+
+    /// Прогон кодового харнесса может идти до 7200 с (потолок аргумента
+    /// timeout_secs) плюс запас на групповое завершение и сбор вывода;
+    /// берём максимум из адаптеров конфига — иначе агентный цикл обрывает
+    /// длинный прогон раньше собственного таймаута адаптера (инцидент 11-24).
+    fn timeout_secs(&self) -> u64 {
+        let adapter_max = self
+            .cfg
+            .harnesses
+            .values()
+            .map(|h| h.timeout_secs)
+            .max()
+            .unwrap_or(0);
+        adapter_max.max(7200) + 120
     }
 
     async fn call(&self, args: Value, ctx: &ToolContext) -> Result<ToolOutput> {
@@ -1393,12 +1408,14 @@ mod tests {
             binary: "sh".into(),
             args: vec![
                 "-c".into(),
-                "i=0; while [ $i -lt 6 ]; do touch \"f$i\"; i=$((i+1)); sleep 1; done; echo done"
+                "i=0; while [ $i -lt 10 ]; do touch \"f$i\"; i=$((i+1)); sleep 1; done; echo done"
                     .into(),
             ],
             prompt_mode: PromptMode::Stdin,
             timeout_secs: 60,
-            idle_timeout_secs: 4,
+            // Запас против нагрузки параллельного тест-сьюта: gap между
+            // touch ~1 с при окне 8 с — флаки не будет.
+            idle_timeout_secs: 8,
             ..CodingHarnessConfig::default()
         };
         let run = run_harness("writer", &cfg, &repo, "задача")
@@ -1406,7 +1423,7 @@ mod tests {
             .expect("run");
         assert_eq!(run.termination, Termination::Completed, "stderr: {}", run.stderr);
         assert!(run.stdout.contains("done"), "stdout: {}", run.stdout);
-        assert!(repo.join("f5").is_file());
+        assert!(repo.join("f9").is_file());
     }
 
     #[tokio::test]
@@ -1584,8 +1601,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn harness_run_raises_tiny_timeout_to_floor() {
-        // Модель оптимистично просит 30 с — поднимаем до 600 и честно
+    async fn harness_run_raises_tiny_timeout_to_floor() {        // Модель оптимистично просит 30 с — поднимаем до 600 и честно
         // сообщаем об этом в сводке (ранний обрыв оставлял репо полусобранным).
         let tmp = tempfile::tempdir().expect("tempdir");
         let cfg = cfg_with_fake_harness(tmp.path());
@@ -1613,5 +1629,24 @@ mod tests {
             .await
             .expect("call");
         assert!(!out.content.contains("поднят"), "{}", out.content);
+    }
+
+    #[test]
+    fn harness_run_tool_timeout_covers_longest_run() {
+        // Регрессия 11-24: агентный цикл обрывал вызов на жёстких 300 с
+        // (TOOL_TIMEOUT_SECS), пока адаптер ждал 1800. Таймаут инструмента
+        // обязан покрывать потолок аргумента (7200) плюс запас.
+        let tool = HarnessRunTool { cfg: Config::default() };
+        assert!(tool.timeout_secs() >= 7200 + 120, "{}", tool.timeout_secs());
+        let mut cfg = Config::default();
+        cfg.harnesses.insert(
+            "long".into(),
+            CodingHarnessConfig {
+                binary: "true".into(),
+                timeout_secs: 8000,
+                ..CodingHarnessConfig::default()
+            },
+        );
+        assert_eq!(HarnessRunTool { cfg }.timeout_secs(), 8000 + 120);
     }
 }

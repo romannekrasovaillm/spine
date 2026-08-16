@@ -151,6 +151,9 @@ impl ToolOutput {
     }
 }
 
+/// Дефолтный таймаут одного вызова инструмента, секунды.
+pub const DEFAULT_TOOL_TIMEOUT_SECS: u64 = 300;
+
 /// Инструмент харнесса.
 #[async_trait]
 pub trait Tool: Send + Sync {
@@ -158,6 +161,12 @@ pub trait Tool: Send + Sync {
     fn spec(&self) -> ToolSpec;
     /// Выполнить вызов.
     async fn call(&self, args: Value, ctx: &ToolContext) -> Result<ToolOutput>;
+    /// Таймаут одного вызова, секунды (агентный цикл применяет его к `call`).
+    /// Дефолт — [`DEFAULT_TOOL_TIMEOUT_SECS`]; долгие инструменты
+    /// (harness_run — прогон кодового харнесса до 7200 с) переопределяют.
+    fn timeout_secs(&self) -> u64 {
+        DEFAULT_TOOL_TIMEOUT_SECS
+    }
 }
 
 /// Реестр инструментов.
@@ -204,6 +213,13 @@ impl ToolRegistry {
     /// Инструмент по имени.
     pub fn get(&self, name: &str) -> Option<Arc<dyn Tool>> {
         self.tools.get(name).cloned()
+    }
+
+    /// Таймаут вызова инструмента, секунды (per-tool [`Tool::timeout_secs`];
+    /// неизвестный инструмент — дефолт).
+    pub fn timeout_secs(&self, name: &str) -> u64 {
+        self.get(name)
+            .map_or(DEFAULT_TOOL_TIMEOUT_SECS, |t| t.timeout_secs())
     }
 
     /// Подмножество реестра по whitelist имён (ограничение инструментов
@@ -301,6 +317,38 @@ mod tests {
         async fn call(&self, _args: Value, _ctx: &ToolContext) -> Result<ToolOutput> {
             Ok(ToolOutput::ok("probe-ran"))
         }
+    }
+
+    /// Пробный инструмент с переопределённым таймаутом.
+    struct SlowProbe;
+
+    #[async_trait]
+    impl Tool for SlowProbe {
+        fn spec(&self) -> ToolSpec {
+            ToolSpec {
+                name: "slow".into(),
+                description: "долгая проба".into(),
+                parameters: json!({"type": "object"}),
+            }
+        }
+        async fn call(&self, _args: Value, _ctx: &ToolContext) -> Result<ToolOutput> {
+            Ok(ToolOutput::ok("slow-ran"))
+        }
+        fn timeout_secs(&self) -> u64 {
+            7200
+        }
+    }
+
+    #[test]
+    fn registry_timeout_secs_per_tool_with_default() {
+        let mut reg = ToolRegistry::new();
+        // Пустой реестр / неизвестный инструмент — дефолт.
+        assert_eq!(reg.timeout_secs("ghost"), DEFAULT_TOOL_TIMEOUT_SECS);
+        reg.register(Arc::new(Probe("probe")));
+        reg.register(Arc::new(SlowProbe));
+        // Зарегистрированный без переопределения — дефолт, с переопределением — своё.
+        assert_eq!(reg.timeout_secs("probe"), DEFAULT_TOOL_TIMEOUT_SECS);
+        assert_eq!(reg.timeout_secs("slow"), 7200);
     }
 
     #[test]

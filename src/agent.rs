@@ -28,8 +28,10 @@ use crate::tool::{ToolContext, ToolOutput, ToolRegistry};
 pub mod prompts;
 pub mod slash;
 
-/// Таймаут одного вызова инструмента, секунды.
-const TOOL_TIMEOUT_SECS: u64 = 300;
+/// Таймаут одного вызова инструмента по умолчанию, секунды (per-tool
+/// значения — `Tool::timeout_secs`; эта константа — фолбэк для снятого
+/// из реестра инструмента).
+const TOOL_TIMEOUT_SECS: u64 = crate::tool::DEFAULT_TOOL_TIMEOUT_SECS;
 /// Таймаут интерактивного вопроса пользователю (`propose_options`): человеку
 /// на архитектурное решение нужно больше пяти минут — час, не 300 секунд.
 const ASK_TIMEOUT_SECS: u64 = 3600;
@@ -311,11 +313,14 @@ impl AgentSession {
                     Some(text) => ToolOutput::err(text),
                     None => {
                         // Интерактивный выбор (propose_options) ждёт человека —
-                        // ему расширенный таймаут; остальным — стандартный.
+                        // ему расширенный таймаут; остальным — per-tool таймаут
+                        // из реестра (harness_run — до 7200 с + запас; раньше
+                        // все сидели на жёстких 300 с и длинные прогоны
+                        // кодовых харнессов обрывались агентным циклом).
                         let wait = if call.name == crate::tools::ask::PROPOSE_OPTIONS {
                             ASK_TIMEOUT_SECS
                         } else {
-                            TOOL_TIMEOUT_SECS
+                            self.tools.timeout_secs(&call.name)
                         };
                         match tokio::time::timeout(
                             Duration::from_secs(wait),
