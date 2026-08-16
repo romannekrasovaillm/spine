@@ -382,5 +382,51 @@ mod tests {
         app.right_tab = RightTab::Rubric;
         set_context_usage(&mut app, 812_000, 1_000_000);
         write(&out, "04-rubric.svg", &snap(&mut app, 134, 30, "arch — рубрика"));
+
+        // 5. Handoff: архитектор передаёт контекст кодовому харнессу —
+        //    пакет .arch-handoff/, прогон harness_run с умными таймаутами,
+        //    JSON-контракт результата в сводке.
+        let mut app = test_app();
+        app.screen = Screen::Chat;
+        app.model_name = "deepseek:deepseek-v4-flash".into();
+        app.tool_ctx.cwd = std::path::PathBuf::from("/home/user/sbp-gateway");
+        app.push_block(ChatBlock::User(
+            "передай статусную машину на исполнение Claude Code и проконтролируй результат".into(),
+        ));
+        app.push_block(ChatBlock::Tool {
+            name: "handoff_create".into(),
+            state: ToolState::Ok,
+            summary: ".arch-handoff/: TASK.md · ARCHITECTURE.md · CONSTRAINTS.yaml · \
+                 RUBRIC.yaml · MANIFEST.json · adr/ — epic-context ~1 247 токенов"
+                .into(),
+        });
+        app.push_block(ChatBlock::Tool {
+            name: "harness_run".into(),
+            state: ToolState::Ok,
+            summary: "claude-code: код 0 · 1 847 с · контракт status=complete · \
+                 assumptions 3 · open_questions 1 · прерываний нет".into(),
+        });
+        app.push_block(ChatBlock::Assistant(
+            "**Исполнение принято.** Claude Code реализовал статусную машину и outbox-\n\
+             ретраи: `pytest -q` — 14 passed, fitness `no-print-in-py` — PASS.\n\
+             - Открытый вопрос: таймаут подтверждения НСПК — вынес в ADR-004\n\
+             - Тишины не было: heartbeat по файлам репо, процессная группа жила весь прогон"
+                .into(),
+        ));
+        app.push_block(ChatBlock::Tool {
+            name: "control_check".into(),
+            state: ToolState::Ok,
+            summary: "fitness: 4/4 PASS · spine-инварианты AD-1…AD-3 не нарушены".into(),
+        });
+        app.push_block(ChatBlock::Assistant(
+            "Контур целостен. Дальше: `/export docx` — протокол прогона для архкома.".into(),
+        ));
+        app.panels.mermaid = crate::mermaid::render(
+            "flowchart LR\n  A[архитектор] -->|handoff-пакет| H(Claude Code)\n  \
+             H -->|код + контракт| R[репозиторий]\n  A -->|control check| R",
+        )
+        .expect("рендер mermaid");
+        set_context_usage(&mut app, 96_500, 1_000_000);
+        write(&out, "05-handoff.svg", &snap(&mut app, 150, 36, "arch — handoff кодовому харнессу"));
     }
 }

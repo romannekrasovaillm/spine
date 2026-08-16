@@ -15,6 +15,15 @@
 </p>
 
 <p align="center">
+  <a href="docs/handoff_walkthrough.md"><img src="docs/screenshots/05-handoff.png" alt="Handoff кодовому харнессу: handoff_create собирает пакет .arch-handoff/, harness_run прогоняет Claude Code с умными таймаутами, контракт результата в сводке, control_check подтверждает целостность · handoff walkthrough" width="88%"></a>
+</p>
+
+<p align="center">
+  <sub>Передача контекста кодовому харнессу — пошагово: <a href="docs/handoff_walkthrough.md">docs/handoff_walkthrough.md</a> ·
+  Handing context to a coding harness, step by step.</sub>
+</p>
+
+<p align="center">
   <sub>Кадры — снимки реальных экранов TUI (рендерятся из кода тестом, не макеты); внизу каждого —
   живой индикатор контекстного окна · Screenshots are renders of the real TUI (generated from code,
   not mockups); note the live context-window gauge in each status bar.</sub>
@@ -207,7 +216,8 @@ BMAD, Spec Kit, OpenSpec и др.):
   и изменений файлов репо → завис); молча работающий харнесс не трогаем,
   при прерывании убивается вся процессная группа, частичный вывод
   возвращается с рекомендацией `git status`
-  (`docs/harness_integrations.md`).
+  (`docs/harness_integrations.md`; пошаговый разбор с кадрами —
+  `docs/handoff_walkthrough.md`).
 - **MCP-клиент** (`docs/mcp.md`), **веб-доступ** (11 кураторских сайтов
   архитектора) и **локальная база знаний** (`docs/web_kb.md`).
 - **Планировщик md-задач** «md + cron + LLM + баш-пайпы» (`docs/cron_and_md_pipes.md`).
@@ -306,7 +316,8 @@ arch [--config <path>] <command>   # без команды — TUI
 - `docs/models.md` — подключение LLM (DeepSeek/Kimi/GLM, свои endpoint'ы).
 - `docs/plugins_and_skills.md` — плагины и библиотека скиллов.
 - `docs/rubrics_and_benchmarks.md`, `docs/control.md`, `docs/governance.md`,
-  `docs/harness_integrations.md`, `docs/mcp.md`, `docs/cron_and_md_pipes.md`,
+  `docs/harness_integrations.md`, `docs/handoff_walkthrough.md` (передача
+  контекста кодовому харнессу, кадр за кадром), `docs/mcp.md`, `docs/cron_and_md_pipes.md`,
   `docs/web_kb.md`, `docs/agents_md.md`, `docs/SOURCE_BRIEF.md` (источник идей).
 
 Конфигурация: `config.example.toml`, `cron.example.toml`. Тесты: `cargo test`.
@@ -406,7 +417,8 @@ a 30-min absolute ceiling plus a 10-min silence timeout (no output and no
 repo file changes → the run is hung); a quiet but working harness is left
 alone, on abort the whole process group is killed (no orphans), and partial
 output comes back with a `git status` recommendation
-(`docs/harness_integrations.md`).
+(`docs/harness_integrations.md`; step-by-step walkthrough with frames —
+`docs/handoff_walkthrough.md`).
 
 **Training cases**: [`кейсы/`](кейсы/AGENTS.md) — end-to-end samples of the
 solution-architect cycle produced with the harness. Case 001:
@@ -490,7 +502,8 @@ Fully commented sample: `config.example.toml`.
 - `docs/tools.md` — full tool reference (30+ tools with parameters).
 - `docs/slash_commands.md`, `docs/models.md`, `docs/plugins_and_skills.md`,
   `docs/rubrics_and_benchmarks.md`, `docs/harness_integrations.md`,
-  `docs/governance.md`, `docs/mcp.md`, `docs/cron_and_md_pipes.md`,
+  `docs/handoff_walkthrough.md` (handing context to a coding harness,
+  frame by frame), `docs/governance.md`, `docs/mcp.md`, `docs/cron_and_md_pipes.md`,
   `docs/web_kb.md`, `docs/agents_md.md`, `docs/SOURCE_BRIEF.md` (idea sources).
   The detailed docs are mostly in Russian — the code and CLI speak English.
 
