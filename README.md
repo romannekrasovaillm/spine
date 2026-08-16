@@ -199,6 +199,10 @@ BMAD, Spec Kit, OpenSpec и др.):
   стыки без взаимной видимости исполнителей — 15/15 тестов, интеграция с
   первой сборки; handoff-пакет по MCP; дефекты прогона → фиксы харнесса;
   цветные кадры в `screenshots/`.
+  Кейс 005 — [`fleet-of-ten`](кейсы/fleet-of-ten/) (десять параллельных
+  Claude Code, бэкенд deepseek-v4-pro): десять эпиков за ~3,2 мин стены —
+  10/10 complete, 42/42 тестов, 60/60 fitness; флот сам закоммитил работу
+  (контракт «Финализация»); цветные кадры в `screenshots/`.
 
 #### Прочее
 
@@ -482,7 +486,12 @@ Code executors on isolated worktrees, deepseek-v4-pro backend) — the
 AD-1…3 spine glued the module seams with zero cross-visibility: 15/15 tests
 green, first-build integration OK; handoff package served over MCP;
 run-surfaced defects → same-day harness fixes; color frames in
-`screenshots/`.
+`screenshots/`. Case 005: [`fleet-of-ten`](кейсы/fleet-of-ten/) (ten
+parallel Claude Code executors, ten epics of the bankcalc library) — ~3.2
+min wall clock, 10/10 complete, 42/42 tests, 60/60 fitness rules,
+first-build integration; every executor committed its own work (the
+"Finalization" contract) — the auto-commit safety net never fired; color
+frames in `screenshots/`.
 
 **Plus**: beautiful Tokyo Night TUI (markdown chat, mermaid→Unicode diagrams —
 the side panel auto-widens up to 60% of the screen so renders are never

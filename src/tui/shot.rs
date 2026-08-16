@@ -542,4 +542,105 @@ mod tests {
         set_context_usage(&mut app, 122_700, 1_000_000);
         write(&out, "mcp.svg", &snap(&mut app, 150, 30, "arch — handoff через MCP (кейс 004)"));
     }
+
+    /// Кадры кейса 005 (кейсы/fleet-of-ten/screenshots): флот из десяти
+    /// Claude Code и флот, закоммитивший работу сам (контракт «Финализация»).
+    #[test]
+    fn gen_case05_screenshots() {
+        if std::env::var("ARCH_GEN_SHOTS").is_err() {
+            return; // генерация — только по явному запросу
+        }
+        let out = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("кейсы/fleet-of-ten/screenshots");
+        std::fs::create_dir_all(&out).expect("mkdir");
+
+        // A. Флот из десяти: прогоны, гейты, интеграция с первой сборки.
+        let mut app = test_app();
+        app.screen = Screen::Chat;
+        app.model_name = "deepseek:deepseek-v4-flash".into();
+        app.tool_ctx.cwd = std::path::PathBuf::from("/home/user/bankcalc-fleet");
+        app.push_block(ChatBlock::User(
+            "десять эпиков bankcalc — десятью параллельными Claude Code, каждому worktree \
+             и под-пакет; спайн AD-1…AD-10 — единственный канал согласования".into(),
+        ));
+        app.push_block(ChatBlock::Tool {
+            name: "handoff_create".into(),
+            state: ToolState::Ok,
+            summary: "10 worktree: пакеты по AD-1…AD-10 · baseline 82d2f9d · \
+                 epic-context ~1 028 токенов · план отката в каждом TASK.md".into(),
+        });
+        for (wt, modname, tests, secs) in [
+            ("p01-amount", "validate_amount", 5, 104),
+            ("p08-tax", "vat", 4, 190),
+            ("p10-summary", "summarize", 4, 191),
+        ] {
+            app.push_block(ChatBlock::Tool {
+                name: "harness_run".into(),
+                state: ToolState::Ok,
+                summary: format!(
+                    "{wt}: claude-code · код 0 · {secs} с · pytest {tests} passed · \
+                     контракт complete · conflicts 0 · коммит исполнителя"
+                ),
+            });
+        }
+        app.push_block(ChatBlock::Assistant(
+            "p02–p07, p09 — аналогично: все complete, все закоммичены самими\n\
+             исполнителями. Стена: 10 эпиков за ~3,2 минуты.".into(),
+        ));
+        app.push_block(ChatBlock::Tool {
+            name: "control_check".into(),
+            state: ToolState::Ok,
+            summary: "fitness 60/60 PASS по десяти worktree · сигнатуры AD-1…AD-10 соблюдены".into(),
+        });
+        app.push_block(ChatBlock::Tool {
+            name: "spine_lint".into(),
+            state: ToolState::Ok,
+            summary: "spine: нарушений нет".into(),
+        });
+        app.push_block(ChatBlock::Assistant(
+            "**Ландшафт из десяти не разошёлся.** Склейка `bankcalc` — «день процессинга»\n\
+             прошёл с первой сборки: платёж прошёл все десять контрактов по цепочке.\n\
+             Интеграция читается из git log — оркестратору нечего дособирать.".into(),
+        ));
+        app.panels.mermaid = crate::mermaid::render(
+            "flowchart LR\n  S[спайн AD-1…10] --> F[10 × Claude Code]\n  \
+             F --> B[bankcalc]\n  B --> G[гейт: всё зелёное]",
+        )
+        .expect("рендер mermaid");
+        set_context_usage(&mut app, 341_800, 1_000_000);
+        write(&out, "run.svg", &snap(&mut app, 150, 40, "arch — флот из десяти (кейс 005)"));
+
+        // B. Финализация: флот закоммитил сам (урок утреннего кейса 004).
+        let mut app = test_app();
+        app.screen = Screen::Chat;
+        app.model_name = "deepseek:deepseek-v4-flash".into();
+        app.tool_ctx.cwd = std::path::PathBuf::from("/home/user/bankcalc-fleet");
+        app.push_block(ChatBlock::User(
+            "проверь, что флот сам зафиксировал работу — как требует секция «Финализация»".into(),
+        ));
+        app.push_block(ChatBlock::Tool {
+            name: "bash".into(),
+            state: ToolState::Ok,
+            summary: "git log ×10: у каждого worktree коммит исполнителя поверх baseline \
+                 82d2f9d («feat(bankcalc.fee): calc_fee по базисным пунктам (AD-3)»…)"
+                .into(),
+        });
+        app.push_block(ChatBlock::Tool {
+            name: "bash".into(),
+            state: ToolState::Ok,
+            summary: "⚑ авто-коммит харнесса: 0 срабатываний — страховка не понадобилась".into(),
+        });
+        app.push_block(ChatBlock::Assistant(
+            "**Контракт «Финализация» сработал 10/10.** Утренний флот кейса 004 не закоммитил\n\
+             ничего — интеграцию собирал оркестратор; вечерний флот зафиксировал всё сам.\n\
+             Точка интеграции переехала в git log каждого worktree.".into(),
+        ));
+        app.panels.mermaid = crate::mermaid::render(
+            "flowchart LR\n  B[baseline 82d2f9d] --> C[10/10 коммитов]\n  \
+             C --> V[INTEGRATION OK]",
+        )
+        .expect("рендер mermaid");
+        set_context_usage(&mut app, 208_400, 1_000_000);
+        write(&out, "commits.svg", &snap(&mut app, 150, 30, "arch — флот коммитит сам (кейс 005)"));
+    }
 }
