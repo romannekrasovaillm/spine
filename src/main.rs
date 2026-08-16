@@ -537,6 +537,19 @@ async fn main() -> Result<()> {
                     .context("нет --task и не найден .arch-handoff/TASK.md")?,
             };
             let run = arch_harness::harness::run_harness(&harness, hcfg, &repo, &task_text).await?;
+            use arch_harness::harness::Termination;
+            if run.termination != Termination::Completed {
+                eprintln!(
+                    "⚠ прогон ПРЕРВАН ({}{}); процессная группа завершена, \
+                     репозиторий может быть в промежуточном состоянии — проверьте git status",
+                    run.termination,
+                    if run.termination == Termination::IdleTimeout {
+                        format!(" {} с", hcfg.idle_timeout_secs)
+                    } else {
+                        format!(" {} с", hcfg.timeout_secs)
+                    }
+                );
+            }
             println!("── stdout (exit {:?}, {:.1}s) ──", run.exit_code, run.duration_secs);
             println!("{}", run.stdout);
             if !run.stderr.is_empty() {

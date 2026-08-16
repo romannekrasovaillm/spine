@@ -247,8 +247,14 @@ pub struct CodingHarnessConfig {
     pub prompt_mode: PromptMode,
     /// Дополнительные переменные окружения.
     pub env: BTreeMap<String, String>,
-    /// Таймаут прогона, секунды.
+    /// Таймаут прогона, секунды (абсолютный потолок).
     pub timeout_secs: u64,
+    /// Таймаут тишины, секунды: прогон прерывается, если харнесс не пишет
+    /// в stdout/stderr И не меняет файлы в репозитории дольше этого срока.
+    /// 0 — отключить (только абсолютный потолок). Работающий молча харнесс
+    /// (длинный tool-вызов внутри Claude Code и т.п.) при наличии активности
+    /// файловой системы НЕ считается зависшим.
+    pub idle_timeout_secs: u64,
 }
 
 impl Default for CodingHarnessConfig {
@@ -259,6 +265,7 @@ impl Default for CodingHarnessConfig {
             prompt_mode: PromptMode::Positional,
             env: BTreeMap::new(),
             timeout_secs: 1800,
+            idle_timeout_secs: 600,
         }
     }
 }

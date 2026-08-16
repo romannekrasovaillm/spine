@@ -211,6 +211,11 @@ description = "Кураторский список ресурсов по softwar
 # Кодовые харнессы — адаптеры запуска внешних агентов реализации.
 # prompt_mode: positional (промпт — аргумент) | flag ({prompt} в args) | stdin.
 # handoff-пакет кладётся в <repo>/.arch-handoff/ командой `arch handoff`.
+# Умные таймауты: timeout_secs — абсолютный потолок; idle_timeout_secs —
+# таймаут тишины (нет вывода И нет изменений файлов репо — прогон завис и
+# прерывается; молча работающий харнесс не трогаем, 0 — выключить). При любом
+# прерывании убивается вся процессная группа (TERM→KILL): сирот не остаётся,
+# частичный вывод возвращается в сводку.
 # -----------------------------------------------------------------------------
 [harnesses.claude-code]
 binary = "claude"
@@ -220,36 +225,42 @@ binary = "claude"
 args = ["-p", "--dangerously-skip-permissions"]
 prompt_mode = "stdin"
 timeout_secs = 1800
+idle_timeout_secs = 600
 
 [harnesses.qwen-code]
 binary = "qwen"
 args = []
 prompt_mode = "stdin"
 timeout_secs = 1800
+idle_timeout_secs = 600
 
 [harnesses.openclaw]
 binary = "openclaw"
 args = ["agent", "--message"]         # промпт подставится вместо {prompt} по prompt_mode = "flag"
 prompt_mode = "flag"
 timeout_secs = 1800
+idle_timeout_secs = 600
 
 [harnesses.hermes]
 binary = "hermes"
 args = ["-p"]
 prompt_mode = "stdin"
 timeout_secs = 1800
+idle_timeout_secs = 600
 
 [harnesses.theseus]
 binary = "theseus"
 args = ["run", "--task"]
 prompt_mode = "flag"
 timeout_secs = 1800
+idle_timeout_secs = 600
 
 [harnesses.codewhale]
 binary = "codewhale"
 args = ["-p"]
 prompt_mode = "stdin"
 timeout_secs = 1800
+idle_timeout_secs = 600
 
 # -----------------------------------------------------------------------------
 # MCP: файл серверов в формате Claude Code (см. examples/mcp.example.json).

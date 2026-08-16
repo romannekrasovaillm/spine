@@ -202,7 +202,11 @@ BMAD, Spec Kit, OpenSpec и др.):
 - **Handoff кодовым харнессам**: Claude Code, Qwen Code, OpenClaw, Hermes,
   Theseus, CodeWhale — пакеты `.arch-handoff/` + прогон инструментом
   `harness_run` прямо из диалога (адаптер знает режим промпта, флаги
-  разрешений и длинный таймаут; JSON-контракт результата извлекается в сводку)
+  разрешений; JSON-контракт результата извлекается в сводку). **Умные
+  таймауты**: абсолютный потолок 30 мин + таймаут тишины 10 мин (нет вывода
+  и изменений файлов репо → завис); молча работающий харнесс не трогаем,
+  при прерывании убивается вся процессная группа, частичный вывод
+  возвращается с рекомендацией `git status`
   (`docs/harness_integrations.md`).
 - **MCP-клиент** (`docs/mcp.md`), **веб-доступ** (11 кураторских сайтов
   архитектора) и **локальная база знаний** (`docs/web_kb.md`).
@@ -396,8 +400,12 @@ BMAD, Spec Kit, OpenSpec, and more):
 **Handoff to coding harnesses**: Claude Code, Qwen Code, OpenClaw, Hermes,
 Theseus, CodeWhale — `.arch-handoff/` packages with invariants, acceptance
 criteria, and a headless JSON contract, plus in-chat execution via the
-`harness_run` tool (the adapter knows the prompt mode, permission flags, and
-the long timeout; the JSON result contract is extracted into the summary)
+`harness_run` tool (the adapter knows the prompt mode and permission flags;
+the JSON result contract is extracted into the summary). **Smart timeouts**:
+a 30-min absolute ceiling plus a 10-min silence timeout (no output and no
+repo file changes → the run is hung); a quiet but working harness is left
+alone, on abort the whole process group is killed (no orphans), and partial
+output comes back with a `git status` recommendation
 (`docs/harness_integrations.md`).
 
 **Training cases**: [`кейсы/`](кейсы/AGENTS.md) — end-to-end samples of the

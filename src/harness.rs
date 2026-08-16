@@ -36,6 +36,11 @@ use crate::tool::{Tool, ToolContext, ToolOutput};
 /// Имя каталога handoff-пакета в корне репозитория.
 const HANDOFF_DIR: &str = ".arch-handoff";
 
+/// Минимальный абсолютный таймаут прогона кодового харнесса, секунд:
+/// меньшие значения (модель оптимистично просит «5 минут») поднимаются —
+/// ранний обрыв оставлял репозиторий в полусобранном состоянии.
+const MIN_HARNESS_TIMEOUT_SECS: u64 = 600;
+
 /// Максимальный размер epic-context (ARCHITECTURE.md), символов
 /// (~1500 токенов при грубой оценке 4 символа ≈ 1 токен).
 const EPIC_CONTEXT_MAX_CHARS: usize = 6000;
@@ -451,12 +456,36 @@ pub struct HarnessRun {
     pub harness: String,
     /// Код возврата.
     pub exit_code: Option<i32>,
-    /// stdout.
+    /// stdout (при прерывании — частичный).
     pub stdout: String,
-    /// stderr.
+    /// stderr (при прерывании — частичный).
     pub stderr: String,
     /// Длительность, секунды.
     pub duration_secs: f64,
+    /// Как завершился прогон.
+    pub termination: Termination,
+}
+
+/// Способ завершения прогона харнесса.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Termination {
+    /// Процесс завершился сам.
+    Completed,
+    /// Прерван по абсолютному потолку `timeout_secs`.
+    AbsoluteTimeout,
+    /// Прерван по таймауту тишины: нет вывода и изменений файлов репо
+    /// дольше `idle_timeout_secs`.
+    IdleTimeout,
+}
+
+impl std::fmt::Display for Termination {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Completed => write!(f, "завершён"),
+            Self::AbsoluteTimeout => write!(f, "абсолютный таймаут"),
+            Self::IdleTimeout => write!(f, "idle-таймаут (тишина)"),
+        }
+    }
 }
 
 /// Собирает argv и данные для stdin по режиму [`PromptMode`]:
@@ -486,26 +515,45 @@ fn build_argv(cfg: &CodingHarnessConfig, task: &str) -> (Vec<String>, Option<Str
     }
 }
 
+/// Максимум удерживаемого вывода каждого потока (stdout/stderr), байт —
+/// при превышении хранится хвост (начало важно редко, диагностика в конце).
+const OUTPUT_CAP: usize = 256 * 1024;
+
 /// Запускает кодовый харнесс с задачей в репозитории.
 ///
-/// Бинарь запускается с `cwd = repo` и переменными окружения из `cfg.env`;
-/// при [`PromptMode::Stdin`] задача пишется в stdin. Прогон ограничен
-/// `cfg.timeout_secs`; по таймауту процесс убивается.
+/// Бинарь запускается с `cwd = repo` в СОБСТВЕННОЙ процессной группе
+/// (`process_group(0)`): харнессы — обёртки вокруг node/python и плодят
+/// дочерние процессы; при прерывании убивается ВСЯ группа (TERM → grace →
+/// KILL), поэтому сирот (как живой Claude Code после таймаута обёртки)
+/// не остаётся.
+///
+/// Умные таймауты:
+/// - абсолютный потолок — `cfg.timeout_secs`;
+/// - таймаут тишины — `cfg.idle_timeout_secs` (0 выключает): активность =
+///   вывод в stdout/stderr ИЛИ свежие mtime файлов репозитория (молчащий,
+///   но работающий харнесс не трогаем).
+///
+/// При прерывании возвращается Ok с частичным выводом и
+/// [`Termination`] ≠ Completed — вызывающий видит, что харнесс успел сделать.
 ///
 /// # Errors
-/// Бинарь не найден (с подсказкой по установке/конфигу), таймаут, ошибка запуска.
+/// Бинарь не найден (с подсказкой по установке/конфигу), сбой запуска/ожидания.
 pub async fn run_harness(
     name: &str,
     cfg: &CodingHarnessConfig,
     repo: &Path,
     task: &str,
 ) -> Result<HarnessRun> {
+    use std::sync::Mutex;
+    use tokio::io::AsyncReadExt;
+
     let (argv, stdin_data) = build_argv(cfg, task);
     let mut cmd = Command::new(&cfg.binary);
     cmd.args(&argv)
         .current_dir(repo)
         .envs(&cfg.env)
-        // kill_on_drop: при отмене по таймауту dropped Child уничтожит процесс.
+        // Своя процессная группа: убивать будем группу целиком.
+        .process_group(0)
         .kill_on_drop(true)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -526,6 +574,48 @@ pub async fn run_harness(
             HarnessError::Harness(format!("не удалось запустить '{}': {e}", cfg.binary))
         }
     })?;
+    let pid = child.id().unwrap_or(0);
+
+    // Активность: последний вывод ИЛИ свежая файловая активность в репо.
+    let activity = Arc::new(Mutex::new(Instant::now()));
+    let stdout_buf = Arc::new(Mutex::new(Vec::<u8>::new()));
+    let stderr_buf = Arc::new(Mutex::new(Vec::<u8>::new()));
+
+    // Читатели потоков: перекладывают в ограниченные буферы и трогают heartbeat.
+    fn spawn_reader<R>(
+        mut pipe: R,
+        buf: Arc<Mutex<Vec<u8>>>,
+        act: Arc<Mutex<Instant>>,
+    ) -> tokio::task::JoinHandle<()>
+    where
+        R: tokio::io::AsyncRead + Unpin + Send + 'static,
+    {
+        tokio::spawn(async move {
+            let mut chunk = [0u8; 8192];
+            loop {
+                match pipe.read(&mut chunk).await {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => {
+                        let mut b = buf.lock().unwrap_or_else(|p| p.into_inner());
+                        b.extend_from_slice(&chunk[..n]);
+                        if b.len() > OUTPUT_CAP {
+                            let excess = b.len() - OUTPUT_CAP;
+                            b.drain(..excess);
+                        }
+                        drop(b);
+                        *act.lock().unwrap_or_else(|p| p.into_inner()) = Instant::now();
+                    }
+                }
+            }
+        })
+    }
+    let mut readers = Vec::new();
+    if let Some(out) = child.stdout.take() {
+        readers.push(spawn_reader(out, stdout_buf.clone(), activity.clone()));
+    }
+    if let Some(err) = child.stderr.take() {
+        readers.push(spawn_reader(err, stderr_buf.clone(), activity.clone()));
+    }
 
     // Пишем задачу в stdin отдельной задачей, чтобы не было дедлока на
     // заполненном pipe-буфере, пока читаются stdout/stderr.
@@ -538,33 +628,133 @@ pub async fn run_harness(
         _ => None,
     };
 
-    let wait = tokio::time::timeout(
-        Duration::from_secs(cfg.timeout_secs),
-        child.wait_with_output(),
-    )
-    .await;
+    let abs_limit = Duration::from_secs(cfg.timeout_secs.max(1));
+    let idle_limit = (cfg.idle_timeout_secs > 0).then(|| Duration::from_secs(cfg.idle_timeout_secs));
+    // Файловый heartbeat: скан не чаще раза в 15 с (и не реже четверти
+    // idle-окна, чтобы мелкие окна тоже ловили активность); базовая отсечка —
+    // старт прогона (старые файлы репо активностью не считаются).
+    let scan_interval = idle_limit.map_or(Duration::from_secs(15), |i| {
+        (i / 4).clamp(Duration::from_secs(1), Duration::from_secs(15))
+    });
+    let mut last_scan = std::time::SystemTime::now();
+    let mut scan_due = Instant::now();
+
+    let termination = loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break Termination::Completed,
+            Ok(None) => {}
+            Err(e) => {
+                return Err(HarnessError::Harness(format!(
+                    "сбой ожидания '{}': {e}",
+                    cfg.binary
+                )));
+            }
+        }
+        let elapsed = started.elapsed();
+        if elapsed >= abs_limit {
+            kill_process_group(pid, &mut child).await;
+            break Termination::AbsoluteTimeout;
+        }
+        if let Some(idle) = idle_limit {
+            if scan_due.elapsed() >= Duration::ZERO {
+                scan_due = Instant::now() + scan_interval;
+                let scan_start = std::time::SystemTime::now();
+                if repo_changed_since(repo, last_scan) {
+                    *activity.lock().unwrap_or_else(|p| p.into_inner()) = Instant::now();
+                }
+                last_scan = scan_start;
+            }
+            let silent_for = activity.lock().unwrap_or_else(|p| p.into_inner()).elapsed();
+            if silent_for >= idle {
+                kill_process_group(pid, &mut child).await;
+                break Termination::IdleTimeout;
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    };
+
     if let Some(w) = &writer {
         w.abort();
     }
-    let output = match wait {
-        Ok(res) => res.map_err(|e| {
-            HarnessError::Harness(format!("сбой ожидания '{}': {e}", cfg.binary))
-        })?,
-        Err(_) => {
-            return Err(HarnessError::Harness(format!(
-                "таймаут {} с: харнесс '{name}' ('{}') не завершился",
-                cfg.timeout_secs, cfg.binary
-            )));
-        }
-    };
+    // Читатели завершаются по EOF на закрытых пайпах; страховочный лимит.
+    for r in readers {
+        let _ = tokio::time::timeout(Duration::from_secs(2), r).await;
+    }
 
+    let take = |b: &Arc<Mutex<Vec<u8>>>| {
+        String::from_utf8_lossy(&b.lock().unwrap_or_else(|p| p.into_inner())).into_owned()
+    };
     Ok(HarnessRun {
         harness: name.into(),
-        exit_code: output.status.code(),
-        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+        exit_code: child.try_wait().ok().flatten().and_then(|s| s.code()),
+        stdout: take(&stdout_buf),
+        stderr: take(&stderr_buf),
         duration_secs: started.elapsed().as_secs_f64(),
+        termination,
     })
+}
+
+/// Мягко, затем жёстко завершает процессную группу `pid` (TERM → 3 с → KILL).
+/// Убивает и дочерние процессы харнесса — сирот после таймаута не остаётся.
+async fn kill_process_group(pid: u32, child: &mut tokio::process::Child) {
+    if pid > 0 {
+        // kill из coreutils есть всегда; unsafe/libc запрещены линтом проекта.
+        // ВАЖНО: разделитель `--` обязателен — procps `/bin/kill -TERM -PGID`
+        // без него молча (rc=0!) трактует отрицательное число как опцию и
+        // никого не сигналит (проверено опытом; bash-builtin kill работал и так).
+        let _ = std::process::Command::new("kill")
+            .args(["-TERM", "--", &format!("-{pid}")])
+            .status();
+        for _ in 0..10 {
+            if matches!(child.try_wait(), Ok(Some(_))) {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(300)).await;
+        }
+        let _ = std::process::Command::new("kill")
+            .args(["-KILL", "--", &format!("-{pid}")])
+            .status();
+    } else {
+        // pgid неизвестен (теоретический случай) — хотя бы самого ребёнка.
+        let _ = child.kill().await;
+        return;
+    }
+    // Забираем zombie, чтобы try_wait наверняка отдал статус.
+    let _ = tokio::time::timeout(Duration::from_secs(3), child.wait()).await;
+}
+
+/// Есть ли в репозитории файлы, изменённые после `since` (heartbeat активности
+/// молчащего харнесса). Служебные/тяжёлые каталоги пропускаются; лимит —
+/// 8000 записей, глубина 8 (дорогое сканирование не нужно: свежие файлы
+/// почти всегда наверху).
+fn repo_changed_since(repo: &Path, since: std::time::SystemTime) -> bool {
+    const SKIP: [&str; 6] = [".git", "target", "node_modules", "dist", "__pycache__", ".next"];
+    let mut seen = 0usize;
+    for entry in walkdir::WalkDir::new(repo)
+        .max_depth(8)
+        .into_iter()
+        .filter_entry(|e| {
+            e.depth() == 0 || !SKIP.contains(&e.file_name().to_string_lossy().as_ref())
+        })
+        .filter_map(std::result::Result::ok)
+    {
+        seen += 1;
+        if seen > 8000 {
+            break;
+        }
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        let fresh = entry
+            .metadata()
+            .ok()
+            .and_then(|m| m.modified().ok())
+            .is_some_and(|mt| mt > since);
+        if fresh {
+            return true;
+        }
+    }
+    false
 }
 
 /// Инструмент `handoff_create`: генерация handoff-пакета из агентного цикла.
@@ -676,11 +866,16 @@ impl Tool for HarnessRunTool {
             description: "Запустить кодовый харнесс на репозитории и вернуть его вывод. \
                 Обычно следует за handoff_create: задача читается из \
                 <repo>/.arch-handoff/TASK.md (или передаётся явно). Запуск идёт через \
-                настроенный адаптер [harnesses.<имя>] (режим prompt, env, таймаут 30 мин): \
-                stdout/stderr и код возврата захватываются, JSON-контракт результата \
-                (status/assumptions/open_questions) извлекается в сводку. НЕ запускать \
-                харнесс через bash — там промпт ломается о квотинг, таймаут слишком \
-                короткий, а env-scrub прячет от команды переменные *_KEY/*_TOKEN, \
+                настроенный адаптер [harnesses.<имя>] (режим prompt, env). Умные таймауты: \
+                абсолютный потолок 30 мин (по умолчанию) + таймаут тишины 10 мин — прогон \
+                прерывается, только если харнесс не выводит и не меняет файлы репозитория; \
+                при прерывании убивается вся процессная группа (сирот не остаётся) и \
+                возвращается частичный вывод. НЕ занижайте timeout_secs: значения ниже \
+                600 поднимаются до 600 — кодовый харнесс за меньшее время почти никогда \
+                не успевает. stdout/stderr и код возврата захватываются, JSON-контракт \
+                результата (status/assumptions/open_questions) извлекается в сводку. \
+                НЕ запускать харнесс через bash — там промпт ломается о квотинг, таймаут \
+                слишком короткий, а env-scrub прячет от команды переменные *_KEY/*_TOKEN, \
                 через которые харнесс может авторизовываться."
                 .into(),
             parameters: json!({
@@ -700,8 +895,8 @@ impl Tool for HarnessRunTool {
                     },
                     "timeout_secs": {
                         "type": "integer",
-                        "description": "Переопределить таймаут адаптера, секунды (максимум 7200)",
-                        "minimum": 1,
+                        "description": "Переопределить АБСОЛЮТНЫЙ таймаут адаптера, секунды (минимум 600 — меньшие значения поднимаются; максимум 7200). Тишина контролируется отдельно (idle_timeout_secs адаптера, по умолчанию 600)",
+                        "minimum": 600,
                         "maximum": 7200
                     }
                 },
@@ -745,18 +940,59 @@ impl Tool for HarnessRunTool {
                 }
             }
         };
-        // Переопределение таймаута — копией конфига адаптера.
+        // Переопределение таймаута — копией конфига адаптера. Минимум 600 с:
+        // модели склонны занижать таймаут («успеет за 5 минут»), а кодовый
+        // харнесс на реальной задаче работает дольше — ранний таймаут
+        // обрывал прогон и оставлял репозиторий в полусобранном состоянии.
         let mut hcfg = hcfg.clone();
+        let mut note = String::new();
         if let Some(t) = args.get("timeout_secs").and_then(Value::as_u64) {
-            hcfg.timeout_secs = t.clamp(1, 7200);
+            if t < MIN_HARNESS_TIMEOUT_SECS {
+                let _ = writeln!(
+                    note,
+                    "timeout_secs={t} поднят до {MIN_HARNESS_TIMEOUT_SECS} (минимум для кодового харнесса)."
+                );
+            }
+            hcfg.timeout_secs = t.clamp(MIN_HARNESS_TIMEOUT_SECS, 7200);
         }
         match run_harness(name, &hcfg, &repo, &task).await {
             Ok(run) => {
                 let code = run.exit_code.map_or("сигнал".into(), |c| c.to_string());
-                let mut content = format!(
-                    "Харнесс '{name}' завершился: код {code}, {:.1} с.\n",
-                    run.duration_secs
-                );
+                let mut content = note;
+                match run.termination {
+                    Termination::Completed => {
+                        let _ = writeln!(
+                            content,
+                            "Харнесс '{name}' завершился: код {code}, {:.1} с.",
+                            run.duration_secs
+                        );
+                    }
+                    Termination::AbsoluteTimeout => {
+                        let _ = writeln!(
+                            content,
+                            "Харнесс '{name}' ПРЕРВАН по абсолютному таймауту {} с \
+                             (проработал {:.1} с). Процессная группа завершена \
+                             (TERM→KILL), осиротевших процессов нет. Вывод ниже — \
+                             частичный. Репозиторий может быть в промежуточном \
+                             состоянии: перед повторным запуском проверьте git status/diff. \
+                             Если задача объективно длинная — перезапустите с большим \
+                             timeout_secs (до 7200) или разбейте её.",
+                            hcfg.timeout_secs, run.duration_secs
+                        );
+                    }
+                    Termination::IdleTimeout => {
+                        let _ = writeln!(
+                            content,
+                            "Харнесс '{name}' ПРЕРВАН по таймауту тишины {} с: нет вывода и \
+                             изменений файлов репозитория — процесс, вероятно, завис \
+                             (например, ждал интерактивного ввода; для claude-code обязателен \
+                             --dangerously-skip-permissions). Процессная группа завершена \
+                             (TERM→KILL), сирот нет. Вывод ниже — частичный; перед \
+                             повторным запуском проверьте git status/diff.",
+                            hcfg.idle_timeout_secs
+                        );
+                    }
+                }
                 match extract_contract(&run.stdout) {
                     Some(v) => {
                         let count = |key: &str| {
@@ -786,7 +1022,8 @@ impl Tool for HarnessRunTool {
                     content.push_str("\n--- stderr ---\n");
                     content.push_str(run.stderr.trim_end());
                 }
-                let is_error = run.exit_code != Some(0);
+                let is_error =
+                    run.exit_code != Some(0) || run.termination != Termination::Completed;
                 Ok(ToolOutput {
                     content,
                     is_error,
@@ -1084,6 +1321,7 @@ mod tests {
         assert_eq!(run.stdout, "привет, харнесс");
         assert!(run.stderr.is_empty());
         assert!(run.duration_secs >= 0.0);
+        assert_eq!(run.termination, Termination::Completed);
     }
 
     #[tokio::test]
@@ -1104,19 +1342,112 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn timeout_kills_long_run() {
+    async fn absolute_timeout_returns_partial_output() {
+        // Регрессия 09-12: раньше таймаут возвращал Err без вывода — модель
+        // не видела, что харнесс успел сделать.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let cfg = CodingHarnessConfig {
+            binary: "sh".into(),
+            args: vec!["-c".into(), "echo MARKER; sleep 60".into()],
+            prompt_mode: PromptMode::Stdin,
+            timeout_secs: 1,
+            idle_timeout_secs: 0,
+            ..CodingHarnessConfig::default()
+        };
+        let run = run_harness("slow", &cfg, tmp.path(), "задача")
+            .await
+            .expect("прерывание — Ok с частичным выводом");
+        assert_eq!(run.termination, Termination::AbsoluteTimeout);
+        assert!(run.stdout.contains("MARKER"), "stdout: {}", run.stdout);
+        assert!(run.duration_secs < 30.0, "{:?}", run.duration_secs);
+    }
+
+    #[tokio::test]
+    async fn idle_timeout_fires_on_silence() {
+        // Молчащий и непишущий процесс убивается по idle, не дожидаясь
+        // абсолютного потолка.
         let tmp = tempfile::tempdir().expect("tempdir");
         let cfg = CodingHarnessConfig {
             binary: "sleep".into(),
-            args: vec!["5".into()],
+            args: vec!["60".into()],
             prompt_mode: PromptMode::Stdin,
-            timeout_secs: 1,
+            timeout_secs: 120,
+            idle_timeout_secs: 2,
             ..CodingHarnessConfig::default()
         };
-        let err = run_harness("slow", &cfg, tmp.path(), "задача")
+        let run = run_harness("silent", &cfg, tmp.path(), "задача")
             .await
-            .expect_err("должен быть таймаут");
-        assert!(err.to_string().contains("таймаут"), "{err}");
+            .expect("run");
+        assert_eq!(run.termination, Termination::IdleTimeout);
+        assert!(run.duration_secs < 30.0, "{:?}", run.duration_secs);
+    }
+
+    #[tokio::test]
+    async fn file_activity_resets_idle() {
+        // Молчащий, но пишущий файлы процесс (типичный кодовый харнесс)
+        // НЕ считается зависшим: heartbeat по mtime репозитория.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let repo = tmp.path().join("repo");
+        std::fs::create_dir_all(&repo).expect("mkdir repo");
+        let cfg = CodingHarnessConfig {
+            binary: "sh".into(),
+            args: vec![
+                "-c".into(),
+                "i=0; while [ $i -lt 6 ]; do touch \"f$i\"; i=$((i+1)); sleep 1; done; echo done"
+                    .into(),
+            ],
+            prompt_mode: PromptMode::Stdin,
+            timeout_secs: 60,
+            idle_timeout_secs: 4,
+            ..CodingHarnessConfig::default()
+        };
+        let run = run_harness("writer", &cfg, &repo, "задача")
+            .await
+            .expect("run");
+        assert_eq!(run.termination, Termination::Completed, "stderr: {}", run.stderr);
+        assert!(run.stdout.contains("done"), "stdout: {}", run.stdout);
+        assert!(repo.join("f5").is_file());
+    }
+
+    #[tokio::test]
+    async fn timeout_kills_whole_process_group() {
+        // Регрессия 09-12 (скриншот пользователя): таймаут убивал обёртку,
+        // а дочерний процесс харнесса оставался жить сиротой. Теперь группа
+        // завершается целиком (TERM → KILL по -pgid).
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let repo = tmp.path().join("repo");
+        std::fs::create_dir_all(&repo).expect("mkdir repo");
+        let cfg = CodingHarnessConfig {
+            binary: "sh".into(),
+            args: vec![
+                "-c".into(),
+                "sleep 300 & echo $! > child.pid; sleep 300".into(),
+            ],
+            prompt_mode: PromptMode::Stdin,
+            timeout_secs: 1,
+            idle_timeout_secs: 0,
+            ..CodingHarnessConfig::default()
+        };
+        let run = run_harness("spawner", &cfg, &repo, "задача")
+            .await
+            .expect("run");
+        assert_eq!(run.termination, Termination::AbsoluteTimeout);
+        let pid = std::fs::read_to_string(repo.join("child.pid")).expect("child.pid");
+        let pid = pid.trim();
+        // Процесс «убит» = /proc нет ИЛИ зомби (Z/X): зомби уже мёртв, его
+        // просто ещё не забрал родитель. kill -0 на зомби возвращает success,
+        // поэтому проверяем state, а не сам факт ответа.
+        let alive = std::fs::read_to_string(format!("/proc/{pid}/stat"))
+            .ok()
+            .and_then(|s| {
+                s.rsplit(')')
+                    .next()?
+                    .split_whitespace()
+                    .next()
+                    .map(str::to_owned)
+            })
+            .is_some_and(|state| !matches!(state.as_str(), "Z" | "X" | "x"));
+        assert!(!alive, "дочерний процесс {pid} пережил таймаут — сирота");
     }
 
     #[tokio::test]
@@ -1250,5 +1581,37 @@ mod tests {
         assert!(!out.is_error, "{}", out.content);
         assert!(out.content.contains("контракт результата"), "{}", out.content);
         assert!(out.content.contains("не найден"), "{}", out.content);
+    }
+
+    #[tokio::test]
+    async fn harness_run_raises_tiny_timeout_to_floor() {
+        // Модель оптимистично просит 30 с — поднимаем до 600 и честно
+        // сообщаем об этом в сводке (ранний обрыв оставлял репо полусобранным).
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let cfg = cfg_with_fake_harness(tmp.path());
+        let tool = HarnessRunTool { cfg };
+        let ctx = ToolContext::new(tmp.path().to_path_buf(), Arc::new(Config::default()));
+        let out = tool
+            .call(
+                json!({"harness": "fake", "repo": ".", "task": "задача", "timeout_secs": 30}),
+                &ctx,
+            )
+            .await
+            .expect("call");
+        assert!(!out.is_error, "{}", out.content);
+        assert!(
+            out.content.contains("поднят до 600"),
+            "{}",
+            out.content
+        );
+        // Явный разумный таймаут не трогаем.
+        let out = tool
+            .call(
+                json!({"harness": "fake", "repo": ".", "task": "задача", "timeout_secs": 900}),
+                &ctx,
+            )
+            .await
+            .expect("call");
+        assert!(!out.content.contains("поднят"), "{}", out.content);
     }
 }
