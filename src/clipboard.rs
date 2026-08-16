@@ -1,45 +1,90 @@
-//! Копирование в системный буфер обмена без новых зависимостей.
+//! Копирование в системный буфер обмена.
 //!
 //! КОНТРАКТ (владелец: агент `tui`):
-//! - [`copy`] пытается механизмы по порядку: `wl-copy` (Wayland), `xclip`,
-//!   `xsel` (X11), и в конце — OSC 52 (escape-последовательность в /dev/tty,
-//!   работает в kitty/alacritty/wezterm/foot и поверх SSH);
-//! - возвращает имя сработавшего механизма для статус-сообщения;
-//! - ошибка — только если недоступны ВСЕ механизмы (подсказка, что установить).
+//! - основной механизм — `arboard`: прямая работа с X11-селекцией CLIPBOARD
+//!   (или Wayland) без внешних утилит; владелец селекции — фоновый поток,
+//!   поэтому [`Clipboard`] должен ЖИТЬ, пока пользователь не вставил текст
+//!   (на X11 буфер — это «владелец отдаёт данные по запросу», дроп объекта =
+//!   потеря буфера, стандартное поведение X11);
+//! - дальше фолбэки: внешние утилиты `wl-copy`/`xclip`/`xsel`, затем OSC 52
+//!   (escape-последовательность в /dev/tty; в GNOME Terminal/VTE запись
+//!   буфера через OSC 52 отключена — это последний шанс, не гарантия);
+//! - возвращается имя сработавшего механизма для статус-сообщения; ошибка —
+//!   только если недоступны ВСЕ механизмы (с перечнем попыток).
 
 use std::io::Write;
 use std::process::{Command, Stdio};
 
 use crate::error::{HarnessError, Result};
 
-/// Копирует текст в буфер обмена; возвращает имя механизма.
+/// Держатель системного буфера обмена (ленивая инициализация `arboard`).
 ///
-/// # Errors
-/// Ни один механизм недоступен/не сработал (перечень попыток в тексте).
-pub fn copy(text: &str) -> Result<&'static str> {
-    let mut tried = Vec::new();
-    // Внешние утилиты: stdin → буфер. `wl-copy` живёт в Wayland-сессиях,
-    // `xclip`/`xsel` — в X11; просто пробуем по очереди.
-    for (prog, argv, name) in [
-        ("wl-copy", &[][..], "wl-copy"),
-        ("xclip", &["-selection", "clipboard"][..], "xclip"),
-        ("xsel", &["--clipboard", "--input"][..], "xsel"),
-    ] {
-        match pipe_to(prog, argv, text) {
-            Ok(()) => return Ok(name),
-            Err(_) => tried.push(name),
+/// Хранится в `App` на всю жизнь TUI: на X11 данные буфера живут, пока жив
+/// владелец селекции, — создавать `Clipboard` на каждое копирование нельзя.
+pub struct Clipboard {
+    inner: Option<arboard::Clipboard>,
+}
+
+impl Clipboard {
+    /// Пустой держатель; соединение с сервером откроется при первом `copy`.
+    pub fn new() -> Self {
+        Self { inner: None }
+    }
+
+    /// Копирует текст в буфер обмена; возвращает имя механизма.
+    ///
+    /// # Errors
+    /// Ни один механизм не сработал (перечень попыток в тексте ошибки).
+    pub fn copy(&mut self, text: &str) -> Result<&'static str> {
+        let mut tried = Vec::new();
+        // 1. Нативный путь: arboard сам становится владельцем селекции.
+        if self.inner.is_none() {
+            match arboard::Clipboard::new() {
+                Ok(cb) => self.inner = Some(cb),
+                Err(e) => tried.push(format!("arboard ({e})")),
+            }
         }
+        if let Some(cb) = &mut self.inner {
+            match cb.set_text(text) {
+                Ok(()) => return Ok("системный буфер"),
+                Err(e) => {
+                    // Соединение могло умереть — сбросим, чтобы в следующий
+                    // раз переоткрыть; сейчас идём по фолбэкам.
+                    tried.push(format!("arboard ({e})"));
+                    self.inner = None;
+                }
+            }
+        }
+        // 2. Внешние утилиты: stdin → буфер.
+        for (prog, argv, name) in [
+            ("wl-copy", &[][..], "wl-copy"),
+            ("xclip", &["-selection", "clipboard"][..], "xclip"),
+            ("xsel", &["--clipboard", "--input"][..], "xsel"),
+        ] {
+            match pipe_to(prog, argv, text) {
+                Ok(()) => return Ok(name),
+                Err(_) => tried.push(name.to_string()),
+            }
+        }
+        // 3. OSC 52: последовательность в /dev/tty (не stdout — TUI владеет
+        // экраном). В VTE (GNOME Terminal) запись отключена, но kitty/
+        // alacritty/wezterm/foot и некоторые tmux-конфиги примут.
+        if osc52(text).is_ok() {
+            return Ok("OSC 52");
+        }
+        tried.push("OSC 52".into());
+        Err(HarnessError::Tui(format!(
+            "буфер обмена недоступен: не сработали {}. \
+             Установите xclip (X11) или wl-clipboard (Wayland)",
+            tried.join(", ")
+        )))
     }
-    // OSC 52: последовательность в /dev/tty (не stdout — TUI владеет экраном).
-    if osc52(text).is_ok() {
-        return Ok("OSC 52");
+}
+
+impl Default for Clipboard {
+    fn default() -> Self {
+        Self::new()
     }
-    tried.push("OSC 52");
-    Err(HarnessError::Tui(format!(
-        "буфер обмена недоступен: не сработали {}. \
-         Установите wl-copy (Wayland) или xclip/xsel (X11)",
-        tried.join(", ")
-    )))
 }
 
 /// Пишет текст в stdin утилиты буфера; Ok при коде возврата 0.
@@ -108,12 +153,22 @@ mod tests {
     fn copy_reports_missing_mechanisms_gracefully() {
         // В тестовой среде хоть один механизм может и сработать — важно,
         // что вызов не паникует и завершается (Ok или понятная ошибка).
-        match copy("тест буфера") {
+        let mut cb = Clipboard::new();
+        match cb.copy("тест буфера") {
             Ok(mech) => assert!(
-                ["wl-copy", "xclip", "xsel", "OSC 52"].contains(&mech),
+                ["системный буфер", "wl-copy", "xclip", "xsel", "OSC 52"].contains(&mech),
                 "неизвестный механизм {mech}"
             ),
             Err(e) => assert!(e.to_string().contains("буфер обмена недоступен")),
         }
+    }
+
+    #[test]
+    fn second_copy_reuses_handle() {
+        // Повторное копирование по живому хендлу не должно падать
+        // (регрессия: «второй Ctrl+C молча теряет буфер»).
+        let mut cb = Clipboard::new();
+        let _ = cb.copy("первый");
+        let _ = cb.copy("второй");
     }
 }

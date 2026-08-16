@@ -188,7 +188,8 @@ BMAD, Spec Kit, OpenSpec и др.):
   вкладке (панель сама расширяется под ширину схемы, до 60% экрана; рендер
   не усечается), мышь, скроллбар диалога и кнопка «▼» — прыжок к свежему ответу,
   **выделение текста мышью с автокопированием в буфер обмена** (драг по логам;
-  wl-copy/xclip/xsel, fallback — OSC 52), **многострочный ввод** (перевод строки —
+  нативно через `arboard` — внешние утилиты не нужны; фолбэки: wl-copy/xclip/
+  xsel, OSC 52), **многострочный ввод** (перевод строки —
   Shift+Enter, Alt+Enter или Ctrl+J; поле растёт до 8 строк, Up/Down — по строкам,
   на крайней — история), **очередь сообщений во время хода** карточкой в окне
   логов (Enter — в очередь, Alt+Enter или префикс «!!» — срочно первым),
@@ -415,7 +416,8 @@ B2G procurement 44-FZ, EIS integration, qualified e-signature; Kimi K3) —
 the side panel auto-widens up to 60% of the screen so renders are never
 truncated, mouse, dialog scrollbar with a "▼" jump-to-latest button,
 **mouse text selection with auto-copy to the clipboard** — drag across the log
-pane, release to copy (wl-copy/xclip/xsel, OSC 52 fallback),
+pane, release to copy (native via `arboard`, no external tools needed;
+fallbacks: wl-copy/xclip/xsel, OSC 52),
 **multi-line input** — newline via Shift+Enter, Alt+Enter or Ctrl+J, the field
 grows up to 8 lines, Up/Down move across lines and fall back to history,
 **message queue while the agent works** shown as a card in the log pane —

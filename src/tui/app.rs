@@ -520,6 +520,9 @@ pub(crate) struct App {
     pub(crate) dialog_lines: Vec<String>,
     /// Индекс первой видимой строки контента (ставит рендер).
     pub(crate) dialog_skip: usize,
+    /// Держатель системного буфера обмена (живёт всю сессию TUI: на X11
+    /// данные буфера привязаны к процессу-владельцу селекции).
+    clipboard: crate::clipboard::Clipboard,
     /// Тема оформления.
     pub(crate) theme: Theme,
     /// Канал событий в event loop.
@@ -629,6 +632,7 @@ impl App {
             dialog_inner: None,
             dialog_lines: Vec::new(),
             dialog_skip: 0,
+            clipboard: crate::clipboard::Clipboard::new(),
             theme: Theme::default(),
             msg_tx: None,
         }
@@ -813,7 +817,7 @@ impl App {
             return;
         }
         let n = text.chars().count();
-        self.status_extra = Some(match crate::clipboard::copy(&text) {
+        self.status_extra = Some(match self.clipboard.copy(&text) {
             Ok(mech) => format!("✓ скопировано {n} симв. ({mech})"),
             Err(e) => format!("✗ {e}"),
         });
