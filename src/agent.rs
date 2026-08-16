@@ -238,6 +238,14 @@ impl AgentSession {
                 if let Some(note) = note {
                     self.emit_note(&events, note.text);
                 }
+                if reply.finish_reason.as_deref() == Some("length") {
+                    self.emit_note(
+                        &events,
+                        "ответ усечён потолком max_tokens — текст неполный; \
+                         скажите «продолжай» или поднимите max_tokens в конфиге модели"
+                            .into(),
+                    );
+                }
                 self.history.push(reply.clone());
                 self.emit_context_usage(&events);
                 // reasoning_content — в журнал (аудит цепочек рассуждений;
@@ -292,14 +300,18 @@ impl AgentSession {
                 // заблокированный вызов не должен копить doom-окно.
                 let hook_ctx = serde_json::json!({ "tool": call.name, "args": call.arguments }).to_string();
                 let pre = self.fire_hook(crate::hooks::HookEvent::PreToolUse, Some(&call.name), &hook_ctx);
-                let hook_verdict = if crate::hooks::any_blocked(&pre) {
-                    Some(format!(
-                        "BLOCKED by hook: {}",
-                        crate::hooks::block_reason(&pre)
-                    ))
-                } else {
-                    None
-                };
+                // Битые аргументы (усечённый ответ модели) отклоняем раньше
+                // хуков и детекторов: исполнять обрезок нельзя.
+                let hook_verdict = broken_arguments_verdict(&reply, call).or_else(|| {
+                    if crate::hooks::any_blocked(&pre) {
+                        Some(format!(
+                            "BLOCKED by hook: {}",
+                            crate::hooks::block_reason(&pre)
+                        ))
+                    } else {
+                        None
+                    }
+                });
                 // Детекторы циклов: вердикт подменяет исполнение — контракт
                 // tool-сообщений сохраняется (каждый id получает ровно один ответ).
                 let (verdict, note) = match hook_verdict {
@@ -1016,6 +1028,34 @@ fn truncate_chars(text: &str, max: usize) -> String {
     }
 }
 
+/// Вердикт-заглушка для вызова с битыми аргументами: `parse_arguments`
+/// возвращает [`Value::String`] только при невалидном JSON — то есть ответ
+/// модели обрезался на середине аргументов (потолок max_tokens либо обрыв
+/// потока в сети/прокси). Исполнять половину heredoc'а опаснее, чем
+/// отказать: возвращаем модели точную причину и стратегию восстановления
+/// (чанкованная запись), иначе она повторяет гигантский вызов по кругу.
+fn broken_arguments_verdict(reply: &ChatMessage, call: &crate::llm::ToolCall) -> Option<String> {
+    let Value::String(raw) = &call.arguments else {
+        return None;
+    };
+    let kib = raw.len() / 1024;
+    let cause = if reply.finish_reason.as_deref() == Some("length") {
+        format!(
+            "ответ упёрся в потолок max_tokens и обрезался на середине аргументов \
+             (успели прийти ~{kib} КБ)"
+        )
+    } else {
+        format!("поток ответа оборвался на середине аргументов (успели прийти ~{kib} КБ)")
+    };
+    Some(format!(
+        "harness: вызов `{}` отклонён без исполнения — {cause}. \
+         Не повторяй его целиком: разбей содержимое на части по 8–12 КБ \
+         (write_file с mode=\"append\" или bash-дозапись `>>` частями), \
+         собери файл по шагам и продолжай.",
+        call.name
+    ))
+}
+
 /// Краткий итог вывода инструмента: первая строка, не более 120 символов.
 fn summarize(content: &str) -> String {
     let first = content.lines().next().unwrap_or("").trim();
@@ -1268,6 +1308,90 @@ mod tests {
         );
         assert!(s.messages()[2].content.contains("echo: привет"));
         assert_eq!(s.model_name(), "fake-1");
+    }
+
+    /// Провайдер с обрезанным ответом: tool-вызов с битыми аргументами
+    /// (фолбэк parse_arguments → Value::String) и finish_reason=length.
+    #[derive(Debug)]
+    struct BrokenArgsLlm {
+        calls: AtomicUsize,
+    }
+
+    #[async_trait::async_trait]
+    impl LlmProvider for BrokenArgsLlm {
+        fn name(&self) -> &str {
+            "broken"
+        }
+        fn model(&self) -> &str {
+            "broken-1"
+        }
+        async fn complete(&self, _req: ChatRequest) -> Result<ChatMessage> {
+            let n = self.calls.fetch_add(1, Ordering::SeqCst);
+            if n == 0 {
+                let mut msg = ChatMessage::assistant(
+                    "",
+                    vec![ToolCall {
+                        id: "call-broken".into(),
+                        name: "counting".into(),
+                        // Усечённый на середине JSON — как от потолка max_tokens.
+                        arguments: Value::String("{\"command\":\"cat > /tmp/x.py << 'EOF'...".into()),
+                    }],
+                );
+                msg.finish_reason = Some("length".into());
+                Ok(msg)
+            } else {
+                Ok(ChatMessage::assistant("принято, пишу частями", Vec::new()))
+            }
+        }
+    }
+
+    /// Инструмент со счётчиком исполнений (не должен быть вызван).
+    #[derive(Debug)]
+    struct CountingTool {
+        calls: AtomicUsize,
+    }
+
+    #[async_trait::async_trait]
+    impl Tool for CountingTool {
+        fn spec(&self) -> ToolSpec {
+            ToolSpec {
+                name: "counting".into(),
+                description: "считает вызовы".into(),
+                parameters: serde_json::json!({ "type": "object" }),
+            }
+        }
+        async fn call(&self, _args: Value, _ctx: &ToolContext) -> Result<ToolOutput> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Ok(ToolOutput::ok("executed"))
+        }
+    }
+
+    #[tokio::test]
+    async fn broken_arguments_are_rejected_without_execution() {
+        // Регрессия 16-12: модель слала гигантский tool-вызов (генератор docx
+        // ~25 КБ), потолок max_tokens=8192 обрезал аргументы на середине, а
+        // харнесс исполнял обрезок и отвечал вводящим в заблуждение
+        // «обязательный аргумент отсутствует» — модель повторяла по кругу.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let tool = Arc::new(CountingTool {
+            calls: AtomicUsize::new(0),
+        });
+        let probe = tool.clone();
+        let mut s = make_session(tmp.path(), Arc::new(BrokenArgsLlm { calls: AtomicUsize::new(0) }), |_| {});
+        // Подменяем реестр на считающий инструмент.
+        s.tools = ToolRegistry::new().with(tool);
+        let reply = s.send("сгенерируй отчёт", None).await.expect("send");
+        assert_eq!(reply, "принято, пишу частями");
+        assert_eq!(
+            probe.calls.load(Ordering::SeqCst),
+            0,
+            "обрезок вызова НЕ должен исполняться"
+        );
+        let tool_msg = &s.messages()[2];
+        assert_eq!(tool_msg.role, Role::Tool);
+        assert!(tool_msg.content.contains("отклонён без исполнения"), "{}", tool_msg.content);
+        assert!(tool_msg.content.contains("max_tokens"), "причина: {}", tool_msg.content);
+        assert!(tool_msg.content.contains("append"), "стратегия: {}", tool_msg.content);
     }
 
     #[tokio::test]

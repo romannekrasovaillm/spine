@@ -338,6 +338,21 @@ impl OpenAiCompat {
                 }
             }
             if !done_sent {
+                // Поток закрылся без `data: [DONE]`. Принимаем только если
+                // модель сама сообщила finish_reason — иначе это усечение
+                // сетью/прокси (частичные аргументы tool-вызовов!), и запрос
+                // надо повторить, а не исполнять обрезок.
+                if acc.finish_reason.is_none() {
+                    return Err(StreamBreak {
+                        emitted,
+                        received_chars: acc.content.chars().count(),
+                        source: HarnessError::Llm(format!(
+                            "{}: поток закрылся без [DONE] и finish_reason — \
+                             ответ усечён (сеть/прокси)",
+                            self.name
+                        )),
+                    });
+                }
                 let _ = tx.send(LlmEvent::Done(acc.usage)).await;
             }
         }
@@ -364,7 +379,9 @@ impl LlmProvider for OpenAiCompat {
         let choice = parsed.choices.into_iter().next().ok_or_else(|| {
             HarnessError::Llm(format!("{}: пустой ответ API (нет choices)", self.name))
         })?;
-        Ok(choice.message.into_chat_message())
+        let mut msg = choice.message.into_chat_message();
+        msg.finish_reason = choice.finish_reason;
+        Ok(msg)
     }
 
     /// Стриминговый запрос: дельты в `tx`, собранный ответ — результатом.
@@ -554,6 +571,9 @@ struct CompletionResponse {
 #[derive(Debug, Deserialize)]
 struct CompletionChoice {
     message: CompletionMessage,
+    /// `stop` | `length` | `tool_calls`… (`length` = усечение max_tokens).
+    #[serde(default)]
+    finish_reason: Option<String>,
 }
 
 /// `message` из ответа: `content` может быть `null` при `tool_calls`.
@@ -632,6 +652,10 @@ struct StreamChunk {
 struct StreamChoice {
     #[serde(default)]
     delta: StreamDelta,
+    /// `stop` | `length` | `tool_calls`… в финальном чанке (`length` —
+    /// ответ усечён потолком max_tokens: аргументы tool-вызова обрезаны).
+    #[serde(default)]
+    finish_reason: Option<String>,
 }
 
 /// Дельта стрима: кусок текста и/или инкрементальные `tool_calls`.
@@ -691,6 +715,9 @@ struct StreamAcc {
     reasoning: String,
     tool_calls: Vec<ToolCallAcc>,
     usage: Usage,
+    /// finish_reason из финального чанка; признак «модель закончила сама»
+    /// (без него и без [DONE] закрытие потока = усечение сетью/прокси).
+    finish_reason: Option<String>,
 }
 
 /// Исход разбора одной SSE-строки.
@@ -726,6 +753,9 @@ impl StreamAcc {
     fn apply_chunk(&mut self, chunk: &StreamChunk) -> LineOutcome {
         let mut text = String::new();
         for choice in &chunk.choices {
+            if let Some(reason) = &choice.finish_reason {
+                self.finish_reason = Some(reason.clone());
+            }
             if let Some(content) = &choice.delta.content {
                 self.content.push_str(content);
                 text.push_str(content);
@@ -781,6 +811,7 @@ impl StreamAcc {
         if !self.reasoning.is_empty() {
             msg.reasoning_content = Some(self.reasoning);
         }
+        msg.finish_reason = self.finish_reason;
         normalize_reply(msg)
     }
 }
@@ -1266,6 +1297,26 @@ data: [DONE]
             msg.tool_calls[0].arguments,
             Value::String("{битый-json".to_string())
         );
+    }
+
+    #[test]
+    fn finish_reason_is_captured_from_stream() {
+        // finish_reason=length — признак усечения по max_tokens: агентный цикл
+        // отклоняет битые аргументы с точной причиной. Чанк с finish_reason
+        // обычно идёт с пустой дельтой перед [DONE].
+        let raw = "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"текст\"}}]}\n\ndata: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"length\"}]}\n\ndata: [DONE]\n\n";
+        let mut decoder = SseDecoder::default();
+        let mut acc = StreamAcc::default();
+        decoder.feed(raw.as_bytes(), &mut acc).expect("feed");
+        let msg = acc.finish();
+        assert_eq!(msg.content, "текст");
+        assert_eq!(msg.finish_reason.as_deref(), Some("length"));
+        // Обычный стоп тоже фиксируется.
+        let raw = "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n";
+        let mut decoder = SseDecoder::default();
+        let mut acc = StreamAcc::default();
+        decoder.feed(raw.as_bytes(), &mut acc).expect("feed");
+        assert_eq!(acc.finish().finish_reason.as_deref(), Some("stop"));
     }
 
     #[test]

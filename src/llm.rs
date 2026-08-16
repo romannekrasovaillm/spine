@@ -83,6 +83,11 @@ pub struct ChatMessage {
     /// поле хранится и эхом уходит в API, но в чате не отображается.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning_content: Option<String>,
+    /// Причина завершения генерации (`stop` | `length` | `tool_calls`…).
+    /// `length` означает усечение потолком max_tokens: гигантские tool-вызовы
+    /// обрываются на середине аргументов — агентный цикл такие отклоняет.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub finish_reason: Option<String>,
 }
 
 impl ChatMessage {
@@ -94,6 +99,7 @@ impl ChatMessage {
             tool_calls: Vec::new(),
             tool_call_id: None,
             reasoning_content: None,
+            finish_reason: None,
         }
     }
 
@@ -105,6 +111,7 @@ impl ChatMessage {
             tool_calls: Vec::new(),
             tool_call_id: None,
             reasoning_content: None,
+            finish_reason: None,
         }
     }
 
@@ -116,6 +123,7 @@ impl ChatMessage {
             tool_calls,
             tool_call_id: None,
             reasoning_content: None,
+            finish_reason: None,
         }
     }
 
@@ -127,6 +135,7 @@ impl ChatMessage {
             tool_calls: Vec::new(),
             tool_call_id: Some(call_id.into()),
             reasoning_content: None,
+            finish_reason: None,
         }
     }
 

@@ -4,7 +4,8 @@
 //! [`WriteFileTool`], [`EditFileTool`], [`GlobTool`], [`GrepTool`],
 //! реализующие [`Tool`]. Все пути резолвятся через [`ToolContext::resolve`].
 //! - `read_file`: `path`, опц. `offset`/`limit` (строки), нумерация строк;
-//! - `write_file`: `path`, `content`; создаёт родительские каталоги;
+//! - `write_file`: `path`, `content`, опц. `mode` (`overwrite` по умолчанию,
+//!   `append` — дозапись в конец; крупные файлы — частями по 8–12 КБ);
 //! - `edit_file`: `path`, `old_string`, `new_string`, опц. `replace_all`;
 //!   ошибка, если `old_string` не найден или неуникален (без `replace_all`);
 //! - `glob`: `pattern` (globset-подобный, `**`), опц. `path`;
@@ -279,7 +280,10 @@ impl Tool for WriteFileTool {
             name: "write_file".into(),
             description: "Создать или полностью перезаписать файл (родительские каталоги \
                 создаются автоматически). Вызывать для новых файлов и полной перезаписи; \
-                для точечной правки существующего файла — edit_file."
+                для точечной правки существующего файла — edit_file. Крупное содержимое \
+                пишите ЧАСТЯМИ по 8–12 КБ: первый вызов — mode=\"overwrite\", далее — \
+                mode=\"append\"; гигантский одноразовый вызов упирается в потолок \
+                max_tokens и обрезается на середине."
                 .into(),
             parameters: json!({
                 "type": "object",
@@ -290,7 +294,12 @@ impl Tool for WriteFileTool {
                     },
                     "content": {
                         "type": "string",
-                        "description": "Новое содержимое файла целиком"
+                        "description": "Содержимое (целиком при overwrite, порция при append)"
+                    },
+                    "mode": {
+                        "type": "string",
+                        "enum": ["overwrite", "append"],
+                        "description": "overwrite (по умолчанию) — перезаписать файл; append — дописать в конец"
                     }
                 },
                 "required": ["path", "content"]
@@ -306,6 +315,7 @@ impl Tool for WriteFileTool {
     async fn call(&self, args: Value, ctx: &ToolContext) -> Result<ToolOutput> {
         let path = ctx.resolve(req_str(&args, "write_file", "path")?);
         let content = req_str_allow_empty(&args, "write_file", "content")?;
+        let append = opt_str(&args, "mode").is_some_and(|m| m == "append");
 
         if let Some(parent) = path.parent() {
             if !parent.as_os_str().is_empty() {
@@ -317,14 +327,29 @@ impl Tool for WriteFileTool {
                 }
             }
         }
-        if let Err(e) = tokio::fs::write(&path, content).await {
+        let outcome = if append {
+            use tokio::io::AsyncWriteExt as _;
+            match tokio::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&path)
+                .await
+            {
+                Ok(mut f) => f.write_all(content.as_bytes()).await.map(|_| ()),
+                Err(e) => Err(e),
+            }
+        } else {
+            tokio::fs::write(&path, content).await
+        };
+        if let Err(e) = outcome {
             return Ok(ToolOutput::err(format!(
                 "write_file: не удалось записать {}: {e}",
                 path.display()
             )));
         }
         Ok(ToolOutput::ok(format!(
-            "записано {} байт в {}",
+            "{} {} байт в {}",
+            if append { "дописано" } else { "записано" },
             content.len(),
             path.display()
         )))
@@ -740,6 +765,41 @@ mod tests {
         assert!(!r.is_error, "output: {}", r.content);
         assert!(r.content.contains("1→привет"), "output: {}", r.content);
         assert!(r.content.contains("2→мир"), "output: {}", r.content);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn write_file_append_accumulates_chunks() -> Result<()> {
+        // Чанкованная запись крупных файлов: первая порция — overwrite,
+        // следующие — append (сценарий восстановления после усечения
+        // гигантского вызова потолком max_tokens).
+        let dir = tempfile::tempdir()?;
+        let ctx = test_ctx(&dir);
+        let w1 = WriteFileTool
+            .call(json!({"path": "big/gen.py", "content": "part1\n"}), &ctx)
+            .await?;
+        assert!(!w1.is_error, "output: {}", w1.content);
+        let w2 = WriteFileTool
+            .call(
+                json!({"path": "big/gen.py", "content": "part2\n", "mode": "append"}),
+                &ctx,
+            )
+            .await?;
+        assert!(!w2.is_error, "output: {}", w2.content);
+        assert!(w2.content.contains("дописано"), "output: {}", w2.content);
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("big/gen.py"))?,
+            "part1\npart2\n"
+        );
+        // Без mode — полная перезапись (поведение по умолчанию сохранено).
+        let w3 = WriteFileTool
+            .call(json!({"path": "big/gen.py", "content": "final\n"}), &ctx)
+            .await?;
+        assert!(w3.content.contains("записано"), "output: {}", w3.content);
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("big/gen.py"))?,
+            "final\n"
+        );
         Ok(())
     }
 

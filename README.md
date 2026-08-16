@@ -111,7 +111,11 @@ BMAD, Spec Kit, OpenSpec и др.):
   хранится и эхом возвращается в API (контракт DeepSeek thinking+tools);
   индикатор 🧠 в статус-баре.
 - Промышленная закалка стрима: ретрай обрыва SSE на любой фазе (с заметкой
-  в чате), таймаут тишины вместо общего таймаута, компактификация L1/L3,
+  в чате), закрытие потока без `[DONE]`/`finish_reason` считается усечением
+  и повторяется, вызов инструмента с обрезанными аргументами (потолок
+  max_tokens / обрыв) отклоняется с точной причиной и стратегией
+  восстановления — крупные файлы пишутся частями (`write_file mode=append`),
+  таймаут тишины вместо общего таймаута, компактификация L1/L3,
   детекторы петель, редакция секретов в выводе и журнале.
 - **Индикатор контекста** в статус-баре: `◈ 12.3k/1.0M ▰▰▱▱▱▱▱▱ 1%` —
   заполнение окна активной модели; шкала зелёная до порога L1, оранжевая
@@ -366,7 +370,11 @@ BMAD, Spec Kit, OpenSpec, and more):
   `thinking_on`/`thinking_off` maps merged into the request body; chain-of-thought
   (`reasoning_content`) is stored and echoed back (DeepSeek thinking+tools
   contract); 🧠 indicator in the status bar.
-- Hardened streaming: mid-stream break auto-retry with an in-chat note,
+- Hardened streaming: mid-stream break auto-retry with an in-chat note; a
+  stream closed without `[DONE]`/`finish_reason` is treated as truncated and
+  retried; a tool call whose arguments arrive cut off (max_tokens ceiling or
+  a broken stream) is rejected with the precise cause and a recovery
+  strategy — large files are written in chunks (`write_file mode=append`);
   silence-timeout instead of a whole-request timeout, L1/L3 compaction,
   loop detectors, secret redaction in tool output and journals.
 - **Context gauge** in the status bar: `◈ 12.3k/1.0M ▰▰▱▱▱▱▱▱ 1%` — live
