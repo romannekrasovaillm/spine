@@ -63,7 +63,31 @@ CodeWhale) — без потери архитектурного контекст
 
 CLI-эквивалент вне диалога: `arch handoff --repo <path> --task "…"` и
 `arch harness-run <harness> --repo <path> [--task "…"]` — см.
-`docs/harness_integrations.md`.
+`harness_integrations.md`.
+
+## Кадр со стороны исполнителя
+
+Так выглядит принимающая сторона — живой Claude Code, запущенный по пакету
+в изолированном worktree (`~/.arch-harness/worktrees/…`):
+
+<p align="center">
+  <img src="screenshots/06-harness-live.png" alt="Claude Code исполняет задачу из .arch-handoff/: читает TASK.md, AGENTS.md и ARCHITECTURE-SPINE.md, работает по инвариантам AD-1..AD-3, в конце — JSON-контракт" width="92%">
+</p>
+
+Что видно на кадре:
+
+- промпт — это сгенерированный пакет: «прочитай `.arch-handoff/TASK.md`,
+  `AGENTS.md`, `ARCHITECTURE-SPINE.md`, реализуй модуль по инвариантам
+  AD-1..AD-3, добейся зелёного pytest, в конце — JSON-контракт»;
+- харнесс сам читает spine (`git log` показывает spine-коммит
+  «AD-1..AD-3»), собирает контекст и работает по инвариантам — контекст
+  доехал без ручного копирования;
+- работа идёт в отдельном worktree с собственным `pytest.ini` — основной
+  репозиторий не тронут до приёмки;
+- `API error · Retrying · attempt 1/10` — транзиентные сбои API модели
+  переживаются ретраями самого харнесса; со стороны Spine такой прогон не
+  считается зависшим, пока идёт вывод или меняются файлы (idle-таймаут
+  тишины, см. выше).
 
 ---
 
@@ -99,4 +123,24 @@ CLI-эквивалент вне диалога: `arch handoff --repo <path> --ta
 
 CLI equivalents: `arch handoff --repo <path> --task "…"` and
 `arch harness-run <harness> --repo <path>` — see
-`docs/harness_integrations.md`.
+`harness_integrations.md`.
+
+## The executor's side of the frame
+
+What the receiving end looks like — a live Claude Code run against the
+package in an isolated worktree (`~/.arch-harness/worktrees/…`):
+
+<p align="center">
+  <img src="screenshots/06-harness-live.png" alt="Claude Code executing a .arch-handoff task: reads TASK.md, AGENTS.md and ARCHITECTURE-SPINE.md, works by AD-1..AD-3 invariants, ends with the JSON contract" width="92%">
+</p>
+
+- the prompt is the generated package itself ("read `.arch-handoff/TASK.md`,
+  `AGENTS.md`, `ARCHITECTURE-SPINE.md`, implement the module under
+  AD-1..AD-3, make pytest green, finish with the JSON contract");
+- the harness reads the spine on its own (git log shows the spine commit),
+  gathers context and works by the invariants — no manual copy-pasting;
+- work happens in a dedicated worktree with its own `pytest.ini` — the main
+  repo stays untouched until acceptance;
+- `API error · Retrying · attempt 1/10` — transient model API failures are
+  absorbed by the harness's own retries, and Spine's silence timeout does
+  not treat the run as hung while output or file changes keep coming.
