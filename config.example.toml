@@ -214,7 +214,10 @@ description = "Кураторский список ресурсов по softwar
 # -----------------------------------------------------------------------------
 [harnesses.claude-code]
 binary = "claude"
-args = ["-p"]
+# --dangerously-skip-permissions обязателен для headless: иначе `claude -p`
+# встаёт на permission-промпте файловых операций и висит до таймаута.
+# Уберите флаг, если прогоны интерактивные.
+args = ["-p", "--dangerously-skip-permissions"]
 prompt_mode = "stdin"
 timeout_secs = 1800
 

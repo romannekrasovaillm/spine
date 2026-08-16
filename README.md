@@ -198,7 +198,10 @@ BMAD, Spec Kit, OpenSpec и др.):
 - **Архитектурный контроль**: score, spine-линтер, сенсоры спек, fitness,
   генератор ADR (`docs/control.md`).
 - **Handoff кодовым харнессам**: Claude Code, Qwen Code, OpenClaw, Hermes,
-  Theseus, CodeWhale (`docs/harness_integrations.md`).
+  Theseus, CodeWhale — пакеты `.arch-handoff/` + прогон инструментом
+  `harness_run` прямо из диалога (адаптер знает режим промпта, флаги
+  разрешений и длинный таймаут; JSON-контракт результата извлекается в сводку)
+  (`docs/harness_integrations.md`).
 - **MCP-клиент** (`docs/mcp.md`), **веб-доступ** (11 кураторских сайтов
   архитектора) и **локальная база знаний** (`docs/web_kb.md`).
 - **Планировщик md-задач** «md + cron + LLM + баш-пайпы» (`docs/cron_and_md_pipes.md`).
@@ -390,7 +393,10 @@ BMAD, Spec Kit, OpenSpec, and more):
 
 **Handoff to coding harnesses**: Claude Code, Qwen Code, OpenClaw, Hermes,
 Theseus, CodeWhale — `.arch-handoff/` packages with invariants, acceptance
-criteria, and a headless JSON contract (`docs/harness_integrations.md`).
+criteria, and a headless JSON contract, plus in-chat execution via the
+`harness_run` tool (the adapter knows the prompt mode, permission flags, and
+the long timeout; the JSON result contract is extracted into the summary)
+(`docs/harness_integrations.md`).
 
 **Training cases**: [`кейсы/`](кейсы/AGENTS.md) — end-to-end samples of the
 solution-architect cycle produced with the harness. Case 001:

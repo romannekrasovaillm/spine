@@ -90,16 +90,31 @@ timeout_secs = 1800               # дефолт 1800; по таймауту п�
 
 | Харнесс | binary | args | prompt_mode |
 |---|---|---|---|
-| claude-code | `claude` | `["-p"]` | stdin |
+| claude-code | `claude` | `["-p", "--dangerously-skip-permissions"]` | stdin |
 | qwen-code | `qwen` | `[]` | stdin |
 | openclaw | `openclaw` | `["agent", "--message"]` | flag |
 | hermes | `hermes` | `["-p"]` | stdin |
 | theseus | `theseus` | `["run", "--task"]` | flag |
 | codewhale | `codewhale` | `["-p"]` | stdin |
 
+> **Claude Code headless:** `claude -p` без TTY на файловых операциях встаёт
+> на permission-промпте и висит до таймаута — поэтому дефолтный адаптер несёт
+> `--dangerously-skip-permissions`. Права процесса ограничены каталогом
+> репозитория; для интерактивных прогонов флаг уберите в `config.toml`.
+
 Прогон (`run_harness`): `cwd = repo`, env из конфига, захват stdout/stderr,
 код возврата и длительность в `HarnessRun`; бинарь не найден — ошибка с
 подсказкой поправить `[harnesses.<name>]`.
+
+Из агентного цикла (TUI/headless) прогон идёт инструментом **`harness_run`**
+(не bash!): задача читается из `.arch-handoff/TASK.md` или передаётся явным
+аргументом `task`; сводка ответа включает код возврата, длительность и
+JSON-контракт результата (`status`, счётчики `assumptions`/`open_questions`/
+`conflicts`) — отсутствие контракта помечается предупреждением. Bash-запуск
+харнесса — антипаттерн: квотинг длинного TASK.md ломает команду, таймаут
+bash (≤600 с) короче харнессового (1800 с), а env-scrub bash-инструмента
+прячет `*_KEY`/`*_TOKEN` от команды — харнесс, авторизующийся через
+переменную окружения, останется без креденшелов.
 
 ## Пример сессии end-to-end
 

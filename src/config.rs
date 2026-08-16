@@ -514,7 +514,18 @@ impl Default for Config {
             ..CodingHarnessConfig::default()
         };
         let mut harnesses = BTreeMap::new();
-        harnesses.insert("claude-code".into(), harness("claude", &["-p"], PromptMode::Stdin));
+        // Claude Code в headless (`-p` без TTY) на файловых операциях встаёт на
+        // permission-промпте и ждёт вечно → --dangerously-skip-permissions
+        // обязателен для unattended-прогонов. Права процесса ограничены
+        // каталогом репозитория; уберите флаг в config.toml для интерактива.
+        harnesses.insert(
+            "claude-code".into(),
+            harness(
+                "claude",
+                &["-p", "--dangerously-skip-permissions"],
+                PromptMode::Stdin,
+            ),
+        );
         harnesses.insert("qwen-code".into(), harness("qwen", &[], PromptMode::Stdin));
         harnesses.insert("openclaw".into(), harness("openclaw", &["agent", "--message"], PromptMode::Flag));
         harnesses.insert("hermes".into(), harness("hermes", &["-p"], PromptMode::Stdin));

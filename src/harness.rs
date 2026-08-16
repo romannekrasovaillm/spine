@@ -10,8 +10,10 @@
 //!   токенов, по смыслу);
 //! - [`run_harness`] — запуск бинаря харнесса (PromptMode positional/flag/stdin)
 //!   в каталоге repo, таймаут, захват stdout/stderr → HarnessRun;
-//! - [`tools`] — инструмент `handoff_create` для агентного цикла.
+//! - [`tools`] — инструменты `handoff_create` и `harness_run` для агентного
+//!   цикла (прогон пакета харнессом — только через `harness_run`, не bash).
 
+use std::fmt::Write as _;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -528,9 +530,164 @@ impl Tool for HandoffCreateTool {
     }
 }
 
-/// Инструменты домена: `handoff_create`.
+/// Лимит вывода `harness_run` (stdout + stderr), символов.
+const HARNESS_RUN_MAX_CHARS: usize = 24 * 1024;
+
+/// Вытаскивает JSON-контракт результата из stdout харнесса:
+/// последний ```json-блок с полем `status` (см. [`render_task_md`]).
+fn extract_contract(stdout: &str) -> Option<Value> {
+    let start = stdout.rfind("```json")? + "```json".len();
+    let rest = &stdout[start..];
+    let end = rest.find("```")?;
+    let v: Value = serde_json::from_str(rest[..end].trim()).ok()?;
+    v.get("status").and_then(Value::as_str)?;
+    Some(v)
+}
+
+/// Инструмент `harness_run`: прогон handoff-пакета (или явной задачи)
+/// кодовым харнессом — без импровизации через bash (квотинг, permission-
+/// промпты, короткие таймауты bash — частые точки отказа такой импровизации).
+struct HarnessRunTool {
+    /// Конфигурация (адаптеры харнессов).
+    cfg: Config,
+}
+
+#[async_trait]
+impl Tool for HarnessRunTool {
+    fn spec(&self) -> ToolSpec {
+        ToolSpec {
+            name: "harness_run".into(),
+            description: "Запустить кодовый харнесс на репозитории и вернуть его вывод. \
+                Обычно следует за handoff_create: задача читается из \
+                <repo>/.arch-handoff/TASK.md (или передаётся явно). Запуск идёт через \
+                настроенный адаптер [harnesses.<имя>] (режим prompt, env, таймаут 30 мин): \
+                stdout/stderr и код возврата захватываются, JSON-контракт результата \
+                (status/assumptions/open_questions) извлекается в сводку. НЕ запускать \
+                харнесс через bash — там промпт ломается о квотинг, таймаут слишком \
+                короткий, а env-scrub прячет от команды переменные *_KEY/*_TOKEN, \
+                через которые харнесс может авторизовываться."
+                .into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "harness": {
+                        "type": "string",
+                        "description": "Имя харнесса: claude-code, qwen-code, openclaw, hermes, theseus, codewhale"
+                    },
+                    "repo": {
+                        "type": "string",
+                        "description": "Корень репозитория (относительно cwd или абсолютный)"
+                    },
+                    "task": {
+                        "type": "string",
+                        "description": "Явная задача; если не задана — читается <repo>/.arch-handoff/TASK.md"
+                    },
+                    "timeout_secs": {
+                        "type": "integer",
+                        "description": "Переопределить таймаут адаптера, секунды (максимум 7200)",
+                        "minimum": 1,
+                        "maximum": 7200
+                    }
+                },
+                "required": ["harness", "repo"]
+            }),
+        }
+    }
+
+    async fn call(&self, args: Value, ctx: &ToolContext) -> Result<ToolOutput> {
+        let Some(name) = args.get("harness").and_then(Value::as_str) else {
+            return Ok(ToolOutput::err(
+                "harness_run: обязательный аргумент 'harness' (string) отсутствует",
+            ));
+        };
+        let Some(repo) = args.get("repo").and_then(Value::as_str) else {
+            return Ok(ToolOutput::err(
+                "harness_run: обязательный аргумент 'repo' (string) отсутствует",
+            ));
+        };
+        let Some(hcfg) = self.cfg.harnesses.get(name) else {
+            return Ok(ToolOutput::err(format!(
+                "harness_run: харнесс '{name}' не настроен. Известные: {}; \
+                 адаптеры — в config.toml [harnesses.<имя>]",
+                known().join(", ")
+            )));
+        };
+        let repo = ctx.resolve(repo);
+        let task = match args.get("task").and_then(Value::as_str) {
+            Some(t) => t.to_string(),
+            None => {
+                let path = repo.join(HANDOFF_DIR).join("TASK.md");
+                match std::fs::read_to_string(&path) {
+                    Ok(t) => t,
+                    Err(e) => {
+                        return Ok(ToolOutput::err(format!(
+                            "harness_run: нет аргумента 'task' и не читается {}: {e}. \
+                             Сначала handoff_create или передайте task явно",
+                            path.display()
+                        )));
+                    }
+                }
+            }
+        };
+        // Переопределение таймаута — копией конфига адаптера.
+        let mut hcfg = hcfg.clone();
+        if let Some(t) = args.get("timeout_secs").and_then(Value::as_u64) {
+            hcfg.timeout_secs = t.clamp(1, 7200);
+        }
+        match run_harness(name, &hcfg, &repo, &task).await {
+            Ok(run) => {
+                let code = run.exit_code.map_or("сигнал".into(), |c| c.to_string());
+                let mut content = format!(
+                    "Харнесс '{name}' завершился: код {code}, {:.1} с.\n",
+                    run.duration_secs
+                );
+                match extract_contract(&run.stdout) {
+                    Some(v) => {
+                        let count = |key: &str| {
+                            v.get(key).and_then(Value::as_array).map_or(0, Vec::len)
+                        };
+                        let _ = writeln!(
+                            content,
+                            "Контракт результата: status={}; assumptions: {}; \
+                             open_questions: {}; conflicts: {}.",
+                            v["status"].as_str().unwrap_or("?"),
+                            count("assumptions"),
+                            count("open_questions"),
+                            count("conflicts_with_prior_decisions"),
+                        );
+                    }
+                    None => {
+                        content.push_str(
+                            "ВНИМАНИЕ: JSON-контракт результата (```json с полем status) \
+                             в stdout не найден — ответ может быть неполным; при необходимости \
+                             перезапустите с напоминанием о контракте.\n",
+                        );
+                    }
+                }
+                content.push_str("--- stdout ---\n");
+                content.push_str(run.stdout.trim_end());
+                if !run.stderr.trim().is_empty() {
+                    content.push_str("\n--- stderr ---\n");
+                    content.push_str(run.stderr.trim_end());
+                }
+                let is_error = run.exit_code != Some(0);
+                Ok(ToolOutput {
+                    content,
+                    is_error,
+                }
+                .truncated(HARNESS_RUN_MAX_CHARS))
+            }
+            Err(e) => Ok(ToolOutput::err(format!("harness_run: {e}"))),
+        }
+    }
+}
+
+/// Инструменты домена: `handoff_create`, `harness_run`.
 pub fn tools(cfg: &Config) -> Vec<Arc<dyn Tool>> {
-    vec![Arc::new(HandoffCreateTool { cfg: cfg.clone() })]
+    vec![
+        Arc::new(HandoffCreateTool { cfg: cfg.clone() }),
+        Arc::new(HarnessRunTool { cfg: cfg.clone() }),
+    ]
 }
 
 #[cfg(test)]
@@ -798,5 +955,113 @@ mod tests {
         assert!(!out.is_error, "{}", out.content);
         assert!(out.content.contains("Handoff-пакет создан"));
         assert!(repo.join(".arch-handoff/TASK.md").is_file());
+    }
+
+    /// Конфиг с поддельным харнессом `fake` на бинаре `cat` (stdin → stdout).
+    fn cfg_with_fake_harness(dir: &Path) -> Config {
+        let mut cfg = cfg_in(dir);
+        cfg.harnesses.insert(
+            "fake".into(),
+            CodingHarnessConfig {
+                binary: "cat".into(),
+                prompt_mode: PromptMode::Stdin,
+                timeout_secs: 30,
+                ..CodingHarnessConfig::default()
+            },
+        );
+        cfg
+    }
+
+    #[test]
+    fn extract_contract_finds_last_json_block_with_status() {
+        let stdout = "текст\n```json\n{\"status\": \"partial\", \"assumptions\": [\"a\"], \
+                      \"open_questions\": [], \"conflicts_with_prior_decisions\": []}\n```\n";
+        let v = extract_contract(stdout).expect("контракт найден");
+        assert_eq!(v["status"], "partial");
+        // Без поля status — не контракт.
+        assert!(extract_contract("```json\n{\"x\": 1}\n```").is_none());
+        // Без fenced-блока — None.
+        assert!(extract_contract("plain text").is_none());
+        // Битый JSON — None.
+        assert!(extract_contract("```json\n{oops}\n```").is_none());
+    }
+
+    #[tokio::test]
+    async fn harness_run_tool_validates_args() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let cfg = cfg_with_fake_harness(tmp.path());
+        let tool = HarnessRunTool { cfg: cfg.clone() };
+        assert_eq!(tool.spec().name, "harness_run");
+        let ctx = ToolContext::new(tmp.path().to_path_buf(), Arc::new(cfg));
+
+        let out = tool.call(json!({"repo": "."}), &ctx).await.expect("call");
+        assert!(out.is_error && out.content.contains("'harness'"), "{}", out.content);
+
+        let out = tool
+            .call(json!({"harness": "nope", "repo": "."}), &ctx)
+            .await
+            .expect("call");
+        assert!(out.is_error, "{}", out.content);
+        assert!(out.content.contains("не настроен"), "{}", out.content);
+        assert!(out.content.contains("claude-code"), "список известных: {}", out.content);
+
+        // Нет task и нет TASK.md — понятная ошибка с подсказкой.
+        let out = tool
+            .call(json!({"harness": "fake", "repo": "."}), &ctx)
+            .await
+            .expect("call");
+        assert!(out.is_error, "{}", out.content);
+        assert!(out.content.contains("handoff_create"), "{}", out.content);
+    }
+
+    #[tokio::test]
+    async fn harness_run_reads_task_md_and_extracts_contract() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let repo = tmp.path().join("repo");
+        write_file(
+            &repo.join(".arch-handoff/TASK.md"),
+            "Сделай фичу\n\n```json\n{\"status\": \"complete\", \"assumptions\": [], \
+             \"open_questions\": [\"q1\"], \"conflicts_with_prior_decisions\": []}\n```\n",
+        );
+        let cfg = cfg_with_fake_harness(tmp.path());
+        let tool = HarnessRunTool { cfg };
+        let ctx = ToolContext::new(tmp.path().to_path_buf(), Arc::new(Config::default()));
+
+        // cat вернёт TASK.md в stdout — контракт извлекается в сводку.
+        let out = tool
+            .call(json!({"harness": "fake", "repo": "repo"}), &ctx)
+            .await
+            .expect("call");
+        assert!(!out.is_error, "{}", out.content);
+        assert!(out.content.contains("код 0"), "{}", out.content);
+        assert!(out.content.contains("status=complete"), "{}", out.content);
+        assert!(out.content.contains("open_questions: 1"), "{}", out.content);
+        assert!(out.content.contains("Сделай фичу"), "{}", out.content);
+    }
+
+    #[tokio::test]
+    async fn harness_run_warns_when_contract_missing() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let mut cfg = cfg_in(tmp.path());
+        cfg.harnesses.insert(
+            "fake".into(),
+            CodingHarnessConfig {
+                binary: "echo".into(),
+                args: vec!["нет контракта".into()],
+                prompt_mode: PromptMode::Stdin,
+                timeout_secs: 30,
+                ..CodingHarnessConfig::default()
+            },
+        );
+        let tool = HarnessRunTool { cfg };
+        let ctx = ToolContext::new(tmp.path().to_path_buf(), Arc::new(Config::default()));
+        // echo не читает stdin, печатает строку без контракта, код 0.
+        let out = tool
+            .call(json!({"harness": "fake", "repo": ".", "task": "задача"}), &ctx)
+            .await
+            .expect("call");
+        assert!(!out.is_error, "{}", out.content);
+        assert!(out.content.contains("контракт результата"), "{}", out.content);
+        assert!(out.content.contains("не найден"), "{}", out.content);
     }
 }

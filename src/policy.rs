@@ -105,9 +105,8 @@ pub fn classify_tool(tool: &str, args: &serde_json::Value) -> RiskClass {
             let cmd = args.get("command").and_then(|c| c.as_str()).unwrap_or("");
             classify_bash(cmd)
         }
-        "write_file" | "edit_file" | "adr_new" | "handoff_create" | "agentsmd_generate" => {
-            RiskClass::Mutating
-        }
+        "write_file" | "edit_file" | "adr_new" | "handoff_create" | "harness_run"
+        | "agentsmd_generate" => RiskClass::Mutating,
         _ => RiskClass::ReadOnly,
     }
 }

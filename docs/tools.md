@@ -148,10 +148,11 @@ ralph-циклы — `~/.arch-harness/reports/ralph/<id>/` (`round-NN.md`,
 | Инструмент | Назначение | Параметры |
 |---|---|---|
 | `handoff_create` | Handoff-пакет `.arch-handoff/` (TASK.md, ARCHITECTURE.md, CONSTRAINTS.yaml, MANIFEST.json, adr/) для кодового харнесса | `repo`*, `task`*; `spec` — массив путей к спекам/ADR |
+| `harness_run` | Прогон пакета кодовым харнессом через настроенный адаптер (stdin/flag/positional, env, таймаут 30 мин): код возврата, stdout/stderr, сводка JSON-контракта результата. Не путать с bash — квотинг и таймауты там ломают прогон | `harness`* (claude-code, qwen-code, openclaw, hermes, theseus, codewhale), `repo`*; `task` (иначе `<repo>/.arch-handoff/TASK.md`); `timeout_secs` |
 
 Харнессы: Claude Code, Qwen Code, OpenClaw, Hermes, Theseus, CodeWhale —
-`docs/harness_integrations.md`. Прогон пакета кодовым харнессом и сбор
-JSON-результата — CLI `arch handoff run` (см. документацию).
+`docs/harness_integrations.md`. Прогон пакета также доступен из CLI —
+`arch harness-run <имя> --repo <путь>`.
 
 ## AGENTS.md репозиториев
 
