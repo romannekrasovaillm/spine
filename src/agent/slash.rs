@@ -545,12 +545,21 @@ fn cmd_handoff(rest: &str, ctx: &ToolContext) -> Result<SlashOutcome> {
             known.join(", ")
         )));
     }
-    let packet = crate::harness::generate_handoff(&ctx.resolve(repo), &task, &[], &ctx.config)?;
+    let packet = crate::harness::generate_handoff(
+        &ctx.resolve(repo),
+        &task,
+        &[],
+        &ctx.config,
+        None,
+        crate::control::Route::Standard,
+    )?;
     Ok(SlashOutcome::Handled(format!(
-        "handoff-пакет для '{harness}': {} файлов в {} (epic-context ~{} токенов)",
+        "handoff-пакет для '{harness}': {} файлов в {} (epic-context ~{} токенов, baseline {}, timeout {})",
         packet.files.len(),
         packet.dir.display(),
-        packet.epic_context_tokens
+        packet.epic_context_tokens,
+        packet.baseline.as_deref().unwrap_or("—"),
+        packet.recommended_timeout_secs
     )))
 }
 

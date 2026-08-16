@@ -104,6 +104,12 @@ enum Cmd {
         /// Файлы спек/спайна/ADR для включения.
         #[arg(long)]
         spec: Vec<PathBuf>,
+        /// Явный план отката (иначе — откат на baseline-коммит).
+        #[arg(long)]
+        rollback: Option<String>,
+        /// Маршрут значимости: fast|standard|critical (таймаут прогона: 1800/3600/7200 с).
+        #[arg(long, default_value = "standard")]
+        route: String,
     },
     /// Прогнать кодовый харнесс по handoff-пакету.
     HarnessRun {
@@ -508,6 +514,8 @@ async fn main() -> Result<()> {
             repo,
             task,
             spec,
+            rollback,
+            route,
         }) => {
             if !cfg.harnesses.contains_key(&harness) {
                 anyhow::bail!(
@@ -515,12 +523,27 @@ async fn main() -> Result<()> {
                     arch_harness::harness::known()
                 );
             }
-            let packet = arch_harness::harness::generate_handoff(&repo, &task, &spec, &cfg)?;
+            let route: arch_harness::control::Route = route
+                .parse()
+                .map_err(|e: String| anyhow::anyhow!(e))?;
+            let packet =
+                arch_harness::harness::generate_handoff(&repo, &task, &spec, &cfg, rollback.as_deref(), route)?;
             println!("Handoff-пакет: {}", packet.dir.display());
             for f in &packet.files {
                 println!("  {}", f.display());
             }
             println!("epic-context ≈ {} токенов", packet.epic_context_tokens);
+            match &packet.baseline {
+                Some(h) => println!(
+                    "git: {}baseline {h} (якорь отката)",
+                    if packet.git_initialized { "инициализирован, " } else { "" }
+                ),
+                None => println!("⚠ git недоступен — якоря отката нет"),
+            }
+            println!(
+                "маршрут {route} → рекомендованный timeout_secs={}",
+                packet.recommended_timeout_secs
+            );
         }
         Some(Cmd::HarnessRun {
             harness,
@@ -536,7 +559,12 @@ async fn main() -> Result<()> {
                 None => std::fs::read_to_string(repo.join(".arch-handoff/TASK.md"))
                     .context("нет --task и не найден .arch-handoff/TASK.md")?,
             };
-            let run = arch_harness::harness::run_harness(&harness, hcfg, &repo, &task_text).await?;
+            let mut hcfg_owned = hcfg.clone();
+            if let Some(t) = arch_harness::harness::recommended_timeout_secs(&repo) {
+                // Пакет несёт рекомендацию по маршруту значимости (Fast/Standard/Critical).
+                hcfg_owned.timeout_secs = t.clamp(600, 7200);
+            }
+            let run = arch_harness::harness::run_harness(&harness, &hcfg_owned, &repo, &task_text).await?;
             use arch_harness::harness::Termination;
             if let Some(ac) = &run.auto_commit {
                 println!(

@@ -42,6 +42,33 @@ pub enum Route {
     Critical,
 }
 
+impl std::str::FromStr for Route {
+    type Err = String;
+
+    /// Парсит маршрут из строки (fast/standard/critical, без учёта регистра).
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "fast" => Ok(Self::Fast),
+            "standard" => Ok(Self::Standard),
+            "critical" => Ok(Self::Critical),
+            other => Err(format!(
+                "неизвестный маршрут '{other}' (допустимы: fast, standard, critical)"
+            )),
+        }
+    }
+}
+
+impl std::fmt::Display for Route {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            Self::Fast => "Fast",
+            Self::Standard => "Standard",
+            Self::Critical => "Critical",
+        };
+        f.write_str(s)
+    }
+}
+
 /// Результат оценки значимости.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Significance {

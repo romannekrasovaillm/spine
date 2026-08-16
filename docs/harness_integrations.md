@@ -8,16 +8,21 @@ CodeWhale), прогоняет его и контролирует результ
 
 ## Handoff-пакет `.arch-handoff/`
 
-`arch handoff` создаёт в корне репозитория каталог `.arch-handoff/`:
+`arch handoff` создаёт в корне репозитория каталог `.arch-handoff/`. Перед
+сборкой срабатывает **предгейт git**: каталог без репозитория получает
+`git init` + пустой baseline-коммит (якорь отката; содержимое в baseline не
+подмётается — это зона исполнителя), у git-репозитория якорем становится
+текущий HEAD. Без git контракт финального коммита невыполним, поэтому пакет
+без якоря собирается с предупреждением.
 
 | Файл | Содержимое | При повторной генерации |
 |---|---|---|
-| `TASK.md` | Задача + контракт результата (ниже). | Перезаписывается. |
+| `TASK.md` | Задача + **план отката** (якорь baseline, сигналы-триггеры, владелец решения) + **финализация** (обязательный git-коммит) + контракт результата (ниже). | Перезаписывается. |
 | `ARCHITECTURE.md` | **Epic-context** — дистиллят спек/спайна. | Перезаписывается. |
 | `CONSTRAINTS.yaml` | Fitness-правила для `arch control check`. | Не затирается (пишется дефолт при отсутствии). |
 | `RUBRIC.yaml` | Рубрика приёмки (копия якорной `handoff_quality`). | Не затирается. |
 | `adr/` | Копии переданных ADR-файлов (`--spec`, признак: `ADR` в имени или `/adr/` в пути). | Существующие копии не затираются. |
-| `MANIFEST.json` | Мета: `created_at` (UTC), `task`, `model` (default_model), `sources`, `epic_context_chars`, `epic_context_tokens`. | Перезаписывается. |
+| `MANIFEST.json` | Мета: `created_at` (UTC), `task`, `model` (default_model), `sources`, `epic_context_chars`, `epic_context_tokens`, `route` (Fast/Standard/Critical), `recommended_timeout_secs` (1800/3600/7200 — подхватывается `harness_run`, если `timeout_secs` не задан явно). | Перезаписывается. |
 
 ### TASK.md и headless JSON-контракт
 

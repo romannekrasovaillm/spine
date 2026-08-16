@@ -17,14 +17,21 @@ CodeWhale) — без потери архитектурного контекст
    машину на исполнение Claude Code и проконтролируй результат». К этому
    моменту в сессии уже есть спайн (AD-инварианты), ADR и mermaid-модель.
 2. **`handoff_create`** собирает пакет `<repo>/.arch-handoff/`:
-   - `TASK.md` — формулировка задачи для кодового харнесса;
+   - `TASK.md` — формулировка задачи для кодового харнесса + **план отката**
+     (якорь baseline, сигналы-триггеры, владелец решения) + требование
+     финального git-коммита;
    - `ARCHITECTURE.md` — **epic-context** (~800–1500 токенов, окно якорной
      рубрики `handoff_quality`): спайн, затронутые ADR, границы «что нельзя
      трогать»;
    - `CONSTRAINTS.yaml` — fitness-правила под стек репозитория (заготовка,
      переписывается под spine AD-n перед передачей);
    - `RUBRIC.yaml` — якорная рубрика приёмки;
-   - `MANIFEST.json` — дата, модель, источники; `adr/` — копии ADR.
+   - `MANIFEST.json` — дата, модель, источники, маршрут значимости и
+     рекомендованный таймаут прогона (Fast/Standard/Critical → 1800/3600/7200 с);
+     `adr/` — копии ADR.
+   Предгейт: каталог без git инициализируется (`git init` + пустой
+   baseline-коммит — якорь отката и точка интеграции); у git-репозитория
+   якорь — текущий HEAD.
 3. **`harness_run`** прогоняет пакет адаптером `[harnesses.claude-code]`
    (`claude -p --dangerously-skip-permissions`, задача — в stdin).
    **Умные таймауты**: абсолютный потолок 30 мин + таймаут тишины 10 мин
@@ -106,10 +113,15 @@ CLI-эквивалент вне диалога: `arch handoff --repo <path> --ta
    to Claude Code and supervise the result"). The session already holds the
    spine (AD invariants), ADRs and a mermaid model.
 2. **`handoff_create`** assembles `<repo>/.arch-handoff/`: `TASK.md`
-   (the task), `ARCHITECTURE.md` (epic context, ~800–1500 tokens — the
-   anchor rubric window), `CONSTRAINTS.yaml` (stack-detected fitness rules,
-   a scaffold to be rewritten against the spine), `RUBRIC.yaml` (acceptance
-   rubric), `MANIFEST.json` + `adr/` copies.
+   (the task + **rollback plan** — baseline anchor, trigger signals, decision
+   owner — + the mandatory final git commit), `ARCHITECTURE.md` (epic
+   context, ~800–1500 tokens — the anchor rubric window), `CONSTRAINTS.yaml`
+   (stack-detected fitness rules, a scaffold to be rewritten against the
+   spine), `RUBRIC.yaml` (acceptance rubric), `MANIFEST.json` (including the
+   significance route and the recommended run timeout: Fast/Standard/Critical
+   → 1800/3600/7200 s) + `adr/` copies. Pre-gate: a directory without git is
+   initialized (`git init` + an empty baseline commit — the rollback anchor);
+   for a git repo the anchor is the current HEAD.
 3. **`harness_run`** executes the package through the configured adapter
    (e.g. `claude -p --dangerously-skip-permissions`, task via stdin).
    **Smart timeouts**: a 30-min absolute ceiling plus a 10-min silence

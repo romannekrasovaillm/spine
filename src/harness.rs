@@ -29,6 +29,7 @@ use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 
 use crate::config::{CodingHarnessConfig, Config, PromptMode};
+use crate::control::Route;
 use crate::error::{HarnessError, Result};
 use crate::llm::ToolSpec;
 use crate::tool::{Tool, ToolContext, ToolOutput};
@@ -178,6 +179,15 @@ pub struct HandoffPacket {
     pub files: Vec<PathBuf>,
     /// Оценка размера epic-context в токенах.
     pub epic_context_tokens: usize,
+    /// Baseline-коммит (якорь отката) на момент генерации пакета.
+    #[serde(default)]
+    pub baseline: Option<String>,
+    /// Git-репозиторий был инициализирован предгейтом (`git init`).
+    #[serde(default)]
+    pub git_initialized: bool,
+    /// Рекомендованный таймаут прогона по маршруту значимости, секунд.
+    #[serde(default)]
+    pub recommended_timeout_secs: u64,
 }
 
 /// Метаданные пакета (`MANIFEST.json`).
@@ -195,6 +205,10 @@ struct Manifest<'a> {
     epic_context_chars: usize,
     /// Оценка размера epic-context, токенов (~chars/4).
     epic_context_tokens: usize,
+    /// Маршрут значимости (Fast/Standard/Critical).
+    route: String,
+    /// Рекомендованный таймаут прогона по маршруту, секунд.
+    recommended_timeout_secs: u64,
 }
 
 /// Генерирует handoff-пакет в репозиторий.
@@ -204,6 +218,12 @@ struct Manifest<'a> {
 /// Перезаписываются только TASK.md, ARCHITECTURE.md и MANIFEST.json —
 /// пользовательские правки CONSTRAINTS.yaml/RUBRIC.yaml сохраняются.
 ///
+/// Предгейт: гарантирует git-репозиторий и baseline-коммит-якорь отката
+/// ([`ensure_git_baseline`]); `rollback` — явный план отката в TASK.md
+/// (по умолчанию — откат на baseline с сигналами и владельцем решения);
+/// `route` задаёт рекомендованный таймаут прогона (MANIFEST.json подхватывает
+/// `harness_run`, когда `timeout_secs` не задан явно).
+///
 /// # Errors
 /// Репозиторий недоступен, спека не читается, ошибка записи.
 pub fn generate_handoff(
@@ -211,6 +231,8 @@ pub fn generate_handoff(
     task: &str,
     spec_files: &[PathBuf],
     cfg: &Config,
+    rollback: Option<&str>,
+    route: Route,
 ) -> Result<HandoffPacket> {
     if !repo.is_dir() {
         return Err(HarnessError::Harness(format!(
@@ -218,13 +240,19 @@ pub fn generate_handoff(
             repo.display()
         )));
     }
+    let baseline = ensure_git_baseline(repo);
+    let rollback_text = rollback
+        .map(str::to_owned)
+        .unwrap_or_else(|| default_rollback(baseline.hash.as_deref()));
+    let timeout = recommended_timeout(route);
     let dir = repo.join(HANDOFF_DIR);
     let adr_dir = dir.join("adr");
     std::fs::create_dir_all(&adr_dir).map_err(|e| HarnessError::io(&adr_dir, e))?;
 
     // TASK.md — всегда перезаписывается (задача новая на каждый прогон).
     let task_path = dir.join("TASK.md");
-    std::fs::write(&task_path, render_task_md(task)).map_err(|e| HarnessError::io(&task_path, e))?;
+    std::fs::write(&task_path, render_task_md(task, &rollback_text))
+        .map_err(|e| HarnessError::io(&task_path, e))?;
 
     // ARCHITECTURE.md — всегда перезаписывается (компиляция актуальных спек).
     let arch_md = compile_epic_context(spec_files)?;
@@ -274,6 +302,8 @@ pub fn generate_handoff(
             .collect(),
         epic_context_chars: epic_chars,
         epic_context_tokens: epic_tokens,
+        route: route.to_string(),
+        recommended_timeout_secs: timeout,
     };
     let manifest_path = dir.join("MANIFEST.json");
     let manifest_text = serde_json::to_string_pretty(&manifest)?;
@@ -293,16 +323,22 @@ pub fn generate_handoff(
         dir,
         files,
         epic_context_tokens: epic_tokens,
+        baseline: baseline.hash,
+        git_initialized: baseline.initialized,
+        recommended_timeout_secs: timeout,
     })
 }
 
-/// Рендерит TASK.md: задача + финализация (git-коммит) + контракт результата
-/// (headless JSON-статус).
-fn render_task_md(task: &str) -> String {
-    let mut s = String::with_capacity(task.len() + 1600);
+/// Рендерит TASK.md: задача + план отката + финализация (git-коммит) +
+/// контракт результата (headless JSON-статус).
+fn render_task_md(task: &str, rollback: &str) -> String {
+    let mut s = String::with_capacity(task.len() + rollback.len() + 2000);
     s.push_str("# Задача для кодового харнесса\n\n");
     s.push_str(task.trim());
-    s.push_str("\n\n## Финализация (обязательно)\n\n");
+    s.push_str("\n\n## План отката\n\n");
+    s.push_str(rollback.trim());
+    s.push('\n');
+    s.push_str("\n## Финализация (обязательно)\n\n");
     s.push_str("Результат забирается из git, поэтому перед финальным ответом зафиксируй работу коммитом:\n\n");
     s.push_str("```bash\ngit add -A -- . ':!.arch-handoff'\ngit commit -m \"<кратко: что реализовано>\"\ngit status --short   # пусто, кроме .arch-handoff/\n```\n\n");
     s.push_str("- Коммитится код и тесты; служебный каталог `.arch-handoff/` в коммит не входит.\n");
@@ -318,6 +354,103 @@ fn render_task_md(task: &str) -> String {
     );
     s.push_str("Архитектурный контекст — `ARCHITECTURE.md`, ограничения — `CONSTRAINTS.yaml`, рубрика приёмки — `RUBRIC.yaml` (при наличии).\n");
     s
+}
+
+/// План отката по умолчанию (рубрика `handoff_quality::rollback_plan` требует
+/// шаги, сигналы-триггеры и владельца решения): точка отката — baseline-коммит,
+/// созданный предгейтом [`ensure_git_baseline`].
+fn default_rollback(baseline: Option<&str>) -> String {
+    let anchor = match baseline {
+        Some(h) => format!(
+            "Откат: `git reset --hard {h}` (baseline — последний коммит до работы исполнителя; вся его работа приходит одним коммитом поверх).\n"
+        ),
+        None => "Откат: удалить коммит(ы) исполнителя (`git log` → `git reset --hard <до-исполнителя>`); если репозиторий не под git — удалить созданные за прогон файлы.\n".into(),
+    };
+    format!(
+        "{anchor}\
+         Сигналы отката: провал fitness-гейта (`arch control check`), непустой \
+         `conflicts_with_prior_decisions`, статус `blocked`.\n\
+         Владелец решения об откате — solution-архитектор; исполнитель откат не \
+         выполняет и не маскирует проблему обходным редизайном.\n\
+         Обратимость: полная — единая точка изменений, коммит исполнителя."
+    )
+}
+
+/// Рекомендованный таймаут прогона по маршруту значимости: Critical-эпик
+/// (walking skeleton из нескольких модулей) в 30-минутный дефолт адаптера
+/// не влезает — прогон обрывался посередине.
+fn recommended_timeout(route: Route) -> u64 {
+    match route {
+        Route::Fast => 1800,
+        Route::Standard => 3600,
+        Route::Critical => 7200,
+    }
+}
+
+/// Итог предгейта git: якорь отката и факт инициализации репозитория.
+#[derive(Debug, Clone, Default)]
+struct GitBaseline {
+    /// Короткий хеш baseline-коммита (HEAD на момент генерации пакета).
+    hash: Option<String>,
+    /// Репозиторий был создан этим вызовом (`git init`).
+    initialized: bool,
+}
+
+/// Предгейт handoff: гарантирует git-репозиторий и baseline-коммит-якорь.
+///
+/// Без git контракт «финальный коммит» невыполним, авто-коммит прогона не
+/// работает, а откату не за что зацепиться — поэтому репозиторий
+/// инициализируется (`git init`), а при отсутствии коммитов создаётся пустой
+/// baseline (`--allow-empty`, идентичность spine-harness). Содержимое каталога
+/// в baseline НЕ добавляется осознанно: это дело исполнителя/пользователя.
+/// Git недоступен — пакет всё равно собирается, просто без якоря.
+fn ensure_git_baseline(repo: &Path) -> GitBaseline {
+    let mut initialized = false;
+    if git_out(repo, &["rev-parse", "--git-dir"]).is_none() {
+        if git_out(repo, &["init", "-q"]).is_none() {
+            return GitBaseline::default();
+        }
+        initialized = true;
+    }
+    if let Some(head) = git_out(repo, &["rev-parse", "--short", "HEAD"]) {
+        return GitBaseline {
+            hash: Some(head.trim().to_string()),
+            initialized,
+        };
+    }
+    // Репозиторий без единого коммита — создаём пустой якорь отката.
+    let commit = git_out(
+        repo,
+        &[
+            "-c",
+            "user.name=spine-harness",
+            "-c",
+            "user.email=spine-harness@localhost",
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "baseline: якорь отката handoff",
+        ],
+    );
+    let hash = commit.and_then(|_| {
+        git_out(repo, &["rev-parse", "--short", "HEAD"]).map(|h| h.trim().to_string())
+    });
+    GitBaseline { hash, initialized }
+}
+
+/// Читает рекомендованный таймаут прогона из MANIFEST.json пакета
+/// (None — пакета нет или манифест старый, без поля).
+pub fn recommended_timeout_secs(repo: &Path) -> Option<u64> {
+    #[derive(Deserialize)]
+    struct ManifestMeta {
+        #[serde(default)]
+        recommended_timeout_secs: Option<u64>,
+    }
+    let text = std::fs::read_to_string(repo.join(HANDOFF_DIR).join("MANIFEST.json")).ok()?;
+    serde_json::from_str::<ManifestMeta>(&text)
+        .ok()?
+        .recommended_timeout_secs
 }
 
 /// Компилирует epic-context из спецификаций: заголовок с датой и источниками,
@@ -868,13 +1001,15 @@ impl Tool for HandoffCreateTool {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
             name: "handoff_create".into(),
-            description: "Сгенерировать handoff-пакет (.arch-handoff/: TASK.md, ARCHITECTURE.md, CONSTRAINTS.yaml, MANIFEST.json, adr/) для передачи задачи кодовому харнессу".into(),
+            description: "Сгенерировать handoff-пакет (.arch-handoff/: TASK.md, ARCHITECTURE.md, CONSTRAINTS.yaml, MANIFEST.json, adr/) для передачи задачи кодовому харнессу. Предгейт: гарантирует git-репозиторий и baseline-коммит (якорь отката); TASK.md включает план отката и требование финального git-коммита; MANIFEST несёт рекомендованный таймаут прогона по маршруту значимости (подхватывает harness_run)".into(),
             parameters: json!({
                 "type": "object",
                 "properties": {
                     "repo": {"type": "string", "description": "Корень репозитория (относительно cwd или абсолютный)"},
                     "task": {"type": "string", "description": "Формулировка задачи для кодового харнесса"},
-                    "spec": {"type": "array", "items": {"type": "string"}, "description": "Пути к спецификациям/ADR (md), опционально"}
+                    "spec": {"type": "array", "items": {"type": "string"}, "description": "Пути к спецификациям/ADR (md), опционально"},
+                    "rollback": {"type": "string", "description": "Явный план отката (шаги, сигналы, владелец решения); по умолчанию — откат на baseline-коммит"},
+                    "route": {"type": "string", "enum": ["fast", "standard", "critical"], "description": "Маршрут значимости из significance_score: задаёт рекомендованный таймаут прогона (fast=1800с, standard=3600с, critical=7200с); по умолчанию standard"}
                 },
                 "required": ["repo", "task"]
             }),
@@ -903,7 +1038,15 @@ impl Tool for HandoffCreateTool {
             })
             .unwrap_or_default();
         let repo = ctx.resolve(repo);
-        match generate_handoff(&repo, task, &spec, &self.cfg) {
+        let rollback = args.get("rollback").and_then(Value::as_str);
+        let route = match args.get("route").and_then(Value::as_str) {
+            Some(r) => match r.parse::<Route>() {
+                Ok(route) => route,
+                Err(e) => return Ok(ToolOutput::err(format!("handoff_create: {e}"))),
+            },
+            None => Route::Standard,
+        };
+        match generate_handoff(&repo, task, &spec, &self.cfg, rollback, route) {
             Ok(packet) => {
                 let files = packet
                     .files
@@ -915,6 +1058,30 @@ impl Tool for HandoffCreateTool {
                     "Handoff-пакет создан: {}\nEpic-context: ~{} токенов.\nФайлы:\n{files}",
                     packet.dir.display(),
                     packet.epic_context_tokens
+                );
+                // Предгейт git: якорь отката и факт инициализации.
+                match &packet.baseline {
+                    Some(h) if packet.git_initialized => {
+                        let _ = write!(
+                            out,
+                            "\nGit: репозиторий инициализирован, baseline-коммит {h} (якорь отката в TASK.md)."
+                        );
+                    }
+                    Some(h) => {
+                        let _ = write!(out, "\nGit: baseline-коммит {h} (якорь отката в TASK.md).");
+                    }
+                    None => {
+                        out.push_str(
+                            "\nВНИМАНИЕ: git недоступен — якоря отката нет; контракт \
+                             финального коммита и авто-коммит прогона работать не будут.",
+                        );
+                    }
+                }
+                let _ = write!(
+                    out,
+                    "\nМаршрут: {route} → рекомендованный timeout_secs={} \
+                     (harness_run подхватит из MANIFEST.json, если не задан явно).",
+                    packet.recommended_timeout_secs
                 );
                 // Окно рубрики handoff_quality — 800–1500 токенов.
                 if packet.epic_context_tokens < EPIC_CONTEXT_MIN_CHARS / 4 {
@@ -1069,6 +1236,16 @@ impl Tool for HarnessRunTool {
                 );
             }
             hcfg.timeout_secs = t.clamp(MIN_HARNESS_TIMEOUT_SECS, 7200);
+        } else if let Some(t) = recommended_timeout_secs(&repo) {
+            // Таймаут не задан явно — берём рекомендацию пакета (маршрут
+            // значимости из handoff_create): Critical-эпик в дефолтные
+            // 30 минут адаптера не влезает.
+            hcfg.timeout_secs = t.clamp(MIN_HARNESS_TIMEOUT_SECS, 7200);
+            let _ = writeln!(
+                note,
+                "timeout_secs={} — рекомендация пакета (MANIFEST.json).",
+                hcfg.timeout_secs
+            );
         }
         match run_harness(name, &hcfg, &repo, &task).await {
             Ok(run) => {
@@ -1220,6 +1397,8 @@ mod tests {
             "сделать фичу X",
             &[spine.clone(), adr.clone(), notes.clone()],
             &cfg,
+            None,
+            Route::Standard,
         )
         .expect("handoff");
         let dir = repo.join(".arch-handoff");
@@ -1231,8 +1410,26 @@ mod tests {
         // оркестратор работу не увидит — регрессия «агенты без коммита»).
         assert!(task_md.contains("## Финализация (обязательно)"));
         assert!(task_md.contains("git add -A -- . ':!.arch-handoff'"));
+        // План отката с якорем baseline (рубрика handoff_quality::rollback_plan).
+        assert!(task_md.contains("## План отката"));
+        let baseline = packet.baseline.as_deref().expect("baseline-якорь");
+        assert!(
+            task_md.contains(&format!("git reset --hard {baseline}")),
+            "план отката с якорем:\n{task_md}"
+        );
+        assert!(task_md.contains("Владелец решения об откате"));
+        assert!(packet.git_initialized, "не-git каталог — предгейт делает init");
         assert!(task_md.contains("## Контракт результата"));
         assert!(task_md.contains("\"complete|partial|blocked\""));
+
+        // MANIFEST несёт маршрут и рекомендованный таймаут (подхват harness_run).
+        let manifest: Value = serde_json::from_str(
+            &std::fs::read_to_string(dir.join("MANIFEST.json")).expect("MANIFEST.json"),
+        )
+        .expect("manifest json");
+        assert_eq!(manifest["route"], "Standard");
+        assert_eq!(manifest["recommended_timeout_secs"], 3600);
+        assert_eq!(recommended_timeout_secs(&repo), Some(3600));
 
         let arch = std::fs::read_to_string(dir.join("ARCHITECTURE.md")).expect("ARCHITECTURE.md");
         // ADR-блок включён целиком (все три поля на месте).
@@ -1290,8 +1487,15 @@ mod tests {
         std::fs::write(&constraints, "# пользовательские правила\n").expect("custom constraints");
         std::fs::write(dir.join("RUBRIC.yaml"), "# пользовательская рубрика\n")
             .expect("custom rubric");
-        let packet2 = generate_handoff(&repo, "другая задача", &[spine, adr, notes], &cfg)
-            .expect("second handoff");
+        let packet2 = generate_handoff(
+            &repo,
+            "другая задача",
+            &[spine, adr, notes],
+            &cfg,
+            None,
+            Route::Standard,
+        )
+        .expect("second handoff");
         assert_eq!(
             std::fs::read_to_string(&constraints).expect("constraints after"),
             "# пользовательские правила\n"
@@ -1309,6 +1513,63 @@ mod tests {
     }
 
     #[test]
+    fn handoff_git_pregate_is_idempotent() {
+        // Предгейт: не-git каталог получает git init + пустой baseline-якорь;
+        // повторная генерация якорь не двигает (HEAD — тот же коммит).
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let repo = tmp.path().join("repo");
+        std::fs::create_dir_all(&repo).expect("mkdir repo");
+        let cfg = cfg_in(tmp.path());
+
+        let p1 = generate_handoff(&repo, "задача", &[], &cfg, None, Route::Fast)
+            .expect("handoff 1");
+        assert!(p1.git_initialized);
+        let b1 = p1.baseline.clone().expect("baseline 1");
+        assert_eq!(recommended_timeout_secs(&repo), Some(1800), "fast → 1800");
+
+        let p2 = generate_handoff(&repo, "задача 2", &[], &cfg, None, Route::Fast)
+            .expect("handoff 2");
+        assert!(!p2.git_initialized, "повторный init не нужен");
+        assert_eq!(p2.baseline.as_deref(), Some(b1.as_str()), "якорь стабилен");
+        // Baseline — пустой коммит, содержимое каталога не подмётено.
+        let count = git_out(&repo, &["log", "--oneline"]).expect("git log");
+        assert_eq!(count.lines().count(), 1, "{count}");
+    }
+
+    #[test]
+    fn handoff_explicit_rollback_and_critical_route() {
+        // Явный план отката попадает в TASK.md дословно; маршрут Critical
+        // даёт рекомендованный таймаут 7200 (регрессия: Critical-прогон
+        // обрывался на дефолтных 30 минутах адаптера).
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let repo = tmp.path().join("repo");
+        std::fs::create_dir_all(&repo).expect("mkdir repo");
+        let cfg = cfg_in(tmp.path());
+
+        let packet = generate_handoff(
+            &repo,
+            "миграция ядра",
+            &[],
+            &cfg,
+            Some("Шаг 1: вернуть флаг фичи. Шаг 2: restore из snapshot БД."),
+            Route::Critical,
+        )
+        .expect("handoff");
+        assert_eq!(packet.recommended_timeout_secs, 7200);
+        assert_eq!(recommended_timeout_secs(&repo), Some(7200));
+        let task_md = std::fs::read_to_string(packet.dir.join("TASK.md")).expect("TASK.md");
+        assert!(task_md.contains("## План отката"));
+        assert!(
+            task_md.contains("Шаг 1: вернуть флаг фичи. Шаг 2: restore из snapshot БД."),
+            "явный откат дословно:\n{task_md}"
+        );
+        // Автотекст не подмешивается к явному плану.
+        assert!(!task_md.contains("Сигналы отката"));
+        // Несуществующий пакет — None (адаптер берёт свой дефолт).
+        assert_eq!(recommended_timeout_secs(tmp.path()), None);
+    }
+
+    #[test]
     fn long_spec_is_truncated_with_notice() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let repo = tmp.path().join("repo");
@@ -1323,7 +1584,8 @@ mod tests {
         }
         write_file(&big, &text);
 
-        let packet = generate_handoff(&repo, "задача", &[big], &cfg).expect("handoff");
+        let packet =
+            generate_handoff(&repo, "задача", &[big], &cfg, None, Route::Standard).expect("handoff");
         let arch = std::fs::read_to_string(packet.dir.join("ARCHITECTURE.md")).expect("arch");
         assert!(
             arch.chars().count() <= EPIC_CONTEXT_MAX_CHARS,
@@ -1378,7 +1640,8 @@ mod tests {
             &spec,
             "# Спека\n\n## Детали\n\nпервый\n\nвторой\n\nтретий\n\nчетвёртый\n\nпятый\n",
         );
-        let packet = generate_handoff(&repo, "задача", &[spec], &cfg).expect("handoff");
+        let packet =
+            generate_handoff(&repo, "задача", &[spec], &cfg, None, Route::Standard).expect("handoff");
         let arch = std::fs::read_to_string(packet.dir.join("ARCHITECTURE.md")).expect("arch");
         assert!(arch.contains("пятый"), "глубокий рендер дотянул хвост:\n{arch}");
     }
