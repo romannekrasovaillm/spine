@@ -170,6 +170,20 @@ pub fn list(dir: &Path) -> Result<Vec<RubricSummary>> {
     Ok(out)
 }
 
+/// Вызов LLM с одним повтором при транспортной/декод-ошибке: судья и
+/// генератор рубрик идемпотентны, а отказ сети не должен валить гейт
+/// (наблюдение симуляции: «судья дал ошибку декодирования ответа, повтор
+/// прошёл»). Повтор ручной был — теперь он встроен.
+async fn complete_idempotent(llm: &dyn LlmProvider, req: ChatRequest) -> Result<ChatMessage> {
+    match llm.complete(req.clone()).await {
+        Ok(msg) => Ok(msg),
+        Err(first_err) => {
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            llm.complete(req).await.map_err(|_| first_err)
+        }
+    }
+}
+
 /// Оценивает целевой текст по рубрике через LLM-судью.
 ///
 /// Судья — независимый архитектурный рецензент («ты не проектировал эту
@@ -192,14 +206,14 @@ pub async fn evaluate(rubric: &Rubric, target: &str, llm: &dyn LlmProvider) -> R
         ChatMessage::system(judge_system_prompt(rubric)),
         ChatMessage::user(judge_user_prompt(rubric, target)),
     ];
-    let first = llm.complete(ChatRequest::chat(messages.clone())).await?;
+    let first = complete_idempotent(llm, ChatRequest::chat(messages.clone())).await?;
     let parsed = match parse_judge_response(&first.content) {
         Ok(parsed) => parsed,
         Err(_) => {
             // Один retry с явной инструкцией «только JSON».
             messages.push(ChatMessage::assistant(first.content.clone(), Vec::new()));
             messages.push(ChatMessage::user(RETRY_JSON_HINT));
-            let second = llm.complete(ChatRequest::chat(messages)).await?;
+            let second = complete_idempotent(llm, ChatRequest::chat(messages)).await?;
             parse_judge_response(&second.content).map_err(|_| {
                 HarnessError::Rubric(format!(
                     "судья не вернул валидный JSON даже после повторного запроса: {}",
@@ -258,14 +272,14 @@ pub async fn generate_dynamic(
     let system = "Ты — методолог архитектурного контроля: проектируешь измеримые рубрики \
                   оценки архитектурных решений. Отвечаешь строго YAML.";
     let mut messages = vec![ChatMessage::system(system), ChatMessage::user(user)];
-    let first = llm.complete(ChatRequest::chat(messages.clone())).await?;
+    let first = complete_idempotent(llm, ChatRequest::chat(messages.clone())).await?;
     let mut rubric = match parse_rubric_yaml(&first.content) {
         Ok(rubric) => rubric,
         Err(_) => {
             // Один retry с явной инструкцией «только YAML».
             messages.push(ChatMessage::assistant(first.content.clone(), Vec::new()));
             messages.push(ChatMessage::user(RETRY_YAML_HINT));
-            let second = llm.complete(ChatRequest::chat(messages)).await?;
+            let second = complete_idempotent(llm, ChatRequest::chat(messages)).await?;
             parse_rubric_yaml(&second.content).map_err(|_| {
                 HarnessError::Rubric(format!(
                     "генератор не вернул валидный YAML рубрики даже после повторного запроса: {}",

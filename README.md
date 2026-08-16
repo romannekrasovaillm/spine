@@ -217,11 +217,15 @@ BMAD, Spec Kit, OpenSpec и др.):
   `harness_run` прямо из диалога (адаптер знает режим промпта, флаги
   разрешений; JSON-контракт результата разбирается **механически** —
   валидация схемы `Valid`/`Invalid`/`Missing`, эскалация blocked/conflicts,
-  в CLI `status=blocked` даёт код выхода 2). Предгейт
+  в CLI `status=blocked` даёт код выхода 2, непустые conflicts — 3).
+  Окружение хоста в процесс харнесса протекает по умолчанию; whitelist
+  `env_allow` в адаптере стартует его с чистым окружением. Предгейт
   пакета: git-репозиторий гарантирован (`git init` + baseline-коммит — якорь
   **плана отката** в TASK.md), маршрут значимости Fast/Standard/Critical
   задаёт рекомендованный таймаут прогона (1800/3600/7200 с, MANIFEST.json
-  подхватывается `harness_run`). Контракт
+  подхватывается `harness_run`); при Critical и epic-context ниже окна
+  рубрики сборка пакета отклоняется, а грязное дерево (отслеживаемые файлы)
+  — предупреждением: откат на baseline его потеряет. Контракт
   TASK.md требует от исполнителя **финального git-коммита** (секция
   «Финализация» — результат забирается из git log); если исполнитель его
   не сделал, харнесс сам фиксирует оставшиеся правки **авто-коммитом**
@@ -434,11 +438,15 @@ criteria, and a headless JSON contract, plus in-chat execution via the
 `harness_run` tool (the adapter knows the prompt mode and permission flags;
 the JSON result contract is **parsed mechanically** — schema validation
 `Valid`/`Invalid`/`Missing`, blocked/conflicts escalation, and the CLI
-exits with code 2 on `status=blocked`). Package pre-gate:
+exits with code 2 on `status=blocked` and 3 on non-empty conflicts). The
+host environment leaks into the harness process by default; the adapter
+`env_allow` whitelist starts it with a clean environment. Package pre-gate:
 a git repository is guaranteed (`git init` + a baseline commit — the anchor
 of the **rollback plan** in TASK.md), and the significance route
 Fast/Standard/Critical sets the recommended run timeout (1800/3600/7200 s,
-carried in MANIFEST.json and picked up by `harness_run`). The TASK.md
+carried in MANIFEST.json and picked up by `harness_run`); on Critical with
+epic context below the rubric window the package build is refused, and a
+dirty tracked tree triggers a warning (rollback to baseline would lose it). The TASK.md
 contract requires a **final git commit** from the executor (the
 "Finalization" section — results are collected from the git log); if the
 executor finishes without committing, the harness commits the leftover

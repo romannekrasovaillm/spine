@@ -252,6 +252,14 @@ pub struct CodingHarnessConfig {
     pub prompt_mode: PromptMode,
     /// Дополнительные переменные окружения.
     pub env: BTreeMap<String, String>,
+    /// Whitelist наследуемых переменных окружения: при непустом списке процесс
+    /// харнесса стартует с ЧИСТЫМ окружением (`env_clear`) и получает только
+    /// перечисленные переменные + `env` адаптера. Пустой список — наследовать
+    /// всё окружение процесса (поведение по умолчанию). Закрывает разрыв
+    /// «окружение протекает между харнессами» (P1): чужие `*_MODEL`,
+    /// прокси-переменные и ключи хоста не утекают в дочерний процесс.
+    #[serde(default)]
+    pub env_allow: Vec<String>,
     /// Таймаут прогона, секунды (абсолютный потолок).
     pub timeout_secs: u64,
     /// Таймаут тишины, секунды: прогон прерывается, если харнесс не пишет
@@ -276,6 +284,7 @@ impl Default for CodingHarnessConfig {
             args: Vec::new(),
             prompt_mode: PromptMode::Positional,
             env: BTreeMap::new(),
+            env_allow: Vec::new(),
             timeout_secs: 1800,
             idle_timeout_secs: 600,
             auto_commit: true,

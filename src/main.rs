@@ -544,6 +544,11 @@ async fn main() -> Result<()> {
                 "маршрут {route} → рекомендованный timeout_secs={}",
                 packet.recommended_timeout_secs
             );
+            if packet.git_dirty_tracked {
+                println!(
+                    "⚠ незакоммиченные изменения отслеживаемых файлов: откат на baseline их потеряет"
+                );
+            }
         }
         Some(Cmd::HarnessRun {
             harness,
@@ -606,11 +611,16 @@ async fn main() -> Result<()> {
             if !run.stderr.is_empty() {
                 eprintln!("── stderr ──\n{}", run.stderr);
             }
-            // Скриптовый гейт: status=blocked — отдельный код возврата 2
-            // (успешный прогон без результата в пайпе не должен быть нулевым).
+            // Скриптовый гейт: status=blocked — код 2; непустые
+            // conflicts_with_prior_decisions — код 3 (конфликт со spine
+            // останавливает интеграцию по контракту). Полная схема кодов —
+            // docs/harness_integrations.md.
             if let arch_harness::harness::ContractParse::Valid(c) = &run.contract {
                 if c.status == arch_harness::harness::ContractStatus::Blocked {
                     std::process::exit(2);
+                }
+                if !c.conflicts.is_empty() {
+                    std::process::exit(3);
                 }
             }
         }

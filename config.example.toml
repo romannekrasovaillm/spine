@@ -232,6 +232,11 @@ prompt_mode = "stdin"
 timeout_secs = 1800
 idle_timeout_secs = 600
 auto_commit = true
+# Whitelist наследуемого окружения (по умолчанию наследуется всё; непустой
+# список — чистое окружение + перечисленное + env адаптера):
+# env_allow = ["PATH", "HOME", "LANG", "TERM", "TMPDIR",
+#              "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY",
+#              "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "ANTHROPIC_MODEL"]
 
 [harnesses.qwen-code]
 binary = "qwen"

@@ -92,7 +92,11 @@ arch control sensors examples/specs
 Машинно-проверяемые утверждения о репозитории из `CONSTRAINTS.yaml`
 (по умолчанию `<repo>/.arch-handoff/CONSTRAINTS.yaml`, `--constraints` —
 другой файл). Итог PASS, если нет находок с severity `error`; **при FAIL —
-exit code 1** (годится для CI). Обход пропускает `.git` и `target`;
+exit code 1** (годится для CI). Обход пропускает служебные и производные
+каталоги — `.git`, `target`, `node_modules`, `dist`, `__pycache__`, `.next`,
+`.pytest_cache` и `.arch-handoff`: правила целятся в артефакты реализации,
+а не в документы решения (иначе `must_not_contain` срабатывает на цитаты
+контракта внутри пакета handoff);
 не-UTF8 файлы читаются с потерями.
 
 Схема правила (поля парсера — `src/control.rs::FitnessRule`):

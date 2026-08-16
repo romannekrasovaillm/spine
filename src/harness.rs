@@ -185,6 +185,10 @@ pub struct HandoffPacket {
     /// Git-репозиторий был инициализирован предгейтом (`git init`).
     #[serde(default)]
     pub git_initialized: bool,
+    /// На момент генерации есть незакоммиченные изменения отслеживаемых
+    /// файлов (откат на baseline их потеряет).
+    #[serde(default)]
+    pub git_dirty_tracked: bool,
     /// Рекомендованный таймаут прогона по маршруту значимости, секунд.
     #[serde(default)]
     pub recommended_timeout_secs: u64,
@@ -261,6 +265,20 @@ pub fn generate_handoff(
     let epic_chars = arch_md.chars().count();
     let epic_tokens = epic_chars / 4;
 
+    // Маршрут Critical требует полного epic-context: ниже окна рубрики
+    // (800 токенов) пакет не собирается — «реализация без доступа к
+    // источникам» на пустом контексте означает архитектурные изобретения
+    // исполнителя (разрыв P2: Fast-окно молча прошло бы и для Critical).
+    if route == Route::Critical && epic_tokens < EPIC_CONTEXT_MIN_CHARS / 4 {
+        return Err(HarnessError::Harness(format!(
+            "epic-context ~{epic_tokens} токенов — ниже окна рубрики handoff_quality \
+             ({}); для маршрута Critical пакет не собирается: передайте спеки через \
+             `spec`/`--spec` (spine с AD-инвариантами, затронутые ADR, NFR) или \
+             понизьте маршрут осознанно",
+            EPIC_CONTEXT_MIN_CHARS / 4
+        )));
+    }
+
     // CONSTRAINTS.yaml — только при отсутствии (не затирать пользовательские правила).
     // Дефолт — под стек репозитория (Cargo.toml/pyproject.toml/go.mod/package.json).
     let constraints_path = dir.join("CONSTRAINTS.yaml");
@@ -325,6 +343,7 @@ pub fn generate_handoff(
         epic_context_tokens: epic_tokens,
         baseline: baseline.hash,
         git_initialized: baseline.initialized,
+        git_dirty_tracked: baseline.dirty_tracked,
         recommended_timeout_secs: timeout,
     })
 }
@@ -394,6 +413,9 @@ struct GitBaseline {
     hash: Option<String>,
     /// Репозиторий был создан этим вызовом (`git init`).
     initialized: bool,
+    /// Есть незакоммиченные изменения ОТСЛЕЖИВАЕМЫХ файлов: откат на
+    /// baseline (`reset --hard`) их потеряет (untracked он не трогает).
+    dirty_tracked: bool,
 }
 
 /// Предгейт handoff: гарантирует git-репозиторий и baseline-коммит-якорь.
@@ -413,9 +435,12 @@ fn ensure_git_baseline(repo: &Path) -> GitBaseline {
         initialized = true;
     }
     if let Some(head) = git_out(repo, &["rev-parse", "--short", "HEAD"]) {
+        let dirty = git_out(repo, &["status", "--porcelain", "--untracked-files=no"])
+            .is_some_and(|s| !s.trim().is_empty());
         return GitBaseline {
             hash: Some(head.trim().to_string()),
             initialized,
+            dirty_tracked: dirty,
         };
     }
     // Репозиторий без единого коммита — создаём пустой якорь отката.
@@ -436,7 +461,11 @@ fn ensure_git_baseline(repo: &Path) -> GitBaseline {
     let hash = commit.and_then(|_| {
         git_out(repo, &["rev-parse", "--short", "HEAD"]).map(|h| h.trim().to_string())
     });
-    GitBaseline { hash, initialized }
+    GitBaseline {
+        hash,
+        initialized,
+        dirty_tracked: false,
+    }
 }
 
 /// Читает рекомендованный таймаут прогона из MANIFEST.json пакета
@@ -705,9 +734,18 @@ pub async fn run_harness(
 
     let (argv, stdin_data) = build_argv(cfg, task);
     let mut cmd = Command::new(&cfg.binary);
-    cmd.args(&argv)
-        .current_dir(repo)
-        .envs(&cfg.env)
+    cmd.args(&argv).current_dir(repo);
+    // Whitelist окружения: чужие переменные хоста (модели, прокси, ключи)
+    // не протекают в дочерний процесс; `env` адаптера — поверх всегда.
+    if !cfg.env_allow.is_empty() {
+        cmd.env_clear();
+        for name in &cfg.env_allow {
+            if let Ok(v) = std::env::var(name) {
+                cmd.env(name, v);
+            }
+        }
+    }
+    cmd.envs(&cfg.env)
         // Своя процессная группа: убивать будем группу целиком.
         .process_group(0)
         .kill_on_drop(true)
@@ -1092,6 +1130,13 @@ impl Tool for HandoffCreateTool {
                      (harness_run подхватит из MANIFEST.json, если не задан явно).",
                     packet.recommended_timeout_secs
                 );
+                if packet.git_dirty_tracked {
+                    out.push_str(
+                        "\nВНИМАНИЕ: есть незакоммиченные изменения отслеживаемых файлов — \
+                         откат на baseline (`git reset --hard`) их потеряет: закоммитьте \
+                         заранее или осознанно включите в задачу.",
+                    );
+                }
                 // Окно рубрики handoff_quality — 800–1500 токенов.
                 if packet.epic_context_tokens < EPIC_CONTEXT_MIN_CHARS / 4 {
                     out.push_str(&format!(
@@ -1733,16 +1778,26 @@ mod tests {
     fn handoff_explicit_rollback_and_critical_route() {
         // Явный план отката попадает в TASK.md дословно; маршрут Critical
         // даёт рекомендованный таймаут 7200 (регрессия: Critical-прогон
-        // обрывался на дефолтных 30 минутах адаптера).
+        // обрывался на дефолтных 30 минутах адаптера). Critical требует
+        // epic-context в окне рубрики — даём объёмную спеку.
         let tmp = tempfile::tempdir().expect("tempdir");
         let repo = tmp.path().join("repo");
         std::fs::create_dir_all(&repo).expect("mkdir repo");
         let cfg = cfg_in(tmp.path());
+        let mut big_text = String::from("# Спека миграции\n\n");
+        for i in 0..60 {
+            big_text.push_str(&format!(
+                "## Блок {i}\n\nИнвариант: AD-{i} — дословное правило интеграции, \
+                 проверяемое тестом; детали, стыки и запреты для полноты контекста.\n\n"
+            ));
+        }
+        let spec = tmp.path().join("spec-big.md");
+        write_file(&spec, &big_text);
 
         let packet = generate_handoff(
             &repo,
             "миграция ядра",
-            &[],
+            &[spec],
             &cfg,
             Some("Шаг 1: вернуть флаг фичи. Шаг 2: restore из snapshot БД."),
             Route::Critical,
@@ -1760,6 +1815,47 @@ mod tests {
         assert!(!task_md.contains("Сигналы отката"));
         // Несуществующий пакет — None (адаптер берёт свой дефолт).
         assert_eq!(recommended_timeout_secs(tmp.path()), None);
+    }
+
+    #[test]
+    fn critical_route_refuses_thin_epic_context() {
+        // Разрыв P2: для Critical контроль нижней границы окна рубрики —
+        // отказ на сборке пакета, а не молчаливое предупреждение.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let repo = tmp.path().join("repo");
+        std::fs::create_dir_all(&repo).expect("mkdir repo");
+        let cfg = cfg_in(tmp.path());
+        let err = generate_handoff(&repo, "миграция ядра", &[], &cfg, None, Route::Critical)
+            .expect_err("Critical без спек обязан отказывать");
+        let msg = err.to_string();
+        assert!(msg.contains("ниже окна рубрики"), "{msg}");
+        assert!(msg.contains("spec"), "{msg}");
+        // Fast/Standard на том же объёме — собираются (Fast молча, Standard с warning).
+        generate_handoff(&repo, "фикс", &[], &cfg, None, Route::Fast).expect("Fast ок");
+        generate_handoff(&repo, "фикс", &[], &cfg, None, Route::Standard).expect("Standard ок");
+    }
+
+    #[test]
+    fn handoff_warns_on_dirty_tracked_tree() {
+        // Хвост предгейта: грязные ОТСЛЕЖИВАЕМЫЕ файлы — откат на baseline
+        // их потеряет; предупреждаем при генерации пакета.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let repo = tmp.path().join("repo");
+        git_repo_with_baseline(&repo);
+        let cfg = cfg_in(tmp.path());
+        let p = generate_handoff(&repo, "задача", &[], &cfg, None, Route::Fast).expect("handoff");
+        assert!(!p.git_dirty_tracked, "чистое дерево — без предупреждения");
+        // Модифицируем отслеживаемый файл без коммита.
+        std::fs::write(repo.join("README.md"), "# изменено\n").expect("edit");
+        let p = generate_handoff(&repo, "задача", &[], &cfg, None, Route::Fast).expect("handoff");
+        assert!(p.git_dirty_tracked, "грязное дерево — флаг выставлен");
+        // Untracked-файлы грязью не считаются (reset --hard их не трогает).
+        let p3_repo = tmp.path().join("repo3");
+        git_repo_with_baseline(&p3_repo);
+        std::fs::write(p3_repo.join("new-file.py"), "x = 1\n").expect("untracked");
+        let p3 = generate_handoff(&p3_repo, "задача", &[], &cfg, None, Route::Fast)
+            .expect("handoff 3");
+        assert!(!p3.git_dirty_tracked, "untracked — не грязь");
     }
 
     #[test]
@@ -2141,8 +2237,45 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn auto_commit_clean_repo_is_noop() {
-        // Исполнитель всё закоммитил сам (или ничего не писал) — харнесс
+    async fn env_allow_whitelist_isolates_harness_env() {
+        // Разрыв P1 «окружение протекает между харнессами»: при непустом
+        // env_allow процесс стартует с чистым окружением + whitelist + env
+        // адаптера; пустой список — наследование окружения (как раньше).
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let repo = tmp.path().join("repo");
+        std::fs::create_dir_all(&repo).expect("mkdir");
+        let probe = |env_allow: Vec<&str>| CodingHarnessConfig {
+            binary: "/bin/sh".into(),
+            args: vec![
+                "-c".into(),
+                "echo \"H=${HOME:-EMPTY} P=${PATH:+set} E=${EXTRA:-EMPTY}\"".into(),
+            ],
+            prompt_mode: PromptMode::Stdin,
+            timeout_secs: 30,
+            idle_timeout_secs: 0,
+            auto_commit: false,
+            env_allow: env_allow.iter().map(|s| (*s).into()).collect(),
+            env: [("EXTRA".to_string(), "yes".to_string())].into_iter().collect(),
+        };
+        // Наследование по умолчанию: HOME и PATH видны, EXTRA из env — тоже.
+        let run = run_harness("probe", &probe(vec![]), &repo, "задача")
+            .await
+            .expect("run");
+        assert!(run.stdout.contains("H=/"), "наследование: {}", run.stdout);
+        assert!(run.stdout.contains("P=set E=yes"), "{}", run.stdout);
+        // Whitelist без HOME: HOME у процесса пуст, PATH и EXTRA на месте.
+        let run = run_harness("probe", &probe(vec!["PATH"]), &repo, "задача")
+            .await
+            .expect("run");
+        assert!(
+            run.stdout.contains("H=EMPTY P=set E=yes"),
+            "изоляция: {}",
+            run.stdout
+        );
+    }
+
+    #[tokio::test]
+    async fn auto_commit_clean_repo_is_noop() {        // Исполнитель всё закоммитил сам (или ничего не писал) — харнесс
         // не плодит пустых коммитов.
         let tmp = tempfile::tempdir().expect("tempdir");
         let repo = tmp.path().join("repo");

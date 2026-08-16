@@ -650,12 +650,28 @@ fn prep_content_rule(
 /// Собирает файлы репозитория по простому glob-шаблону (`**` — любая глубина,
 /// `*` — внутри сегмента, `?` — один символ). Возвращает (относительный путь,
 /// абсолютный путь), отсортированные по относительному пути.
+///
+/// Служебные и производные каталоги исключены всегда: `.git`, `target`,
+/// `node_modules`, `dist`, `__pycache__`, `.next`, `.pytest_cache` и
+/// `.arch-handoff` — fitness-правила целятся в АРТЕФАКТЫ РЕАЛИЗАЦИИ, а не в
+/// документы решения: пакет handoff содержит текст spine/TASK.md, и правило
+/// must_not_contain срабатывало на собственные цитаты контракта (кейс 1).
 fn collect_files(repo: &Path, glob: &str) -> Result<Vec<(String, PathBuf)>> {
+    const SKIP: [&str; 8] = [
+        ".git",
+        "target",
+        "node_modules",
+        "dist",
+        "__pycache__",
+        ".next",
+        ".pytest_cache",
+        ".arch-handoff",
+    ];
     let mut out = Vec::new();
     let walker = WalkDir::new(repo).follow_links(false).into_iter();
     for entry in walker.filter_entry(|e| {
         let name = e.file_name().to_string_lossy();
-        !(e.file_type().is_dir() && (name == ".git" || name == "target"))
+        !(e.file_type().is_dir() && SKIP.contains(&name.as_ref()))
     }) {
         let entry = entry.map_err(|e| {
             HarnessError::Control(format!("обход репозитория {}: {e}", repo.display()))
@@ -1341,6 +1357,30 @@ mod tests {
         assert!(report.issues.iter().all(|i| i.rule != "has_main"
             && i.rule != "cargo_toml_exists"
             && i.rule != "cmd_true"));
+    }
+
+    #[test]
+    fn fitness_skips_handoff_packet_and_junk_dirs() {
+        // Разрыв P2 «fitness целится в документ решения»: правило с широким
+        // glob срабатывало на текст spine внутри пакета. Служебные каталоги
+        // (.arch-handoff, node_modules, __pycache__, …) исключены из обхода.
+        let dir = tempfile::tempdir().unwrap();
+        let repo = dir.path().join("repo");
+        write_file(&repo, "src/bad.py", "print('hi')\n");
+        write_file(&repo, ".arch-handoff/TASK.md", "Контекст: print( запрещён в проде\n");
+        write_file(&repo, "node_modules/pkg/index.js", "print('junk')\n");
+        let constraints = write_file(
+            dir.path(),
+            "CONSTRAINTS.yaml",
+            "rules:\n\
+             \x20 - name: no_print\n\
+             \x20   type: must_not_contain\n\
+             \x20   glob: '**/*'\n\
+             \x20   pattern: 'print\\('\n",
+        );
+        let report = check(&repo, &constraints).unwrap();
+        assert_eq!(report.issues.len(), 1, "только код, не пакет: {:?}", report.issues);
+        assert!(report.issues[0].file.ends_with("src/bad.py"));
     }
 
     #[test]
