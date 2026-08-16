@@ -33,7 +33,7 @@
 
 | Инструмент | Назначение | Параметры |
 |---|---|---|
-| `bash` | Shell-команда с таймаутом и лимитом вывода; маркеры исхода независимы: `[код возврата: N]` / `[сигнал: N]` / `[таймаут: …]` (по таймауту отдаётся частичный вывод); env очищен от секретов | `command`*; `timeout_secs` (≤600); `workdir` |
+| `bash` | Shell-команда с таймаутом и лимитом вывода; маркеры исхода независимы: `[код возврата: N]` / `[сигнал: N]` / `[таймаут: …]` (по таймауту отдаётся частичный вывод); env очищен от секретов | `command`*; `timeout_secs` (≤1800; кодовые харнессы — только через `harness_run`); `workdir` |
 | `read_file` | Чтение файла с нумерацией строк | `path`*; `offset`, `limit` (строки) |
 | `write_file` | Запись файла целиком (родители создаются) | `path`*, `content`* |
 | `edit_file` | Точечная правка: замена `old_string`→`new_string` с fuzzy-каскадом (точное → trim концов → схлопнутые пробелы) | `path`*, `old_string`*, `new_string`*; `replace_all` |
@@ -148,7 +148,7 @@ ralph-циклы — `~/.arch-harness/reports/ralph/<id>/` (`round-NN.md`,
 | Инструмент | Назначение | Параметры |
 |---|---|---|
 | `handoff_create` | Handoff-пакет `.arch-handoff/` (TASK.md, ARCHITECTURE.md, CONSTRAINTS.yaml, MANIFEST.json, adr/) для кодового харнесса | `repo`*, `task`*; `spec` — массив путей к спекам/ADR |
-| `harness_run` | Прогон пакета кодовым харнессом через настроенный адаптер (stdin/flag/positional, env, таймаут 30 мин): код возврата, stdout/stderr, сводка JSON-контракта результата. Не путать с bash — квотинг и таймауты там ломают прогон | `harness`* (claude-code, qwen-code, openclaw, hermes, theseus, codewhale), `repo`*; `task` (иначе `<repo>/.arch-handoff/TASK.md`); `timeout_secs` |
+| `harness_run` | Прогон пакета кодовым харнессом через настроенный адаптер (stdin/flag/positional, env): абсолютный потолок 30 мин + таймаут тишины 10 мин (heartbeat по mtime репо), прерывание убивает всю процессную группу, частичный вывод возвращается; сводка JSON-контракта результата. Не путать с bash — там квотинг ломает промпт, потолок 1800 с и нет heartbeat | `harness`* (claude-code, qwen-code, openclaw, hermes, theseus, codewhale), `repo`*; `task` (иначе `<repo>/.arch-handoff/TASK.md`); `timeout_secs` |
 
 Харнессы: Claude Code, Qwen Code, OpenClaw, Hermes, Theseus, CodeWhale —
 `docs/harness_integrations.md`. Прогон пакета также доступен из CLI —

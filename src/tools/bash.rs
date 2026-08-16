@@ -2,7 +2,7 @@
 //!
 //! КОНТРАКТ (владелец: агент `tools`): структура [`BashTool`] (unit-структура),
 //! реализующая [`Tool`]. Аргументы: `command` (string, обяз.), `timeout_secs`
-//! (u64, опц., дефолт 120, макс 600), `workdir` (string, опц. — относительно
+//! (u64, опц., дефолт 120, макс 1800), `workdir` (string, опц. — относительно
 //! ctx.cwd). Вывод: stdout+stderr + независимые маркеры исхода
 //! (`[код возврата: N]` / `[сигнал: N]` / `[таймаут: …]`); усечение до ~30 КБ.
 //!
@@ -31,8 +31,10 @@ use crate::tool::{Tool, ToolContext, ToolOutput};
 
 /// Дефолтный таймаут выполнения команды, секунды.
 const DEFAULT_TIMEOUT_SECS: u64 = 120;
-/// Жёсткий максимум таймаута, секунды (защита от «вечных» команд).
-const MAX_TIMEOUT_SECS: u64 = 600;
+/// Жёсткий максимум таймаута, секунды (защита от «вечных» команд). 30 минут
+/// хватает длинным сборкам; прогоны кодовых харнессов (claude/qwen/…) сюда
+/// не кладём — для них `harness_run` (потолок 7200 + таймаут тишины).
+const MAX_TIMEOUT_SECS: u64 = 1800;
 /// Лимит размера вывода (stdout + stderr), символов; дальше — усечение.
 const MAX_OUTPUT_CHARS: usize = 30 * 1024;
 
@@ -108,8 +110,12 @@ impl Tool for BashTool {
                 поиск утилит, конвейеры обработки текста, проверка процессов и портов. \
                 Для чтения/записи файлов предпочитайте read_file/write_file/edit_file, \
                 для поиска файлов — glob, по содержимому — grep. \
-                Долгие команды ограничивайте timeout_secs (максимум 600 сек): \
+                Долгие команды ограничивайте timeout_secs (дефолт 120, максимум 1800): \
                 по таймауту процесс убивается, но частичный вывод возвращается. \
+                Прогоны кодовых харнессов (claude, qwen, openclaw, hermes, theseus, \
+                codewhale) через bash ЗАПРЕЩЕНЫ — только harness_run: у него потолок \
+                7200 с, таймаут тишины с heartbeat по файлам и убийство всей группы \
+                процессов; здесь прогон обрежется по timeout_secs без heartbeat. \
                 Окружение команды очищено от секретоподобных переменных \
                 (*_KEY, *_TOKEN, *_SECRET, …) — ключи API здесь недоступны."
                 .into(),
@@ -122,7 +128,7 @@ impl Tool for BashTool {
                     },
                     "timeout_secs": {
                         "type": "integer",
-                        "description": "Таймаут выполнения в секундах (дефолт 120, максимум 600)",
+                        "description": "Таймаут выполнения в секундах (дефолт 120, максимум 1800)",
                         "default": DEFAULT_TIMEOUT_SECS,
                         "minimum": 1,
                         "maximum": MAX_TIMEOUT_SECS
@@ -135,6 +141,13 @@ impl Tool for BashTool {
                 "required": ["command"]
             }),
         }
+    }
+
+    /// Агентный цикл не должен обрывать вызов раньше собственного таймаута
+    /// команды: берём жёсткий максимум плюс запас на завершение процесса
+    /// (инцидент 12:32 — агент резал bash на 300 с при внутренних 1800).
+    fn timeout_secs(&self) -> u64 {
+        MAX_TIMEOUT_SECS + 60
     }
 
     /// Выполняет команду с таймаутом и scrub окружения.
@@ -350,6 +363,38 @@ mod tests {
             "хвост после убийства недостижим: {}",
             out.content
         );
+        Ok(())
+    }
+
+    #[test]
+    fn tool_timeout_covers_max_command_time() {
+        // Агентный цикл берёт Tool::timeout_secs: он обязан покрывать
+        // максимальный timeout_secs команды (+ запас на убийство процесса),
+        // иначе цикл оборвёт вызов раньше собственного таймаута bash.
+        assert_eq!(BashTool.timeout_secs(), MAX_TIMEOUT_SECS + 60);
+        assert!(BashTool.timeout_secs() > MAX_TIMEOUT_SECS);
+    }
+
+    #[tokio::test]
+    async fn large_timeout_secs_is_accepted_and_clamped() -> Result<()> {
+        // Длинные сборки: 1500 с — валидное значение; сверхмаксимум — кламп,
+        // не ошибка (команда быстрая, проверяем приём аргумента).
+        let dir = tempfile::tempdir()?;
+        let out = BashTool
+            .call(
+                json!({"command": "echo ok", "timeout_secs": 1500}),
+                &test_ctx(&dir),
+            )
+            .await?;
+        assert!(!out.is_error, "output: {}", out.content);
+        assert!(out.content.contains("ok"), "output: {}", out.content);
+        let out = BashTool
+            .call(
+                json!({"command": "echo ok", "timeout_secs": 99999}),
+                &test_ctx(&dir),
+            )
+            .await?;
+        assert!(!out.is_error, "output: {}", out.content);
         Ok(())
     }
 
