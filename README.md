@@ -215,7 +215,9 @@ BMAD, Spec Kit, OpenSpec и др.):
 - **Handoff кодовым харнессам**: Claude Code, Qwen Code, OpenClaw, Hermes,
   Theseus, CodeWhale — пакеты `.arch-handoff/` + прогон инструментом
   `harness_run` прямо из диалога (адаптер знает режим промпта, флаги
-  разрешений; JSON-контракт результата извлекается в сводку). Предгейт
+  разрешений; JSON-контракт результата разбирается **механически** —
+  валидация схемы `Valid`/`Invalid`/`Missing`, эскалация blocked/conflicts,
+  в CLI `status=blocked` даёт код выхода 2). Предгейт
   пакета: git-репозиторий гарантирован (`git init` + baseline-коммит — якорь
   **плана отката** в TASK.md), маршрут значимости Fast/Standard/Critical
   задаёт рекомендованный таймаут прогона (1800/3600/7200 с, MANIFEST.json
@@ -430,7 +432,9 @@ BMAD, Spec Kit, OpenSpec, and more):
 Theseus, CodeWhale — `.arch-handoff/` packages with invariants, acceptance
 criteria, and a headless JSON contract, plus in-chat execution via the
 `harness_run` tool (the adapter knows the prompt mode and permission flags;
-the JSON result contract is extracted into the summary). Package pre-gate:
+the JSON result contract is **parsed mechanically** — schema validation
+`Valid`/`Invalid`/`Missing`, blocked/conflicts escalation, and the CLI
+exits with code 2 on `status=blocked`). Package pre-gate:
 a git repository is guaranteed (`git init` + a baseline commit — the anchor
 of the **rollback plan** in TASK.md), and the significance route
 Fast/Standard/Critical sets the recommended run timeout (1800/3600/7200 s,

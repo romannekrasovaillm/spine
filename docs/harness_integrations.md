@@ -52,6 +52,19 @@ git log, работа без коммита считается невыполн�
   (ADR, spine); конфликт со spine обязан останавливать работу, а не
   «решаться на месте».
 
+**Механический разбор на стороне запуска** (`parse_result_contract`):
+контракт — не текстовая инструкция, а валидируемая схема. Сканируются
+fenced ```json-блоки с конца вывода (блок со `status`, не парсящийся как
+JSON, — это `Invalid`, а не промах) плюс запасной путь — голый JSON-объект
+в хвосте (модели иногда роняют fence). `status` строго из
+complete|partial|blocked; списки опциональны, но если присутствуют —
+обязаны быть массивами. Итог типизирован (`ContractParse`:
+Valid/Invalid/Missing) и живёт в `HarnessRun.contract`: сводка
+`harness_run` эскалирует `blocked` и непустые conflicts/open_questions
+списками, CLI `arch harness-run` печатает машинную строку
+`контракт: status=… assumptions=N open_questions=N conflicts=N` и на
+`status=blocked` завершается кодом **2** (скриптовый гейт в пайпах).
+
 ### ARCHITECTURE.md (epic-context, 800–1500 токенов)
 
 Компиляция из `--spec`-файлов (`compile_epic_context`): секции с полями

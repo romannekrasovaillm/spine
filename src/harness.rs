@@ -606,6 +606,9 @@ pub struct HarnessRun {
     /// Авто-коммит незакоммиченных правок исполнителя (None — не потребовался:
     /// дерево чистое, прогон прерван, репозиторий не git или опция выключена).
     pub auto_commit: Option<AutoCommit>,
+    /// Механически разобранный JSON-контракт результата из stdout
+    /// (валидация схемы — [`parse_result_contract`]).
+    pub contract: ContractParse,
 }
 
 /// Итог авто-коммита оставшихся после исполнителя правок.
@@ -845,14 +848,20 @@ pub async fn run_harness(
     } else {
         None
     };
+    let stdout = take(&stdout_buf);
+    let stderr = take(&stderr_buf);
+    // Контракт разбирается один раз на стороне запуска — механически,
+    // а не эвристикой у потребителей.
+    let contract = parse_result_contract(&stdout);
     Ok(HarnessRun {
         harness: name.into(),
         exit_code: child.try_wait().ok().flatten().and_then(|s| s.code()),
-        stdout: take(&stdout_buf),
-        stderr: take(&stderr_buf),
+        stdout,
+        stderr,
         duration_secs: started.elapsed().as_secs_f64(),
         termination,
         auto_commit,
+        contract,
     })
 }
 
@@ -1106,15 +1115,152 @@ impl Tool for HandoffCreateTool {
 /// Лимит вывода `harness_run` (stdout + stderr), символов.
 const HARNESS_RUN_MAX_CHARS: usize = 24 * 1024;
 
-/// Вытаскивает JSON-контракт результата из stdout харнесса:
-/// последний ```json-блок с полем `status` (см. [`render_task_md`]).
-fn extract_contract(stdout: &str) -> Option<Value> {
-    let start = stdout.rfind("```json")? + "```json".len();
-    let rest = &stdout[start..];
-    let end = rest.find("```")?;
-    let v: Value = serde_json::from_str(rest[..end].trim()).ok()?;
-    v.get("status").and_then(Value::as_str)?;
-    Some(v)
+/// Статус из контракта результата (схема TASK.md).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContractStatus {
+    /// Выполнено полностью.
+    Complete,
+    /// Частично.
+    Partial,
+    /// Заблокировано (интеграция невозможна до разбора).
+    Blocked,
+}
+
+impl ContractStatus {
+    fn parse(s: &str) -> Option<Self> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "complete" => Some(Self::Complete),
+            "partial" => Some(Self::Partial),
+            "blocked" => Some(Self::Blocked),
+            _ => None,
+        }
+    }
+
+    /// Строковое представление как в контракте.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Complete => "complete",
+            Self::Partial => "partial",
+            Self::Blocked => "blocked",
+        }
+    }
+}
+
+/// Механически разобранный и проверенный по схеме контракт результата.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResultContract {
+    /// Статус прогона.
+    pub status: ContractStatus,
+    /// Допущения исполнителя.
+    pub assumptions: Vec<String>,
+    /// Открытые вопросы к архитектору.
+    pub open_questions: Vec<String>,
+    /// Расхождения с принятыми решениями (ADR/spine) — останавливают интеграцию.
+    pub conflicts: Vec<String>,
+}
+
+/// Исход механического разбора контракта результата.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ContractParse {
+    /// Контракт найден и валиден по схеме.
+    Valid(ResultContract),
+    /// Блок со `status` найден, но схема нарушена (причина).
+    Invalid(String),
+    /// Контракта в выводе нет.
+    Missing,
+}
+
+/// Проверяет кандидата по схеме контракта: `status` строго из
+/// complete|partial|blocked; списки опциональны (дефолт — пустые), но если
+/// присутствуют — обязаны быть массивами (элементы приводятся к строкам).
+fn validate_contract(v: &Value) -> std::result::Result<ResultContract, String> {
+    let status_raw = v
+        .get("status")
+        .and_then(Value::as_str)
+        .ok_or("поле `status` отсутствует или не строка")?;
+    let status = ContractStatus::parse(status_raw)
+        .ok_or_else(|| format!("status='{status_raw}' вне complete|partial|blocked"))?;
+    let list = |key: &str| -> std::result::Result<Vec<String>, String> {
+        match v.get(key) {
+            None => Ok(Vec::new()),
+            Some(Value::Array(items)) => Ok(items
+                .iter()
+                .map(|i| match i {
+                    Value::String(s) => s.clone(),
+                    other => other.to_string(),
+                })
+                .collect()),
+            Some(_) => Err(format!("поле `{key}` не массив")),
+        }
+    };
+    Ok(ResultContract {
+        status,
+        assumptions: list("assumptions")?,
+        open_questions: list("open_questions")?,
+        conflicts: list("conflicts_with_prior_decisions")?,
+    })
+}
+
+/// Механический разбор контракта результата из stdout харнесса
+/// (замена текстовой эвристике «последний ```json с status»):
+///
+/// 1. fenced ```json-блоки с конца вывода (контракт обязан идти последним);
+///    блок со `status`, не парсящийся как JSON, — это Invalid, а не промах;
+/// 2. запасной путь: голый JSON-объект в хвосте вывода (модели иногда роняют
+///    fence) — перебор `{`-позиций последних 4 КБ с конца.
+///
+/// Найденный кандидат валидируется по схеме [`validate_contract`].
+pub fn parse_result_contract(stdout: &str) -> ContractParse {
+    let mut invalid: Option<String> = None;
+    let mut blocks = Vec::new();
+    let mut rest = stdout;
+    while let Some(start) = rest.find("```json") {
+        let after = &rest[start + "```json".len()..];
+        match after.find("```") {
+            Some(end) => {
+                blocks.push(after[..end].trim());
+                rest = &after[end + 3..];
+            }
+            None => break,
+        }
+    }
+    for block in blocks.into_iter().rev() {
+        match serde_json::from_str::<Value>(block) {
+            Ok(v) if v.get("status").is_some() => {
+                return match validate_contract(&v) {
+                    Ok(c) => ContractParse::Valid(c),
+                    Err(e) => ContractParse::Invalid(e),
+                };
+            }
+            Ok(_) => {}
+            Err(e) if block.contains("\"status\"") => {
+                invalid = Some(format!("невалидный JSON в ```json-блоке со status: {e}"));
+            }
+            Err(_) => {}
+        }
+    }
+    // Голый JSON в хвосте (fence уронен): перебираем `{` с конца хвоста.
+    let tail_at = stdout.floor_char_boundary(stdout.len().saturating_sub(4096));
+    let tail = &stdout[tail_at..];
+    let braces: Vec<usize> = tail.match_indices('{').map(|(i, _)| i).collect();
+    for i in braces.into_iter().rev().take(8) {
+        let cand = tail[i..].trim();
+        if !cand.contains("\"status\"") {
+            continue;
+        }
+        if let Ok(v) = serde_json::from_str::<Value>(cand) {
+            if v.get("status").is_some() {
+                return match validate_contract(&v) {
+                    Ok(c) => ContractParse::Valid(c),
+                    Err(e) => ContractParse::Invalid(e),
+                };
+            }
+        }
+    }
+    match invalid {
+        Some(e) => ContractParse::Invalid(e),
+        None => ContractParse::Missing,
+    }
 }
 
 /// Инструмент `harness_run`: прогон handoff-пакета (или явной задачи)
@@ -1295,22 +1441,47 @@ impl Tool for HarnessRunTool {
                         ac.files, ac.hash, ac.message
                     );
                 }
-                match extract_contract(&run.stdout) {
-                    Some(v) => {
-                        let count = |key: &str| {
-                            v.get(key).and_then(Value::as_array).map_or(0, Vec::len)
-                        };
+                match &run.contract {
+                    ContractParse::Valid(c) => {
                         let _ = writeln!(
                             content,
                             "Контракт результата: status={}; assumptions: {}; \
                              open_questions: {}; conflicts: {}.",
-                            v["status"].as_str().unwrap_or("?"),
-                            count("assumptions"),
-                            count("open_questions"),
-                            count("conflicts_with_prior_decisions"),
+                            c.status.as_str(),
+                            c.assumptions.len(),
+                            c.open_questions.len(),
+                            c.conflicts.len(),
+                        );
+                        if c.status == ContractStatus::Blocked {
+                            content.push_str(
+                                "СТАТУС blocked: интеграция невозможна — сначала разберите \
+                                 причины (open_questions/assumptions ниже) с архитектором.\n",
+                            );
+                        }
+                        if !c.conflicts.is_empty() {
+                            content.push_str(
+                                "КОНФЛИКТЫ со spine/ADR (ОСТАНАВЛИВАЮТ интеграцию до решения архитектора):\n",
+                            );
+                            for conflict in &c.conflicts {
+                                let _ = writeln!(content, "- {conflict}");
+                            }
+                        }
+                        if !c.open_questions.is_empty() {
+                            content.push_str("Открытые вопросы к архитектору:\n");
+                            for q in &c.open_questions {
+                                let _ = writeln!(content, "- {q}");
+                            }
+                        }
+                    }
+                    ContractParse::Invalid(reason) => {
+                        let _ = writeln!(
+                            content,
+                            "ВНИМАНИЕ: JSON-контракт найден, но НЕВАЛИДЕН по схеме: {reason}. \
+                             Машинная приёмка невозможна — перезапустите с напоминанием \
+                             о схеме контракта (status из complete|partial|blocked, списки — массивы)."
                         );
                     }
-                    None => {
+                    ContractParse::Missing => {
                         content.push_str(
                             "ВНИМАНИЕ: JSON-контракт результата (```json с полем status) \
                              в stdout не найден — ответ может быть неполным; при необходимости \
@@ -2012,17 +2183,68 @@ mod tests {
     }
 
     #[test]
-    fn extract_contract_finds_last_json_block_with_status() {
+    fn parse_result_contract_validates_schema_mechanically() {
+        // Валидный полный контракт в последнем fenced-блоке.
         let stdout = "текст\n```json\n{\"status\": \"partial\", \"assumptions\": [\"a\"], \
                       \"open_questions\": [], \"conflicts_with_prior_decisions\": []}\n```\n";
-        let v = extract_contract(stdout).expect("контракт найден");
-        assert_eq!(v["status"], "partial");
+        let ContractParse::Valid(c) = parse_result_contract(stdout) else {
+            panic!("контракт найден и валиден");
+        };
+        assert_eq!(c.status, ContractStatus::Partial);
+        assert_eq!(c.assumptions, vec!["a".to_string()]);
+        // Списки опциональны: дефолт — пустые.
+        let ContractParse::Valid(c) =
+            parse_result_contract("```json\n{\"status\": \"complete\"}\n```")
+        else {
+            panic!("валиден без списков");
+        };
+        assert_eq!(c.status, ContractStatus::Complete);
+        assert!(c.open_questions.is_empty() && c.conflicts.is_empty());
         // Без поля status — не контракт.
-        assert!(extract_contract("```json\n{\"x\": 1}\n```").is_none());
-        // Без fenced-блока — None.
-        assert!(extract_contract("plain text").is_none());
-        // Битый JSON — None.
-        assert!(extract_contract("```json\n{oops}\n```").is_none());
+        assert_eq!(
+            parse_result_contract("```json\n{\"x\": 1}\n```"),
+            ContractParse::Missing
+        );
+        assert_eq!(parse_result_contract("plain text"), ContractParse::Missing);
+        // Битый JSON без status — промах; со status — Invalid (не молчим).
+        assert_eq!(
+            parse_result_contract("```json\n{oops}\n```"),
+            ContractParse::Missing
+        );
+        let ContractParse::Invalid(reason) =
+            parse_result_contract("```json\n{\"status\": \"complete\",\n```")
+        else {
+            panic!("битый блок со status — Invalid");
+        };
+        assert!(reason.contains("невалидный JSON"), "{reason}");
+        // Схема: status вне перечисления — Invalid.
+        let ContractParse::Invalid(reason) =
+            parse_result_contract("```json\n{\"status\": \"done\"}\n```")
+        else {
+            panic!("status вне перечисления — Invalid");
+        };
+        assert!(reason.contains("done"), "{reason}");
+        // Список не массивом — Invalid.
+        let ContractParse::Invalid(reason) =
+            parse_result_contract("```json\n{\"status\": \"complete\", \"assumptions\": {}}\n```")
+        else {
+            panic!("assumptions не массив — Invalid");
+        };
+        assert!(reason.contains("assumptions"), "{reason}");
+        // Fence уронен — голый JSON в хвосте подхватывается.
+        let ContractParse::Valid(c) = parse_result_contract(
+            "проза ответа\n{\"status\": \"blocked\", \"open_questions\": [\"нужен доступ к КШД\"]}",
+        ) else {
+            panic!("голый JSON в хвосте — валидный контракт");
+        };
+        assert_eq!(c.status, ContractStatus::Blocked);
+        assert_eq!(c.open_questions, vec!["нужен доступ к КШД".to_string()]);
+        // Последний из нескольких fenced-блоков со status побеждает.
+        let two = "```json\n{\"status\": \"partial\"}\n```\nпромежуток\n```json\n{\"status\": \"complete\"}\n```";
+        let ContractParse::Valid(c) = parse_result_contract(two) else {
+            panic!("последний блок валиден");
+        };
+        assert_eq!(c.status, ContractStatus::Complete);
     }
 
     #[tokio::test]

@@ -44,8 +44,10 @@ CodeWhale) — без потери архитектурного контекст
 4. **Контракт результата**: кодовый харнесс обязан завершить работу
    fenced-блоком ` ```json ` с полем `status` (`complete | partial |
    blocked`) и списками `assumptions`, `open_questions`,
-   `conflicts_with_prior_decisions` — харнесс извлекает его в сводку
-   (`status=complete · assumptions 3 · open_questions 1`). Отсутствие
+   `conflicts_with_prior_decisions` — харнесс **разбирает его механически**
+   (валидация схемы: `Valid`/`Invalid`/`Missing`; эскалация blocked и
+   непустых conflicts/open_questions в сводку; CLI на blocked отвечает
+   кодом выхода 2). Отсутствие или невалидность
    контракта помечается предупреждением: ответ мог быть неполным.
    **Финализация**: перед JSON исполнитель обязан сделать git-коммит
    результата (`git add -A -- . ':!.arch-handoff'` + commit) — оркестратор
@@ -133,7 +135,10 @@ CLI-эквивалент вне диалога: `arch handoff --repo <path> --ta
 4. **Result contract**: the coding harness must finish with a fenced
    ` ```json ` block carrying `status` (`complete | partial | blocked`),
    `assumptions`, `open_questions`, `conflicts_with_prior_decisions`; the
-   summary line extracts it, and a missing contract is flagged.
+   launcher **parses it mechanically** (schema validation:
+   `Valid`/`Invalid`/`Missing`; blocked and non-empty
+   conflicts/open_questions are escalated into the summary; the CLI exits
+   with code 2 on blocked). A missing or invalid contract is flagged.
    **Finalization**: before the JSON, the executor must git-commit its work
    (`git add -A -- . ':!.arch-handoff'` + commit) — the orchestrator
    collects results from the git log; if the executor finishes without a

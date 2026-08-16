@@ -572,6 +572,23 @@ async fn main() -> Result<()> {
                     ac.files, ac.hash, ac.message
                 );
             }
+            match &run.contract {
+                arch_harness::harness::ContractParse::Valid(c) => {
+                    println!(
+                        "контракт: status={} assumptions={} open_questions={} conflicts={}",
+                        c.status.as_str(),
+                        c.assumptions.len(),
+                        c.open_questions.len(),
+                        c.conflicts.len()
+                    );
+                }
+                arch_harness::harness::ContractParse::Invalid(r) => {
+                    eprintln!("⚠ контракт найден, но невалиден по схеме: {r}");
+                }
+                arch_harness::harness::ContractParse::Missing => {
+                    eprintln!("⚠ контракт результата (```json со status) в stdout не найден");
+                }
+            }
             if run.termination != Termination::Completed {
                 eprintln!(
                     "⚠ прогон ПРЕРВАН ({}{}); процессная группа завершена, \
@@ -588,6 +605,13 @@ async fn main() -> Result<()> {
             println!("{}", run.stdout);
             if !run.stderr.is_empty() {
                 eprintln!("── stderr ──\n{}", run.stderr);
+            }
+            // Скриптовый гейт: status=blocked — отдельный код возврата 2
+            // (успешный прогон без результата в пайпе не должен быть нулевым).
+            if let arch_harness::harness::ContractParse::Valid(c) = &run.contract {
+                if c.status == arch_harness::harness::ContractStatus::Blocked {
+                    std::process::exit(2);
+                }
             }
         }
         Some(Cmd::Harnesses) => {
