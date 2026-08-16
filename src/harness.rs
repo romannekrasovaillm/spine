@@ -5,7 +5,8 @@
 //!   codewhale ([`known`]); конфиги — из `Config::harnesses`;
 //! - [`generate_handoff`] — каталог `<repo>/.arch-handoff/`: TASK.md (задача),
 //!   ARCHITECTURE.md (свод спек/спайна), adr/ (копии ADR), CONSTRAINTS.yaml
-//!   (fitness-правила), RUBRIC.yaml (якорная рубрика приёмки), MANIFEST.json
+//!   (fitness-правила под стек репозитория — заготовка, переписывается
+//!   архитектором под spine), RUBRIC.yaml (якорная рубрика приёмки), MANIFEST.json
 //!   (мета: дата, модель, источники) + компактный epic-context (800–1500
 //!   токенов, по смыслу);
 //! - [`run_harness`] — запуск бинаря харнесса (PromptMode positional/flag/stdin)
@@ -39,12 +40,39 @@ const HANDOFF_DIR: &str = ".arch-handoff";
 /// (~1500 токенов при грубой оценке 4 символа ≈ 1 токен).
 const EPIC_CONTEXT_MAX_CHARS: usize = 6000;
 
-/// Дефолтный набор fitness-правил (схема `control::check`):
-/// пишется только при отсутствии пользовательского CONSTRAINTS.yaml.
-const DEFAULT_CONSTRAINTS: &str = "\
-# Fitness-правила для `arch control check` (схема control::check).
-# Создано генератором handoff; при повторной генерации файл НЕ затирается.
-rules:
+/// Целевой минимум epic-context, символов (~800 токенов — низ окна рубрики
+/// handoff_quality). Если на глубине «2 абзаца на секцию» контекст меньше,
+/// секции перерендериваются глубже ([`DEPTH_DEEP`]).
+const EPIC_CONTEXT_MIN_CHARS: usize = 3200;
+
+/// Глубина рендера прочих секций по умолчанию (абзацев на секцию).
+const DEPTH_SHALLOW: usize = 2;
+/// Глубина рендера прочих секций при недоборе epic-context (абзацев).
+const DEPTH_DEEP: usize = 8;
+
+/// Дефолтные fitness-правила под стек репозитория (по маркерным файлам):
+/// Cargo.toml → Rust; pyproject.toml/requirements.txt/setup.py → Python;
+/// go.mod → Go; package.json → Node; иначе — минимальный общий набор.
+/// Пишутся только при отсутствии пользовательского CONSTRAINTS.yaml и всегда
+/// остаются заготовкой: перед передачей архитектор переписывает их под
+/// spine-инварианты (AD-n) эпика.
+fn default_constraints(repo: &Path) -> String {
+    let stack = if repo.join("Cargo.toml").is_file() {
+        "Rust"
+    } else if ["pyproject.toml", "requirements.txt", "setup.py"]
+        .iter()
+        .any(|m| repo.join(m).is_file())
+    {
+        "Python"
+    } else if repo.join("go.mod").is_file() {
+        "Go"
+    } else if repo.join("package.json").is_file() {
+        "Node"
+    } else {
+        "generic"
+    };
+    let rules = match stack {
+        "Rust" => "\
   - name: no-unwrap-in-src
     type: must_not_contain
     glob: \"src/**\"
@@ -64,7 +92,65 @@ rules:
     command: 'cargo check'
     timeout_secs: 120
     severity: error
-";
+",
+        "Python" => "\
+  - name: no-print-in-py
+    type: must_not_contain
+    glob: \"**/*.py\"
+    pattern: 'print\\('
+    severity: warn
+  - name: readme-exists
+    type: file_exists
+    path: README.md
+    severity: warn
+  - name: pytest-passes
+    type: command_succeeds
+    command: 'pytest -q'
+    timeout_secs: 180
+    severity: error
+",
+        "Go" => "\
+  - name: go-build-passes
+    type: command_succeeds
+    command: 'go build ./...'
+    timeout_secs: 180
+    severity: error
+  - name: go-vet-passes
+    type: command_succeeds
+    command: 'go vet ./...'
+    timeout_secs: 180
+    severity: warn
+  - name: readme-exists
+    type: file_exists
+    path: README.md
+    severity: warn
+",
+        "Node" => "\
+  - name: readme-exists
+    type: file_exists
+    path: README.md
+    severity: warn
+  - name: npm-test-passes
+    type: command_succeeds
+    command: 'npm test'
+    timeout_secs: 300
+    severity: warn
+",
+        _ => "\
+  - name: readme-exists
+    type: file_exists
+    path: README.md
+    severity: warn
+",
+    };
+    format!(
+        "# Fitness-правила для `arch control check` (схема control::check).\n\
+         # Стек: {stack} (детектирован по маркерным файлам). Заготовка генератора\n\
+         # handoff (файл НЕ затирается при повторной генерации): перед передачей\n\
+         # перепишите правила под spine-инварианты (AD-n) эпика.\n\
+         rules:\n{rules}"
+    )
+}
 
 /// Имена известных кодовых харнессов.
 pub fn known() -> Vec<&'static str> {
@@ -143,9 +229,10 @@ pub fn generate_handoff(
     let epic_tokens = epic_chars / 4;
 
     // CONSTRAINTS.yaml — только при отсутствии (не затирать пользовательские правила).
+    // Дефолт — под стек репозитория (Cargo.toml/pyproject.toml/go.mod/package.json).
     let constraints_path = dir.join("CONSTRAINTS.yaml");
     if !constraints_path.exists() {
-        std::fs::write(&constraints_path, DEFAULT_CONSTRAINTS)
+        std::fs::write(&constraints_path, default_constraints(repo))
             .map_err(|e| HarnessError::io(&constraints_path, e))?;
     }
 
@@ -225,22 +312,17 @@ fn render_task_md(task: &str) -> String {
 /// Компилирует epic-context из спецификаций: заголовок с датой и источниками,
 /// далее — сжатые рендеры спек; итог усечён до [`EPIC_CONTEXT_MAX_CHARS`].
 ///
+/// Глубина адаптивная: прочие секции рендерятся по [`DEPTH_SHALLOW`] абзацев,
+/// но если контекст недобирает до [`EPIC_CONTEXT_MIN_CHARS`] (низ окна рубрики
+/// handoff_quality, ~800 токенов), спеки перерендериваются глубже
+/// ([`DEPTH_DEEP`]) — «реализация без доступа к источникам» требует массы.
+///
 /// # Errors
 /// Спека не читается.
 fn compile_epic_context(spec_files: &[PathBuf]) -> Result<String> {
-    let mut out = String::with_capacity(EPIC_CONTEXT_MAX_CHARS);
-    out.push_str("# Архитектурный контекст (epic-context)\n\n");
-    out.push_str(&format!("Собран: {}\n\n", Utc::now().to_rfc3339()));
-    out.push_str("Источники:\n");
-    for f in spec_files {
-        out.push_str(&format!("- {}\n", f.display()));
-    }
-    out.push('\n');
-    for f in spec_files {
-        let text = std::fs::read_to_string(f).map_err(|e| HarnessError::io(f, e))?;
-        out.push_str(&format!("<!-- источник: {} -->\n\n", f.display()));
-        out.push_str(render_spec(&text).trim_end());
-        out.push_str("\n\n");
+    let mut out = render_epic(spec_files, DEPTH_SHALLOW)?;
+    if out.chars().count() < EPIC_CONTEXT_MIN_CHARS {
+        out = render_epic(spec_files, DEPTH_DEEP)?;
     }
     if out.chars().count() > EPIC_CONTEXT_MAX_CHARS {
         let notice = "\n\n> **Контекст усечён** до 6000 символов; полные тексты — в файлах-источниках (см. MANIFEST.json).\n";
@@ -252,9 +334,29 @@ fn compile_epic_context(spec_files: &[PathBuf]) -> Result<String> {
     Ok(out)
 }
 
+/// Рендер epic-context на заданной глубине секций (абзацев на прочую секцию;
+/// ADR-блоки spine всегда целиком).
+fn render_epic(spec_files: &[PathBuf], depth: usize) -> Result<String> {
+    let mut out = String::with_capacity(EPIC_CONTEXT_MAX_CHARS);
+    out.push_str("# Архитектурный контекст (epic-context)\n\n");
+    out.push_str(&format!("Собран: {}\n\n", Utc::now().to_rfc3339()));
+    out.push_str("Источники:\n");
+    for f in spec_files {
+        out.push_str(&format!("- {}\n", f.display()));
+    }
+    out.push('\n');
+    for f in spec_files {
+        let text = std::fs::read_to_string(f).map_err(|e| HarnessError::io(f, e))?;
+        out.push_str(&format!("<!-- источник: {} -->\n\n", f.display()));
+        out.push_str(render_spec(&text, depth).trim_end());
+        out.push_str("\n\n");
+    }
+    Ok(out)
+}
+
 /// Рендерит одну спецификацию: секции с полями Binds/Prevents/Rule (ADR-блоки
-/// spine) — целиком, прочие секции — заголовок + первые два абзаца.
-fn render_spec(text: &str) -> String {
+/// spine) — целиком, прочие секции — заголовок + первые `depth` абзацев.
+fn render_spec(text: &str, depth: usize) -> String {
     let mut preamble = String::new();
     let mut sections: Vec<(String, String)> = Vec::new();
     let mut cur: Option<(String, String)> = None;
@@ -283,7 +385,7 @@ fn render_spec(text: &str) -> String {
 
     let mut out = String::new();
     if !preamble.trim().is_empty() {
-        out.push_str(&first_paragraphs(&preamble, 2));
+        out.push_str(&first_paragraphs(&preamble, depth));
         out.push_str("\n\n");
     }
     for (heading, body) in &sections {
@@ -292,7 +394,7 @@ fn render_spec(text: &str) -> String {
         if is_adr_block(body) {
             out.push_str(body.trim());
         } else {
-            out.push_str(&first_paragraphs(body, 2));
+            out.push_str(&first_paragraphs(body, depth));
         }
         out.push_str("\n\n");
     }
@@ -519,11 +621,25 @@ impl Tool for HandoffCreateTool {
                     .map(|f| format!("- {}", f.display()))
                     .collect::<Vec<_>>()
                     .join("\n");
-                Ok(ToolOutput::ok(format!(
+                let mut out = format!(
                     "Handoff-пакет создан: {}\nEpic-context: ~{} токенов.\nФайлы:\n{files}",
                     packet.dir.display(),
                     packet.epic_context_tokens
-                )))
+                );
+                // Окно рубрики handoff_quality — 800–1500 токенов.
+                if packet.epic_context_tokens < EPIC_CONTEXT_MIN_CHARS / 4 {
+                    out.push_str(&format!(
+                        "\nВНИМАНИЕ: epic-context ~{} токенов — ниже окна рубрики (800–1500). \
+                         Сценарий «реализация без доступа к источникам» не выполняется: \
+                         добавьте спеки через 'spec' или расширьте источники.",
+                        packet.epic_context_tokens
+                    ));
+                }
+                out.push_str(
+                    "\nНапоминание: CONSTRAINTS.yaml — стековая заготовка; перед передачей \
+                     перепишите правила под spine-инварианты (AD-n) эпика.",
+                );
+                Ok(ToolOutput::ok(out))
             }
             Err(e) => Ok(ToolOutput::err(format!("handoff_create: {e}"))),
         }
@@ -723,6 +839,8 @@ mod tests {
         let tmp = tempfile::tempdir().expect("tempdir");
         let repo = tmp.path().join("repo");
         std::fs::create_dir_all(&repo).expect("mkdir repo");
+        // Маркер Rust-стека: дефолтные CONSTRAINTS — cargo-правила.
+        write_file(&repo.join("Cargo.toml"), "[package]\nname = \"demo\"\n");
         let cfg = cfg_in(tmp.path());
         write_file(
             &cfg.paths.rubrics_dir().join("handoff_quality.yaml"),
@@ -755,9 +873,11 @@ mod tests {
         for field in ["**Binds:**", "**Prevents:**", "**Rule:**"] {
             assert!(arch.contains(field), "нет поля {field}");
         }
-        // Прочие секции — только первые два абзаца.
+        // Прочие секции — заголовок + первые абзацы; спека мелкая, поэтому
+        // сработала адаптивная глубина (окно рубрики 800–1500 токенов): все
+        // три абзаца включены.
         assert!(arch.contains("Абзац два."));
-        assert!(!arch.contains("Абзац три"));
+        assert!(arch.contains("Абзац три"), "глубокий рендер:\n{arch}");
         assert!(arch.contains("Источники:"));
 
         // CONSTRAINTS.yaml создан с дефолтными правилами.
@@ -845,6 +965,73 @@ mod tests {
             arch.chars().count()
         );
         assert!(arch.contains("Контекст усечён"));
+    }
+
+    #[test]
+    fn default_constraints_follow_repo_stack() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let repo = tmp.path().join("repo");
+        std::fs::create_dir_all(&repo).expect("mkdir");
+
+        // Пустой репозиторий — общий минимум.
+        let generic = default_constraints(&repo);
+        assert!(generic.contains("readme-exists"), "{generic}");
+        assert!(generic.contains("Стек: generic"), "{generic}");
+        assert!(!generic.contains("cargo check"), "{generic}");
+
+        write_file(&repo.join("requirements.txt"), "pytest\n");
+        let py = default_constraints(&repo);
+        assert!(py.contains("pytest -q"), "{py}");
+        assert!(py.contains("print\\("), "{py}");
+        assert!(!py.contains("cargo check"), "{py}");
+
+        std::fs::remove_file(repo.join("requirements.txt")).expect("rm");
+        write_file(&repo.join("go.mod"), "module demo\n");
+        let go = default_constraints(&repo);
+        assert!(go.contains("go build ./..."), "{go}");
+
+        std::fs::remove_file(repo.join("go.mod")).expect("rm");
+        write_file(&repo.join("package.json"), "{}\n");
+        assert!(default_constraints(&repo).contains("npm test"));
+
+        std::fs::remove_file(repo.join("package.json")).expect("rm");
+        write_file(&repo.join("Cargo.toml"), "[package]\nname = \"demo\"\n");
+        assert!(default_constraints(&repo).contains("cargo check"));
+    }
+
+    #[test]
+    fn epic_context_deepens_below_rubric_window() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let repo = tmp.path().join("repo");
+        std::fs::create_dir_all(&repo).expect("mkdir repo");
+        let cfg = cfg_in(tmp.path());
+        // Секция с пятью абзацами: на мелкой глубине (2) контекст ниже окна
+        // рубрики — рендер углубляется, хвост секции доезжает.
+        let spec = tmp.path().join("spec.md");
+        write_file(
+            &spec,
+            "# Спека\n\n## Детали\n\nпервый\n\nвторой\n\nтретий\n\nчетвёртый\n\nпятый\n",
+        );
+        let packet = generate_handoff(&repo, "задача", &[spec], &cfg).expect("handoff");
+        let arch = std::fs::read_to_string(packet.dir.join("ARCHITECTURE.md")).expect("arch");
+        assert!(arch.contains("пятый"), "глубокий рендер дотянул хвост:\n{arch}");
+    }
+
+    #[tokio::test]
+    async fn handoff_create_warns_when_epic_below_window() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let repo = tmp.path().join("repo");
+        std::fs::create_dir_all(&repo).expect("mkdir repo");
+        let cfg = cfg_in(tmp.path());
+        let tool = HandoffCreateTool { cfg: cfg.clone() };
+        let ctx = ToolContext::new(tmp.path().to_path_buf(), Arc::new(cfg));
+        // Без спек epic-context ≈ один заголовок — ниже окна рубрики.
+        let out = tool
+            .call(json!({"repo": "repo", "task": "x"}), &ctx)
+            .await
+            .expect("call");
+        assert!(out.content.contains("ниже окна рубрики"), "{}", out.content);
+        assert!(out.content.contains("стековая заготовка"), "{}", out.content);
     }
 
     #[test]
