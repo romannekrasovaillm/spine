@@ -121,16 +121,23 @@ auto_commit = true                # до-коммитить незакоммич
 - `stdin` — задача пишется в stdin (писатель — отдельной задачей, без
   дедлока на pipe-буфере), argv = `binary args...`.
 
-Дефолтные адаптеры (`Config::default` / `config.example.toml`):
+Дефолтные адаптеры (`Config::default` / `config.example.toml`; флаги
+валидированы живыми прогонами флота — неверный флаг/режим даёт код 2 на
+argparse):
 
 | Харнесс | binary | args | prompt_mode |
 |---|---|---|---|
 | claude-code | `claude` | `["-p", "--dangerously-skip-permissions"]` | stdin |
 | qwen-code | `qwen` | `[]` | stdin |
-| openclaw | `openclaw` | `["agent", "--message"]` | flag |
-| hermes | `hermes` | `["-p"]` | stdin |
-| theseus | `theseus` | `["run", "--task"]` | flag |
-| codewhale | `codewhale` | `["-p"]` | stdin |
+| openclaw | `openclaw` | `["agent", "--agent", "main", "--message", "{prompt}"]` | flag |
+| hermes | `hermes` | `["-z", "{prompt}"]` | flag |
+| theseus | `theseus` | `["-p", "{prompt}"]` | flag |
+| codewhale | `codewhale` | `["-p", "{prompt}"]` | flag |
+
+**Горячее перечитывание.** Инструмент `harness_run` перечитывает файл
+конфига (тот путь, из которого он был загружен) при каждом вызове: правки
+`[harnesses.*]` в ходе сессии применяются немедленно, перезапуск агента не
+нужен. При сбое чтения используется снапшот, загруженный при старте.
 
 > **Claude Code headless:** `claude -p` без TTY на файловых операциях встаёт
 > на permission-промпте и висит до таймаута — поэтому дефолтный адаптер несёт

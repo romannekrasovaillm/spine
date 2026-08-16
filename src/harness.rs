@@ -1271,6 +1271,22 @@ struct HarnessRunTool {
     cfg: Config,
 }
 
+impl HarnessRunTool {
+    /// Живой конфиг: файл перечитывается при каждом вызове — правки
+    /// `[harnesses.*]` в config.toml подхватываются без перезапуска сессии
+    /// (инцидент: агент исправил адаптеры в файле, а прогон шёл со снапшота
+    /// конфига, загруженного при старте процесса). Перечитывается только
+    /// файл, из которого конфиг был загружен (`loaded_from`): снапшот без
+    /// файла (тесты, чистые дефолты) окружение не подхватывает. При сбое
+    /// чтения — снапшот процесса.
+    fn live_config(&self) -> Config {
+        match self.cfg.loaded_from.as_deref() {
+            Some(path) => Config::load(Some(path)).unwrap_or_else(|_| self.cfg.clone()),
+            None => self.cfg.clone(),
+        }
+    }
+}
+
 #[async_trait]
 impl Tool for HarnessRunTool {
     fn spec(&self) -> ToolSpec {
@@ -1279,14 +1295,17 @@ impl Tool for HarnessRunTool {
             description: "Запустить кодовый харнесс на репозитории и вернуть его вывод. \
                 Обычно следует за handoff_create: задача читается из \
                 <repo>/.arch-handoff/TASK.md (или передаётся явно). Запуск идёт через \
-                настроенный адаптер [harnesses.<имя>] (режим prompt, env). Умные таймауты: \
+                настроенный адаптер [harnesses.<имя>] (режим prompt, env); config.toml \
+                перечитывается на каждый вызов — правки адаптеров применяются без \
+                перезапуска сессии. Умные таймауты: \
                 абсолютный потолок 30 мин (по умолчанию) + таймаут тишины 10 мин — прогон \
                 прерывается, только если харнесс не выводит и не меняет файлы репозитория; \
                 при прерывании убивается вся процессная группа (сирот не остаётся) и \
                 возвращается частичный вывод. НЕ занижайте timeout_secs: значения ниже \
                 600 поднимаются до 600 — кодовый харнесс за меньшее время почти никогда \
                 не успевает. stdout/stderr и код возврата захватываются, JSON-контракт \
-                результата (status/assumptions/open_questions) извлекается в сводку. \
+                результата (status/assumptions/open_questions) разбирается механически \
+                (валидация схемы, эскалация blocked/conflicts). \
                 НЕ запускать харнесс через bash — там промпт ломается о квотинг, таймаут \
                 слишком короткий, а env-scrub прячет от команды переменные *_KEY/*_TOKEN, \
                 через которые харнесс может авторизовываться."
@@ -1323,8 +1342,8 @@ impl Tool for HarnessRunTool {
     /// берём максимум из адаптеров конфига — иначе агентный цикл обрывает
     /// длинный прогон раньше собственного таймаута адаптера (инцидент 11-24).
     fn timeout_secs(&self) -> u64 {
-        let adapter_max = self
-            .cfg
+        let live = self.live_config();
+        let adapter_max = live
             .harnesses
             .values()
             .map(|h| h.timeout_secs)
@@ -1344,7 +1363,10 @@ impl Tool for HarnessRunTool {
                 "harness_run: обязательный аргумент 'repo' (string) отсутствует",
             ));
         };
-        let Some(hcfg) = self.cfg.harnesses.get(name) else {
+        // Адаптеры читаем из ЖИВОГО конфига: правки config.toml в ходе
+        // сессии применяются немедленно, без перезапуска агента.
+        let live = self.live_config();
+        let Some(hcfg) = live.harnesses.get(name) else {
             return Ok(ToolOutput::err(format!(
                 "harness_run: харнесс '{name}' не настроен. Известные: {}; \
                  адаптеры — в config.toml [harnesses.<имя>]",
@@ -2273,6 +2295,53 @@ mod tests {
             .expect("call");
         assert!(out.is_error, "{}", out.content);
         assert!(out.content.contains("handoff_create"), "{}", out.content);
+    }
+
+    #[tokio::test]
+    async fn harness_run_hot_reloads_adapter_config() {
+        // Регрессия: агент исправил [harnesses.*] в config.toml в ходе сессии,
+        // а прогон шёл со снапшота конфига, загруженного при старте процесса
+        // (дефолтный `-p` для hermes — «unrecognized arguments»). Теперь
+        // адаптер перечитывается из файла на каждый вызов.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let cfg_path = tmp.path().join("config.toml");
+        let write_cfg = |marker: &str| {
+            std::fs::write(
+                &cfg_path,
+                format!(
+                    "default_model = \"deepseek\"\n[harnesses.fake]\nbinary = \"sh\"\n\
+                     args = [\"-c\", \"echo {marker}\"]\nprompt_mode = \"stdin\"\n\
+                     timeout_secs = 30\nidle_timeout_secs = 0\nauto_commit = false\n"
+                ),
+            )
+            .expect("write config");
+        };
+        write_cfg("ADAPTER_V1");
+        let cfg = Config::load(Some(&cfg_path)).expect("load");
+        assert_eq!(cfg.loaded_from.as_deref(), Some(cfg_path.as_path()));
+        let tool = HarnessRunTool { cfg: cfg.clone() };
+        let ctx = ToolContext::new(tmp.path().to_path_buf(), Arc::new(cfg));
+
+        let out = tool
+            .call(
+                json!({"harness": "fake", "repo": ".", "task": "задача"}),
+                &ctx,
+            )
+            .await
+            .expect("call 1");
+        assert!(out.content.contains("ADAPTER_V1"), "{}", out.content);
+
+        // Правка файла между вызовами — без пересоздания инструмента.
+        write_cfg("ADAPTER_V2");
+        let out = tool
+            .call(
+                json!({"harness": "fake", "repo": ".", "task": "задача"}),
+                &ctx,
+            )
+            .await
+            .expect("call 2");
+        assert!(out.content.contains("ADAPTER_V2"), "{}", out.content);
+        assert!(!out.content.contains("ADAPTER_V1"), "{}", out.content);
     }
 
     #[tokio::test]

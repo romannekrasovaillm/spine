@@ -41,6 +41,11 @@ pub struct Config {
     pub cron: CronSettings,
     /// Пути к ассетам, отчётам и сессиям.
     pub paths: PathsConfig,
+    /// Откуда конфиг загружен (нужно `harness_run` для горячего
+    /// перечитывания адаптеров — правки config.toml подхватываются без
+    /// перезапуска сессии). В файл не сериализуется.
+    #[serde(skip)]
+    pub loaded_from: Option<PathBuf>,
 }
 
 /// Конфигурация одного LLM-провайдера (OpenAI-совместимый API).
@@ -543,10 +548,19 @@ impl Default for Config {
             ),
         );
         harnesses.insert("qwen-code".into(), harness("qwen", &[], PromptMode::Stdin));
-        harnesses.insert("openclaw".into(), harness("openclaw", &["agent", "--message"], PromptMode::Flag));
-        harnesses.insert("hermes".into(), harness("hermes", &["-p"], PromptMode::Stdin));
-        harnesses.insert("theseus".into(), harness("theseus", &["run", "--task"], PromptMode::Flag));
-        harnesses.insert("codewhale".into(), harness("codewhale", &["-p"], PromptMode::Stdin));
+        // Флаги валидированы живыми прогонами флота (бенч 04_payment-idempotency,
+        // 2026-08): неверные режимы/флаги давали код 2 на argparse.
+        harnesses.insert(
+            "openclaw".into(),
+            harness(
+                "openclaw",
+                &["agent", "--agent", "main", "--message", "{prompt}"],
+                PromptMode::Flag,
+            ),
+        );
+        harnesses.insert("hermes".into(), harness("hermes", &["-z", "{prompt}"], PromptMode::Flag));
+        harnesses.insert("theseus".into(), harness("theseus", &["-p", "{prompt}"], PromptMode::Flag));
+        harnesses.insert("codewhale".into(), harness("codewhale", &["-p", "{prompt}"], PromptMode::Flag));
 
         Self {
             default_model: "deepseek".into(),
@@ -562,6 +576,7 @@ impl Default for Config {
             bash: BashConfig::default(),
             cron: CronSettings::default(),
             paths: PathsConfig::default(),
+            loaded_from: None,
         }
     }
 }
@@ -601,6 +616,7 @@ impl Config {
                     .map_err(|e| HarnessError::io(path, e))?;
                 let mut cfg: Config = toml::from_str(&text)?;
                 cfg.expand_tildes();
+                cfg.loaded_from = Some(path.clone());
                 return Ok(cfg);
             }
         }
@@ -665,6 +681,46 @@ mod tests {
         assert!(cfg.harnesses.contains_key("claude-code"));
         assert!(cfg.harnesses.contains_key("codewhale"));
         assert!(cfg.web.arch_sites.len() >= 8);
+    }
+
+    #[test]
+    fn default_adapters_carry_validated_flags() {
+        // Дефолты валидированы живыми прогонами флота (2026-08): неверный
+        // флаг/режим давал argparse-код 2 (hermes: «unrecognized arguments: -p»).
+        let cfg = Config::default();
+        let h = &cfg.harnesses;
+        let flags = |name: &str| (h[name].args.clone(), h[name].prompt_mode.clone());
+        assert_eq!(flags("hermes"), (vec!["-z".to_string(), "{prompt}".to_string()], PromptMode::Flag));
+        assert_eq!(flags("theseus"), (vec!["-p".to_string(), "{prompt}".to_string()], PromptMode::Flag));
+        assert_eq!(flags("codewhale"), (vec!["-p".to_string(), "{prompt}".to_string()], PromptMode::Flag));
+        assert_eq!(
+            flags("openclaw"),
+            (
+                vec![
+                    "agent".to_string(),
+                    "--agent".to_string(),
+                    "main".to_string(),
+                    "--message".to_string(),
+                    "{prompt}".to_string()
+                ],
+                PromptMode::Flag
+            )
+        );
+    }
+
+    #[test]
+    fn load_remembers_config_path_for_hot_reload() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let path = tmp.path().join("config.toml");
+        std::fs::write(&path, "default_model = \"glm\"\n").expect("write");
+        let cfg = Config::load(Some(&path)).expect("load");
+        assert_eq!(cfg.loaded_from.as_deref(), Some(path.as_path()));
+        assert_eq!(cfg.default_model, "glm");
+        // Снапшот дефолтов без файла — loaded_from пуст (горячего источника нет).
+        assert!(Config::default().loaded_from.is_none());
+        // loaded_from не утекает в сериализацию конфига.
+        let text = toml::to_string_pretty(&cfg).expect("serialize");
+        assert!(!text.contains("loaded_from"), "{text}");
     }
 
     #[test]

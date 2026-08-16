@@ -243,7 +243,8 @@ auto_commit = true
 
 [harnesses.openclaw]
 binary = "openclaw"
-args = ["agent", "--message"]         # промпт подставится вместо {prompt} по prompt_mode = "flag"
+# openclaw требует явный выбор сессии: --agent main; иначе код 1.
+args = ["agent", "--agent", "main", "--message", "{prompt}"]
 prompt_mode = "flag"
 timeout_secs = 1800
 idle_timeout_secs = 600
@@ -251,15 +252,17 @@ auto_commit = true
 
 [harnesses.hermes]
 binary = "hermes"
-args = ["-p"]
-prompt_mode = "stdin"
+# hermes: задача передаётся флагом -z PROMPT; stdin-режима нет (код 2 на -p).
+args = ["-z", "{prompt}"]
+prompt_mode = "flag"
 timeout_secs = 1800
 idle_timeout_secs = 600
 auto_commit = true
 
 [harnesses.theseus]
 binary = "theseus"
-args = ["run", "--task"]
+# theseus: -p PROMPT (flag-режим); "run --task" устарело — код 2.
+args = ["-p", "{prompt}"]
 prompt_mode = "flag"
 timeout_secs = 1800
 idle_timeout_secs = 600
@@ -267,8 +270,9 @@ auto_commit = true
 
 [harnesses.codewhale]
 binary = "codewhale"
-args = ["-p"]
-prompt_mode = "stdin"
+# codewhale: -p PROMPT (flag-режим); задача в stdin не принимается.
+args = ["-p", "{prompt}"]
+prompt_mode = "flag"
 timeout_secs = 1800
 idle_timeout_secs = 600
 auto_commit = true
