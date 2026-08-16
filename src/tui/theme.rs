@@ -108,6 +108,13 @@ impl Theme {
     pub(crate) fn art(&self) -> Style {
         Style::default().fg(self.green).bg(self.bg)
     }
+
+    /// Выделение мышью: Tokyo Night selection (#283457), текст читаемым fg.
+    pub(crate) fn selection(&self) -> Style {
+        Style::default()
+            .fg(self.fg)
+            .bg(Color::Rgb(0x28, 0x34, 0x57))
+    }
 }
 
 #[cfg(test)]

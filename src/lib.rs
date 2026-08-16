@@ -20,6 +20,7 @@ pub mod agent;
 pub mod agentsmd;
 pub mod assets;
 pub mod bench;
+pub mod clipboard;
 pub mod config;
 pub mod control;
 pub mod cron;

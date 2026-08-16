@@ -498,6 +498,15 @@ fn draw_dialog(f: &mut Frame, area: Rect, app: &mut App, theme: &Theme) {
         app.scroll = max_scroll;
     }
     let skip = total.saturating_sub(view_h + app.scroll);
+    // Состояние для выделения мышью: внутренняя область, plain-строки, сдвиг.
+    app.dialog_inner = Some(Rect {
+        x: area.x + 1,
+        y: area.y + 1,
+        width: area.width.saturating_sub(2),
+        height: area.height.saturating_sub(2),
+    });
+    app.dialog_lines = lines.iter().map(line_to_plain).collect();
+    app.dialog_skip = skip;
     let visible: Vec<Line> = lines.into_iter().skip(skip).take(view_h).collect();
 
     let title = if app.scroll > 0 {
@@ -556,6 +565,28 @@ fn draw_dialog(f: &mut Frame, area: Rect, app: &mut App, theme: &Theme) {
     } else {
         app.jump_btn = None;
     }
+
+    // Выделение мышью: пост-пасс поверх виджета — инверсия фона ячеек.
+    // Строки считает app.selection_rows() в координатах контента.
+    if app.selection.is_some() {
+        if let Some(inner) = app.dialog_inner {
+            let buf = f.buffer_mut();
+            for (idx, c0, c1) in app.selection_rows() {
+                let row = inner.y + u16_sat(idx.saturating_sub(app.dialog_skip));
+                for col in c0..c1 {
+                    let x = inner.x + u16_sat(col);
+                    if x < inner.x + inner.width {
+                        buf[(x, row)].set_style(theme.selection());
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Plain-текст строки ratatui (конкатенация спанов) — для выделения мышью.
+fn line_to_plain(line: &Line<'_>) -> String {
+    line.spans.iter().map(|s| s.content.as_ref()).collect()
 }
 
 /// Блок чата → стилизованные строки (до переноса по ширине).
@@ -1327,6 +1358,30 @@ mod tests {
         let first = text.lines().position(|l| l.contains("первая строка")).unwrap();
         let second = text.lines().position(|l| l.contains("вторая строка")).unwrap();
         assert_eq!(second, first + 1, "строки ввода идут подряд:\n{text}");
+    }
+
+    #[test]
+    fn selection_highlights_cells_with_selection_style() {
+        let mut app = test_app();
+        app.screen = Screen::Chat;
+        app.push_block(ChatBlock::User("скопируй меня мышкой".into()));
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).expect("terminal");
+        terminal.draw(|f| app.render(f)).expect("draw");
+        let inner = app.dialog_inner.expect("inner после рендера");
+        // Выделяем 5 ячеек на строке сообщения (вторая строка контента —
+        // после заголовка «вы»): колонки 2..6 от начала области.
+        let row = inner.y + 1;
+        app.selection = Some(((inner.x + 2, row), (inner.x + 6, row)));
+        terminal.draw(|f| app.render(f)).expect("draw");
+        let buf = terminal.backend().buffer();
+        let sel_bg = ratatui::style::Color::Rgb(0x28, 0x34, 0x57);
+        assert_eq!(buf[(inner.x + 2, row)].bg, sel_bg, "первая ячейка подсвечена");
+        assert_eq!(buf[(inner.x + 6, row)].bg, sel_bg, "пятая подсвечена");
+        assert_ne!(
+            buf[(inner.x + 7, row)].bg,
+            sel_bg,
+            "шестая — уже вне выделения"
+        );
     }
 
     #[test]

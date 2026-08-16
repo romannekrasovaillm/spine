@@ -10,6 +10,7 @@ use std::sync::Arc;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::Frame;
 use tokio::sync::mpsc;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::agent::{AgentEvent, AgentSession, prompts, slash};
 use crate::config::Config;
@@ -508,6 +509,17 @@ pub(crate) struct App {
     context_budget: usize,
     /// Область кнопки «▼ — к свежему ответу» (ставит рендер; None — у дна).
     pub(crate) jump_btn: Option<ratatui::layout::Rect>,
+    /// Выделение мышью в окне диалога: якорь и текущий конец (экранные
+    /// координаты). Снимается скроллом, новым контентом и кликом без драга.
+    pub(crate) selection: Option<((u16, u16), (u16, u16))>,
+    /// Внутренняя область диалога без рамки (ставит рендер) — маппинг
+    /// экранных координат выделения в строки контента.
+    pub(crate) dialog_inner: Option<ratatui::layout::Rect>,
+    /// Plain-текст всех строк контента диалога после переноса по ширине
+    /// (ставит рендер) — источник текста для копирования выделения.
+    pub(crate) dialog_lines: Vec<String>,
+    /// Индекс первой видимой строки контента (ставит рендер).
+    pub(crate) dialog_skip: usize,
     /// Тема оформления.
     pub(crate) theme: Theme,
     /// Канал событий в event loop.
@@ -613,6 +625,10 @@ impl App {
             history_tokens: 0,
             context_budget,
             jump_btn: None,
+            selection: None,
+            dialog_inner: None,
+            dialog_lines: Vec::new(),
+            dialog_skip: 0,
             theme: Theme::default(),
             msg_tx: None,
         }
@@ -736,11 +752,14 @@ impl App {
     /// в просмотрщике — его вертикаль, а с Shift — горизонтальная панорама.
     /// Клик левой кнопкой по «▼» в правом нижнем углу диалога — прыжок
     /// к свежему ответу. Работает и во время хода модели (как PgUp/PgDn).
+    /// Драг левой кнопкой по диалогу — выделение текста; на отпускании
+    /// выделенное копируется в буфер обмена (см. [`crate::clipboard`]).
     pub(crate) fn handle_mouse(&mut self, mouse: crossterm::event::MouseEvent) {
         if !matches!(self.screen, Screen::Chat) {
             return;
         }
         const WHEEL_LINES: usize = 3;
+        use crossterm::event::MouseButton as B;
         use crossterm::event::MouseEventKind as K;
         if let Some(mut v) = self.viewer {
             let shift = mouse.modifiers.contains(KeyModifiers::SHIFT);
@@ -754,19 +773,104 @@ impl App {
             self.viewer = Some(v);
             return;
         }
+        let pos = ratatui::layout::Position::new(mouse.column, mouse.row);
         match mouse.kind {
             // Клик по кнопке «▼» (справа внизу диалога) — к свежему ответу.
-            K::Down(crossterm::event::MouseButton::Left)
-                if self.jump_btn.is_some_and(|r| {
-                    r.contains(ratatui::layout::Position::new(mouse.column, mouse.row))
-                }) =>
-            {
+            K::Down(B::Left) if self.jump_btn.is_some_and(|r| r.contains(pos)) => {
                 self.scroll_to_bottom();
             }
+            // Начало выделения — только внутри окна диалога; клик вне его
+            // снимает текущее выделение.
+            K::Down(B::Left) if self.dialog_inner.is_some_and(|r| r.contains(pos)) => {
+                self.selection = Some(((mouse.column, mouse.row), (mouse.column, mouse.row)));
+            }
+            K::Down(B::Left) => self.selection = None,
+            K::Drag(B::Left) => {
+                if let Some((_, end)) = &mut self.selection {
+                    *end = (mouse.column, mouse.row);
+                }
+            }
+            K::Up(B::Left) => self.finish_selection(),
             K::ScrollUp => self.scroll_by(WHEEL_LINES),
             K::ScrollDown => self.scroll_back(WHEEL_LINES),
             _ => {}
         }
+    }
+
+    /// Отпускание кнопки: точечный клик снимает выделение, драг —
+    /// копирует выделенный текст в буфер обмена.
+    fn finish_selection(&mut self) {
+        let Some((anchor, end)) = self.selection else {
+            return;
+        };
+        if anchor == end {
+            self.selection = None;
+            return;
+        }
+        let text = self.selected_text();
+        if text.is_empty() {
+            self.selection = None;
+            return;
+        }
+        let n = text.chars().count();
+        self.status_extra = Some(match crate::clipboard::copy(&text) {
+            Ok(mech) => format!("✓ скопировано {n} симв. ({mech})"),
+            Err(e) => format!("✗ {e}"),
+        });
+    }
+
+    /// Строки текущего выделения в координатах контента диалога:
+    /// (индекс строки в dialog_lines, начальная колонка, конечная колонка
+    /// exclusive) — в display-колонках. Порядок — чтение (сверху вниз).
+    pub(crate) fn selection_rows(&self) -> Vec<(usize, usize, usize)> {
+        let mut rows = Vec::new();
+        let Some(((ax, ay), (bx, by))) = self.selection else {
+            return rows;
+        };
+        let Some(inner) = self.dialog_inner else {
+            return rows;
+        };
+        // Нормализация в порядок чтения: драг мог идти снизу вверх/справа налево.
+        let ((sx, sy), (ex, ey)) = if (ay, ax) <= (by, bx) {
+            ((ax, ay), (bx, by))
+        } else {
+            ((bx, by), (ax, ay))
+        };
+        for row in sy..=ey {
+            if row < inner.y || row >= inner.y + inner.height {
+                continue;
+            }
+            let idx = self.dialog_skip + usize::from(row - inner.y);
+            let line_w = self
+                .dialog_lines
+                .get(idx)
+                .map_or(0, |l| UnicodeWidthStr::width(l.as_str()));
+            let sc = usize::from(sx.saturating_sub(inner.x));
+            let ec = usize::from(ex.saturating_sub(inner.x));
+            let (c0, c1) = if sy == ey {
+                (sc, ec + 1)
+            } else if row == sy {
+                (sc, line_w)
+            } else if row == ey {
+                (0, ec + 1)
+            } else {
+                (0, line_w)
+            };
+            rows.push((idx, c0, c1.min(line_w)));
+        }
+        rows
+    }
+
+    /// Текст текущего выделения (построчно, с переносами строк).
+    fn selected_text(&self) -> String {
+        let mut lines = Vec::new();
+        for (idx, c0, c1) in self.selection_rows() {
+            let Some(line) = self.dialog_lines.get(idx) else {
+                continue;
+            };
+            lines.push(slice_by_cols(line, c0, c1));
+        }
+        lines.join("\n").trim().to_string()
     }
 
     fn handle_chat_key(&mut self, key: KeyEvent) {
@@ -1448,6 +1552,8 @@ impl App {
         if self.stick {
             self.scroll = 0;
         }
+        // Контент сдвинулся — выделение указывало бы на чужой текст.
+        self.selection = None;
     }
 
     /// Размер «страницы» прокрутки.
@@ -1459,6 +1565,7 @@ impl App {
     pub(crate) fn scroll_by(&mut self, n: usize) {
         self.scroll = self.scroll.saturating_add(n);
         self.stick = false;
+        self.selection = None;
     }
 
     /// Прокрутка вниз на `n` строк; на дне — снова прилипнуть.
@@ -1467,6 +1574,7 @@ impl App {
         if self.scroll == 0 {
             self.stick = true;
         }
+        self.selection = None;
     }
 
     /// Прилипнуть к низу чата.
@@ -1474,6 +1582,23 @@ impl App {
         self.scroll = 0;
         self.stick = true;
     }
+}
+
+/// Срез строки по display-колонкам [c0, c1) — unicode-width-безопасно.
+fn slice_by_cols(line: &str, c0: usize, c1: usize) -> String {
+    let mut col = 0usize;
+    let mut out = String::new();
+    for ch in line.chars() {
+        let w = UnicodeWidthChar::width(ch).unwrap_or(0);
+        if col + w > c1 {
+            break;
+        }
+        if col >= c0 {
+            out.push(ch);
+        }
+        col += w;
+    }
+    out
 }
 
 /// Отправляет ответ ожидающему инструменту (oneshot; приёмник мог уйти —
@@ -1982,6 +2107,92 @@ mod tests {
         input.move_up_line();
         input.move_home();
         assert_eq!(input.cursor(), 0, "начало первой строки");
+    }
+
+    /// Приложение с фиктивным окном диалога для тестов выделения мышью.
+    fn app_with_dialog() -> App {
+        let mut app = test_app();
+        app.screen = Screen::Chat;
+        app.dialog_inner = Some(ratatui::layout::Rect {
+            x: 1,
+            y: 1,
+            width: 40,
+            height: 5,
+        });
+        app.dialog_lines = vec![
+            "первая строка".into(),
+            "вторая строка".into(),
+            "третья строка".into(),
+        ];
+        app.dialog_skip = 0;
+        app
+    }
+
+    /// Событие мыши без модификаторов.
+    fn mouse(kind: crossterm::event::MouseEventKind, x: u16, y: u16) -> crossterm::event::MouseEvent {
+        crossterm::event::MouseEvent {
+            kind,
+            column: x,
+            row: y,
+            modifiers: KeyModifiers::NONE,
+        }
+    }
+
+    #[test]
+    fn slice_by_cols_unicode_safe() {
+        assert_eq!(slice_by_cols("hello", 1, 4), "ell");
+        assert_eq!(slice_by_cols("привет", 0, 3), "при");
+        assert_eq!(slice_by_cols("abc", 5, 9), "");
+    }
+
+    #[test]
+    fn mouse_drag_selects_text_and_reports_copy() {
+        use crossterm::event::MouseButton as B;
+        use crossterm::event::MouseEventKind as K;
+        let mut app = app_with_dialog();
+        // Драг с (1,1) по (5,2): первая строка целиком + «втора» второй.
+        app.handle_mouse(mouse(K::Down(B::Left), 1, 1));
+        app.handle_mouse(mouse(K::Drag(B::Left), 5, 2));
+        assert_eq!(app.selected_text(), "первая строка\nвтора");
+        app.handle_mouse(mouse(K::Up(B::Left), 5, 2));
+        assert!(
+            app.selection.is_some(),
+            "выделение держится до следующего клика"
+        );
+        assert!(
+            app.status_extra().is_some(),
+            "статус-бар сообщает о копировании (успех или отказ механизма)"
+        );
+    }
+
+    #[test]
+    fn mouse_drag_bottom_up_normalizes_reading_order() {
+        use crossterm::event::MouseButton as B;
+        use crossterm::event::MouseEventKind as K;
+        let mut app = app_with_dialog();
+        // Драг снизу вверх: (3,3) → (1,2) — порядок чтения всё равно сверху вниз.
+        app.handle_mouse(mouse(K::Down(B::Left), 3, 3));
+        app.handle_mouse(mouse(K::Drag(B::Left), 1, 2));
+        assert_eq!(app.selected_text(), "вторая строка\nтре");
+    }
+
+    #[test]
+    fn plain_click_and_scroll_clear_selection() {
+        use crossterm::event::MouseButton as B;
+        use crossterm::event::MouseEventKind as K;
+        let mut app = app_with_dialog();
+        app.handle_mouse(mouse(K::Down(B::Left), 1, 1));
+        app.handle_mouse(mouse(K::Drag(B::Left), 8, 2));
+        assert!(app.selection.is_some());
+        // Точечный клик (без драга) снимает выделение без копирования.
+        app.handle_mouse(mouse(K::Down(B::Left), 4, 2));
+        app.handle_mouse(mouse(K::Up(B::Left), 4, 2));
+        assert!(app.selection.is_none(), "клик без драга снял выделение");
+        // Скролл колесом сдвигает контент — выделение снимается.
+        app.handle_mouse(mouse(K::Down(B::Left), 1, 1));
+        app.handle_mouse(mouse(K::Drag(B::Left), 8, 2));
+        app.handle_mouse(mouse(K::ScrollUp, 1, 1));
+        assert!(app.selection.is_none(), "скролл снял выделение");
     }
 
     #[tokio::test]
