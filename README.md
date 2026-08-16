@@ -211,7 +211,12 @@ BMAD, Spec Kit, OpenSpec и др.):
 - **Handoff кодовым харнессам**: Claude Code, Qwen Code, OpenClaw, Hermes,
   Theseus, CodeWhale — пакеты `.arch-handoff/` + прогон инструментом
   `harness_run` прямо из диалога (адаптер знает режим промпта, флаги
-  разрешений; JSON-контракт результата извлекается в сводку). **Умные
+  разрешений; JSON-контракт результата извлекается в сводку). Контракт
+  TASK.md требует от исполнителя **финального git-коммита** (секция
+  «Финализация» — результат забирается из git log); если исполнитель его
+  не сделал, харнесс сам фиксирует оставшиеся правки **авто-коммитом**
+  (кроме `.arch-handoff/` и интерпретерного мусора; `auto_commit = false`
+  в конфиге адаптера выключает). **Умные
   таймауты**: абсолютный потолок 30 мин + таймаут тишины 10 мин (нет вывода
   и изменений файлов репо → завис); молча работающий харнесс не трогаем,
   при прерывании убивается вся процессная группа, частичный вывод
@@ -412,7 +417,13 @@ BMAD, Spec Kit, OpenSpec, and more):
 Theseus, CodeWhale — `.arch-handoff/` packages with invariants, acceptance
 criteria, and a headless JSON contract, plus in-chat execution via the
 `harness_run` tool (the adapter knows the prompt mode and permission flags;
-the JSON result contract is extracted into the summary). **Smart timeouts**:
+the JSON result contract is extracted into the summary). The TASK.md
+contract requires a **final git commit** from the executor (the
+"Finalization" section — results are collected from the git log); if the
+executor finishes without committing, the harness commits the leftover
+changes itself (**auto-commit**, excluding `.arch-handoff/` and interpreter
+junk; disable with `auto_commit = false` in the adapter config).
+**Smart timeouts**:
 a 30-min absolute ceiling plus a 10-min silence timeout (no output and no
 repo file changes → the run is hung); a quiet but working harness is left
 alone, on abort the whole process group is killed (no orphans), and partial

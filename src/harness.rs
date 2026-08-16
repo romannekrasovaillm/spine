@@ -296,12 +296,18 @@ pub fn generate_handoff(
     })
 }
 
-/// Рендерит TASK.md: задача + контракт результата (headless JSON-статус).
+/// Рендерит TASK.md: задача + финализация (git-коммит) + контракт результата
+/// (headless JSON-статус).
 fn render_task_md(task: &str) -> String {
-    let mut s = String::with_capacity(task.len() + 1024);
+    let mut s = String::with_capacity(task.len() + 1600);
     s.push_str("# Задача для кодового харнесса\n\n");
     s.push_str(task.trim());
-    s.push_str("\n\n## Контракт результата\n\n");
+    s.push_str("\n\n## Финализация (обязательно)\n\n");
+    s.push_str("Результат забирается из git, поэтому перед финальным ответом зафиксируй работу коммитом:\n\n");
+    s.push_str("```bash\ngit add -A -- . ':!.arch-handoff'\ngit commit -m \"<кратко: что реализовано>\"\ngit status --short   # пусто, кроме .arch-handoff/\n```\n\n");
+    s.push_str("- Коммитится код и тесты; служебный каталог `.arch-handoff/` в коммит не входит.\n");
+    s.push_str("- Работа без коммита считается невыполненной: оркестратор увидит её только через git log.\n");
+    s.push_str("\n## Контракт результата\n\n");
     s.push_str("Финальный ответ обязан завершаться JSON-объектом (после него — ни символа):\n\n");
     s.push_str("```json\n{\"status\": \"complete|partial|blocked\", \"assumptions\": [], \"open_questions\": [], \"conflicts_with_prior_decisions\": []}\n```\n\n");
     s.push_str("- `status`: `complete` — выполнено полностью; `partial` — частично; `blocked` — заблокировано.\n");
@@ -464,6 +470,20 @@ pub struct HarnessRun {
     pub duration_secs: f64,
     /// Как завершился прогон.
     pub termination: Termination,
+    /// Авто-коммит незакоммиченных правок исполнителя (None — не потребовался:
+    /// дерево чистое, прогон прерван, репозиторий не git или опция выключена).
+    pub auto_commit: Option<AutoCommit>,
+}
+
+/// Итог авто-коммита оставшихся после исполнителя правок.
+#[derive(Debug, Clone)]
+pub struct AutoCommit {
+    /// Сколько путей вошло в коммит.
+    pub files: usize,
+    /// Короткий хеш коммита.
+    pub hash: String,
+    /// Сообщение коммита.
+    pub message: String,
 }
 
 /// Способ завершения прогона харнесса.
@@ -684,6 +704,14 @@ pub async fn run_harness(
     let take = |b: &Arc<Mutex<Vec<u8>>>| {
         String::from_utf8_lossy(&b.lock().unwrap_or_else(|p| p.into_inner())).into_owned()
     };
+    // Страховка финализации: контракт TASK.md требует от исполнителя
+    // финальный git-коммит; не сделал — фиксируем сами, иначе работа
+    // теряется для оркестратора (результат забирается из git).
+    let auto_commit = if termination == Termination::Completed && cfg.auto_commit {
+        auto_commit_leftovers(repo, name, task)
+    } else {
+        None
+    };
     Ok(HarnessRun {
         harness: name.into(),
         exit_code: child.try_wait().ok().flatten().and_then(|s| s.code()),
@@ -691,6 +719,78 @@ pub async fn run_harness(
         stderr: take(&stderr_buf),
         duration_secs: started.elapsed().as_secs_f64(),
         termination,
+        auto_commit,
+    })
+}
+
+/// Выполняет git-команду в репозитории; None — команда упала или stderr.
+fn git_out(repo: &Path, args: &[&str]) -> Option<String> {
+    let out = std::process::Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(args)
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
+/// Коммитит незакоммиченные правки исполнителя (кроме `.arch-handoff/` и
+/// мусора `__pycache__/`/`*.pyc`/`.pytest_cache/`). None — не git-репозиторий
+/// или дерево чистое. Сбой коммита не роняет прогон: исполнитель мог
+/// закоммитить частично, диагностику видно по `git status`.
+fn auto_commit_leftovers(repo: &Path, harness: &str, task: &str) -> Option<AutoCommit> {
+    // Не git-репозиторий — нечего фиксировать.
+    git_out(repo, &["rev-parse", "--git-dir"])?;
+    // Добавляем всё, кроме служебного пакета и типичного мусора интерпретеров.
+    git_out(
+        repo,
+        &[
+            "add",
+            "-A",
+            "--",
+            ".",
+            ":!.arch-handoff",
+            ":(exclude,glob)**/__pycache__/**",
+            ":(exclude,glob)**/*.pyc",
+            ":(exclude,glob)**/.pytest_cache/**",
+        ],
+    )?;
+    let staged = git_out(repo, &["diff", "--cached", "--name-only"])?;
+    let files = staged.lines().filter(|l| !l.trim().is_empty()).count();
+    if files == 0 {
+        return None;
+    }
+    let first_line = task.lines().next().unwrap_or("задача").trim();
+    let mut title: String = first_line.chars().take(60).collect();
+    if first_line.chars().count() > 60 {
+        title.push('…');
+    }
+    let message = format!("harness({harness}): {title}");
+    // Явная идентичность: в свежих worktree/контейнерах user.name/user.email
+    // часто не настроены, и без этого коммит падает.
+    git_out(
+        repo,
+        &[
+            "-c",
+            "user.name=spine-harness",
+            "-c",
+            "user.email=spine-harness@localhost",
+            "commit",
+            "-q",
+            "-m",
+            &message,
+        ],
+    )?;
+    let hash = git_out(repo, &["rev-parse", "--short", "HEAD"])?
+        .trim()
+        .to_string();
+    Some(AutoCommit {
+        files,
+        hash,
+        message,
     })
 }
 
@@ -1008,6 +1108,16 @@ impl Tool for HarnessRunTool {
                         );
                     }
                 }
+                if let Some(ac) = &run.auto_commit {
+                    let _ = writeln!(
+                        content,
+                        "АВТО-КОММИТ: исполнитель не зафиксировал результат — \
+                         харнесс закоммитил {} путей: {} «{}». \
+                         Контракт TASK.md требует финального коммита от самого \
+                         исполнителя; при повторении проверьте задачу/доступ к git.",
+                        ac.files, ac.hash, ac.message
+                    );
+                }
                 match extract_contract(&run.stdout) {
                     Some(v) => {
                         let count = |key: &str| {
@@ -1117,6 +1227,10 @@ mod tests {
 
         let task_md = std::fs::read_to_string(dir.join("TASK.md")).expect("TASK.md");
         assert!(task_md.contains("сделать фичу X"));
+        // Финализация: контракт требует git-коммита результата (иначе
+        // оркестратор работу не увидит — регрессия «агенты без коммита»).
+        assert!(task_md.contains("## Финализация (обязательно)"));
+        assert!(task_md.contains("git add -A -- . ':!.arch-handoff'"));
         assert!(task_md.contains("## Контракт результата"));
         assert!(task_md.contains("\"complete|partial|blocked\""));
 
@@ -1465,6 +1579,133 @@ mod tests {
             })
             .is_some_and(|state| !matches!(state.as_str(), "Z" | "X" | "x"));
         assert!(!alive, "дочерний процесс {pid} пережил таймаут — сирота");
+    }
+
+    /// git-репозиторий с одним baseline-коммитом (явная идентичность —
+    /// на CI/в контейнерах user.name/user.email может не быть).
+    fn git_repo_with_baseline(dir: &std::path::Path) {
+        std::fs::create_dir_all(dir).expect("mkdir repo");
+        std::fs::write(dir.join("README.md"), "# baseline\n").expect("readme");
+        let git = |args: &[&str]| {
+            let out = std::process::Command::new("git")
+                .arg("-C")
+                .arg(dir)
+                .args(args)
+                .output()
+                .expect("git");
+            assert!(out.status.success(), "git {args:?}: {:?}", out.stderr);
+        };
+        git(&["init", "-q"]);
+        git(&["add", "README.md"]);
+        git(&[
+            "-c",
+            "user.name=test",
+            "-c",
+            "user.email=test@test",
+            "commit",
+            "-q",
+            "-m",
+            "baseline",
+        ]);
+    }
+
+    /// Харнесс-заглушка: пишет код + интерпретерный мусор, НЕ коммитит
+    /// (воспроизводит дефект «агенты завершились без финального коммита»).
+    fn dirty_executor_cfg() -> CodingHarnessConfig {
+        CodingHarnessConfig {
+            binary: "sh".into(),
+            args: vec![
+                "-c".into(),
+                "mkdir -p spinecalc __pycache__ .arch-handoff; \
+                 echo 'def validate_amount(v, l): return True' > spinecalc/amount.py; \
+                 echo junk > __pycache__/x.pyc; \
+                 echo meta > .arch-handoff/TASK.md; \
+                 echo '{\"status\": \"complete\"}'"
+                .into(),
+            ],
+            prompt_mode: PromptMode::Stdin,
+            timeout_secs: 30,
+            idle_timeout_secs: 0,
+            ..CodingHarnessConfig::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn auto_commit_commits_executor_leftovers() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let repo = tmp.path().join("repo");
+        git_repo_with_baseline(&repo);
+        let run = run_harness(
+            "dirty",
+            &dirty_executor_cfg(),
+            &repo,
+            "реализовать модуль amount",
+        )
+        .await
+        .expect("run");
+        assert_eq!(run.termination, Termination::Completed);
+        let ac = run.auto_commit.expect("харнесс обязан до-коммитить хвост");
+        assert_eq!(ac.files, 1, "только код, без мусора: {ac:?}");
+        assert!(ac.message.starts_with("harness(dirty): реализовать модуль amount"));
+        assert!(!ac.hash.is_empty());
+        // В истории — baseline + авто-коммит с кодом; физически в дереве
+        // остаются лишь некоммитимые служебные/мусорные каталоги.
+        let status = git_out(&repo, &["status", "--porcelain"]).expect("status");
+        for line in status.lines() {
+            assert!(
+                line.contains(".arch-handoff/") || line.contains("__pycache__/"),
+                "посторонний незакоммиченный путь: {line}"
+            );
+        }
+        let log = git_out(&repo, &["log", "--oneline"]).expect("log");
+        assert_eq!(log.lines().count(), 2, "{log}");
+        let committed = git_out(&repo, &["show", "--name-only", "--pretty=%s", "HEAD"])
+            .expect("show");
+        assert!(committed.contains("spinecalc/amount.py"), "{committed}");
+        assert!(!committed.contains("__pycache__"), "{committed}");
+        assert!(!committed.contains(".arch-handoff"), "{committed}");
+    }
+
+    #[tokio::test]
+    async fn auto_commit_disabled_leaves_tree_dirty() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let repo = tmp.path().join("repo");
+        git_repo_with_baseline(&repo);
+        let cfg = CodingHarnessConfig {
+            auto_commit: false,
+            ..dirty_executor_cfg()
+        };
+        let run = run_harness("dirty-off", &cfg, &repo, "задача")
+            .await
+            .expect("run");
+        assert_eq!(run.termination, Termination::Completed);
+        assert!(run.auto_commit.is_none());
+        let status = git_out(&repo, &["status", "--porcelain"]).expect("status");
+        assert!(status.contains("spinecalc/"), "{status}");
+    }
+
+    #[tokio::test]
+    async fn auto_commit_clean_repo_is_noop() {
+        // Исполнитель всё закоммитил сам (или ничего не писал) — харнесс
+        // не плодит пустых коммитов.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let repo = tmp.path().join("repo");
+        git_repo_with_baseline(&repo);
+        let cfg = CodingHarnessConfig {
+            binary: "sh".into(),
+            args: vec!["-c".into(), "echo ok".into()],
+            prompt_mode: PromptMode::Stdin,
+            timeout_secs: 30,
+            idle_timeout_secs: 0,
+            ..CodingHarnessConfig::default()
+        };
+        let run = run_harness("clean", &cfg, &repo, "задача")
+            .await
+            .expect("run");
+        assert_eq!(run.termination, Termination::Completed);
+        assert!(run.auto_commit.is_none(), "пустой коммит не нужен");
+        let log = git_out(&repo, &["log", "--oneline"]).expect("log");
+        assert_eq!(log.lines().count(), 1, "{log}");
     }
 
     #[tokio::test]

@@ -538,6 +538,12 @@ async fn main() -> Result<()> {
             };
             let run = arch_harness::harness::run_harness(&harness, hcfg, &repo, &task_text).await?;
             use arch_harness::harness::Termination;
+            if let Some(ac) = &run.auto_commit {
+                println!(
+                    "⚑ авто-коммит: исполнитель не зафиксировал результат — {} путей → {} «{}»",
+                    ac.files, ac.hash, ac.message
+                );
+            }
             if run.termination != Termination::Completed {
                 eprintln!(
                     "⚠ прогон ПРЕРВАН ({}{}); процессная группа завершена, \

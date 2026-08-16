@@ -255,6 +255,13 @@ pub struct CodingHarnessConfig {
     /// (длинный tool-вызов внутри Claude Code и т.п.) при наличии активности
     /// файловой системы НЕ считается зависшим.
     pub idle_timeout_secs: u64,
+    /// Авто-коммит незакоммиченных правок после успешного прогона
+    /// (`Termination::Completed`): контракт TASK.md требует от исполнителя
+    /// финального коммита, но исполнитель может его не сделать — тогда
+    /// харнесс сам фиксирует оставшиеся изменения (кроме `.arch-handoff/`
+    /// и мусора вида `__pycache__/`). Работа исполнителя всегда оказывается
+    /// в git — это точка интеграции параллельных прогонов.
+    pub auto_commit: bool,
 }
 
 impl Default for CodingHarnessConfig {
@@ -266,6 +273,7 @@ impl Default for CodingHarnessConfig {
             env: BTreeMap::new(),
             timeout_secs: 1800,
             idle_timeout_secs: 600,
+            auto_commit: true,
         }
     }
 }

@@ -40,6 +40,13 @@ CodeWhale) — без потери архитектурного контекст
    `conflicts_with_prior_decisions` — харнесс извлекает его в сводку
    (`status=complete · assumptions 3 · open_questions 1`). Отсутствие
    контракта помечается предупреждением: ответ мог быть неполным.
+   **Финализация**: перед JSON исполнитель обязан сделать git-коммит
+   результата (`git add -A -- . ':!.arch-handoff'` + commit) — оркестратор
+   забирает работу из git log; если исполнитель завершился без коммита,
+   харнесс сам фиксирует оставшиеся правки авто-коммитом
+   (`auto_commit = true` в конфиге адаптера; `.arch-handoff/` и мусор
+   `__pycache__/`/`*.pyc` в коммит не попадают) и помечает это строкой
+   «АВТО-КОММИТ» в сводке.
 5. **Архитектурный контроль после прогона**: `control_check` гоняет
    fitness-правила пакета против репозитория (`pytest -q` PASS,
    `no-print-in-py` PASS) и проверяет, что spine-инварианты AD-1…AD-3 не
@@ -115,6 +122,13 @@ CLI-эквивалент вне диалога: `arch handoff --repo <path> --ta
    ` ```json ` block carrying `status` (`complete | partial | blocked`),
    `assumptions`, `open_questions`, `conflicts_with_prior_decisions`; the
    summary line extracts it, and a missing contract is flagged.
+   **Finalization**: before the JSON, the executor must git-commit its work
+   (`git add -A -- . ':!.arch-handoff'` + commit) — the orchestrator
+   collects results from the git log; if the executor finishes without a
+   commit, the harness commits the leftovers itself (auto-commit,
+   `auto_commit = true` in the adapter config; `.arch-handoff/` and
+   `__pycache__/`/`*.pyc` junk are excluded) and flags it with an
+   "AUTO-COMMIT" line in the summary.
 5. **Post-run architectural control**: `control_check` replays the fitness
    rules against the repository and verifies the spine invariants
    (AD-1…AD-3 intact). Open questions are captured as ADRs.
