@@ -3,7 +3,8 @@
 //! Правила (ADR-003): битая ссылка — `error`; дубль ID — `error`; цикл
 //! `depends_on` — `error`; `ADR` без затронутых `CMP` — `warn`; `NFR` без
 //! способа проверки — `warn`; `unverifiable` без обоснования — `error`
-//! (ADR-006). Цели `verified_by` могут ссылаться на правила
+//! (ADR-006); `QAS` с незаполненными полями сценария — `warn` (ADR-007).
+//! Цели `verified_by` могут ссылаться на правила
 //! `C-NNN` файла `CONSTRAINTS.yaml`, лежащего рядом с каталогом модели
 //! (файл отсутствует — такие ссылки не проверяются).
 
@@ -354,7 +355,7 @@ fn check_cycle(model: &Model, issues: &mut Vec<ModelIssue>) {
 }
 
 /// Правила полноты (предупреждения): `ADR` затрагивает `CMP`, у `NFR`
-/// есть способ проверки.
+/// есть способ проверки, у `QAS` заполнены все поля сценария (ADR-007).
 fn check_completeness(model: &Model, issues: &mut Vec<ModelIssue>) {
     for e in &model.entities {
         if e.kind == EntityKind::Adr {
@@ -383,6 +384,33 @@ fn check_completeness(model: &Model, issues: &mut Vec<ModelIssue>) {
                 "nfr-without-verification",
                 format!("{} без способа проверки (поле verification)", e.id),
             );
+        }
+        if e.kind == EntityKind::Qas {
+            let fields: [(&str, &Option<String>); 5] = [
+                ("source", &e.source),
+                ("stimulus", &e.stimulus),
+                ("artifact", &e.artifact),
+                ("response", &e.response),
+                ("measure", &e.measure),
+            ];
+            let missing: Vec<&str> = fields
+                .iter()
+                .filter(|(_, v)| v.as_deref().is_none_or(|s| s.trim().is_empty()))
+                .map(|(name, _)| *name)
+                .collect();
+            if !missing.is_empty() {
+                issue(
+                    issues,
+                    Severity::Warn,
+                    &e.file,
+                    "qas-incomplete",
+                    format!(
+                        "{}: сценарий атрибута качества без полей: {}",
+                        e.id,
+                        missing.join(", ")
+                    ),
+                );
+            }
         }
     }
 }
@@ -544,6 +572,38 @@ mod tests {
             .find(|i| i.rule == "nfr-without-verification")
             .expect("warn");
         assert_eq!(issue.severity, Severity::Warn);
+    }
+
+    #[test]
+    fn qas_incomplete_is_warn_complete_is_clean() {
+        let dir = tempfile::tempdir().expect("tmp");
+        entity(
+            dir.path(),
+            "QAS-001-x.md",
+            "---\nid: QAS-001\ntype: qas\ntitle: Сценарий\nstatus: accepted\n\
+             source: клиент\nstimulus: пик\nartifact: CMP-001\nresponse: ответ",
+        );
+        let report = validate_dir(dir.path());
+        let issue = report
+            .issues
+            .iter()
+            .find(|i| i.rule == "qas-incomplete")
+            .expect("warn о неполном QAS");
+        assert_eq!(issue.severity, Severity::Warn);
+        assert!(issue.message.contains("measure"), "{}", issue.message);
+        assert!(!report.has_errors(), "warn не ломает сборку");
+
+        // Полный сценарий — без находок.
+        let dir2 = tempfile::tempdir().expect("tmp");
+        entity(
+            dir2.path(),
+            "QAS-001-x.md",
+            "---\nid: QAS-001\ntype: qas\ntitle: Сценарий\nstatus: accepted\n\
+             source: клиент\nstimulus: пик\nartifact: CMP-001\nresponse: ответ\n\
+             measure: p99 < 2s",
+        );
+        let report2 = validate_dir(dir2.path());
+        assert!(report2.issues.is_empty(), "{}", report2.summary());
     }
 
     #[test]

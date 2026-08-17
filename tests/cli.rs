@@ -269,3 +269,68 @@ fn trace_check_uncovered_ad_exits_1() {
         .stdout(contains("ad-not-verified"))
         .stdout(contains("Итог: FAIL"));
 }
+
+/// Синтетический кейс для `arch nfr`: `model/` с INT-hop'ом и NFR с целью
+/// p99. `hop_budget_ms` — бюджет hop'а (None — hop без бюджета).
+fn nfr_budget_case(home: &Path, target_ms: u32, hop_budget_ms: Option<u32>) -> PathBuf {
+    let case = home.join("nfr-case");
+    let model = case.join("model");
+    std::fs::create_dir_all(&model).expect("mkdir model");
+    let budget = hop_budget_ms.map_or(String::new(), |b| format!("latency_budget_ms: {b}\n"));
+    std::fs::write(
+        model.join("INT-001-hop.md"),
+        format!("---\nid: INT-001\ntype: int\ntitle: Hop\nstatus: accepted\n{budget}---\n"),
+    )
+    .expect("write INT");
+    std::fs::write(
+        model.join("NFR-001-lat.md"),
+        format!(
+            "---\nid: NFR-001\ntype: nfr\ntitle: Latency\nstatus: accepted\n\
+             verification: histogram\np99_target_ms: {target_ms}\naffects: [INT-001]\n---\n"
+        ),
+    )
+    .expect("write NFR");
+    case
+}
+
+/// `arch nfr budget`: сумма hop'ов в пределах цели p99 → PASS, exit 0 (ADR-007).
+#[test]
+fn nfr_budget_converging_exits_0() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let case = nfr_budget_case(tmp.path(), 2000, Some(800));
+    let mut cmd = arch_cmd(tmp.path());
+    cmd.arg("nfr").arg("budget").arg(case.as_os_str());
+    cmd.assert()
+        .success()
+        .stdout(contains("резерв: 1200 мс"))
+        .stdout(contains("Итог: PASS"));
+}
+
+/// `arch nfr budget`: сумма hop'ов выше цели p99 → error с виновными hop'ами,
+/// exit 1 (DoD P1-1, скриптовый гейт).
+#[test]
+fn nfr_budget_exceeded_exits_1_with_guilty_hops() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let case = nfr_budget_case(tmp.path(), 2000, Some(3000));
+    let mut cmd = arch_cmd(tmp.path());
+    cmd.arg("nfr").arg("budget").arg(case.as_os_str());
+    cmd.assert()
+        .code(1)
+        .stdout(contains("budget-exceeded"))
+        .stdout(contains("INT-001=3000"))
+        .stdout(contains("Итог: FAIL"));
+}
+
+/// `arch nfr budget`: hop без заявленного бюджета → error, exit 1.
+#[test]
+fn nfr_budget_missing_hop_budget_exits_1() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let case = nfr_budget_case(tmp.path(), 2000, None);
+    let mut cmd = arch_cmd(tmp.path());
+    cmd.arg("nfr").arg("budget").arg(case.as_os_str());
+    cmd.assert()
+        .code(1)
+        .stdout(contains("budget-hop-missing"))
+        .stdout(contains("INT-001"))
+        .stdout(contains("Итог: FAIL"));
+}

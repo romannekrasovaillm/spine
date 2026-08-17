@@ -3,8 +3,13 @@
 //! Формат сущности (ADR-003): markdown-файл с YAML-frontmatter между
 //! маркерами `---`. Обязательные поля: `id`, `type`, `title`, `status`;
 //! опциональные: `date`, связи (`depends_on`, `implements`, `affects`,
-//! `verified_by`), `verification` (для `NFR`). Тело после frontmatter —
-//! свободная проза.
+//! `verified_by`), `verification` (для `NFR`). Количественные поля ADR-007
+//! (все опциональны): `latency_budget_ms` (INT), `p99_target_ms`,
+//! `availability_target`, `rto_minutes`, `rpo_seconds`, `rps_target`,
+//! `currency` (NFR), `availability`, `replicas`, `rps_per_instance`,
+//! `instances`, `cost_per_instance_month`, `exit_cost` (CMP/INT); поля
+//! сценария атрибута качества (QAS): `source`, `stimulus`, `artifact`,
+//! `response`, `measure`. Тело после frontmatter — свободная проза.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -41,6 +46,46 @@ pub struct Entity {
     /// Обоснованный отказ от механической проверки (для `AD`, ADR-006):
     /// непустая строка — почему fitness-правило невозможно.
     pub unverifiable: Option<String>,
+    /// Заявленный latency-бюджет hop'а, мс (для `INT`, ADR-007).
+    pub latency_budget_ms: Option<f64>,
+    /// Целевой p99 цепочки, мс (для `NFR`, ADR-007).
+    pub p99_target_ms: Option<f64>,
+    /// Целевая доступность (SLA) как доля, 0..1 (для `NFR`, ADR-007).
+    pub availability_target: Option<f64>,
+    /// Целевое время восстановления, минут (для `NFR`, ADR-007).
+    pub rto_minutes: Option<f64>,
+    /// Целевая потеря данных, секунд (для `NFR`, ADR-007).
+    pub rpo_seconds: Option<f64>,
+    /// Целевая пропускная способность, запросов/с (для `NFR`, ADR-007).
+    pub rps_target: Option<f64>,
+    /// Валюта стоимостного отчёта (для `NFR`, ADR-007; например `RUB`).
+    pub currency: Option<String>,
+    /// Заявленная доступность участка как доля, 0..1 (для `CMP`/`INT`,
+    /// ADR-007).
+    pub availability: Option<f64>,
+    /// Параллельная избыточность участка: число независимых реплик
+    /// (дефолт 1; для `CMP`/`INT`, ADR-007).
+    pub replicas: Option<u32>,
+    /// Ёмкость одного инстанса, запросов/с (для `CMP`, ADR-007).
+    pub rps_per_instance: Option<f64>,
+    /// Число запущенных инстансов (для `CMP`, ADR-007).
+    pub instances: Option<u32>,
+    /// Тариф: стоимость инстанса в месяц, в валюте кейса (для `CMP`,
+    /// ADR-007).
+    pub cost_per_instance_month: Option<f64>,
+    /// Разовая цена выхода компонента (миграция данных, лицензии,
+    /// переинтеграция; в валюте кейса; для `CMP`, ADR-007).
+    pub exit_cost: Option<f64>,
+    /// Источник стимула (для `QAS`, ADR-007).
+    pub source: Option<String>,
+    /// Стимул (для `QAS`, ADR-007).
+    pub stimulus: Option<String>,
+    /// Артефакт, к которому приложен стимул (для `QAS`, ADR-007).
+    pub artifact: Option<String>,
+    /// Ожидаемая реакция (для `QAS`, ADR-007).
+    pub response: Option<String>,
+    /// Мера реакции — проверяемый порог (для `QAS`, ADR-007).
+    pub measure: Option<String>,
     /// Тело документа (проза после frontmatter); ведущие пустые строки и
     /// хвостовые переводы строк срезаны.
     pub body: String,
@@ -126,6 +171,42 @@ struct Frontmatter {
     verification: Option<String>,
     /// Отказ от механической проверки с обоснованием (для `AD`, ADR-006).
     unverifiable: Option<String>,
+    /// Latency-бюджет hop'а, мс (для `INT`, ADR-007).
+    latency_budget_ms: Option<f64>,
+    /// Цель p99 цепочки, мс (для `NFR`, ADR-007).
+    p99_target_ms: Option<f64>,
+    /// Цель доступности (SLA), доля 0..1 (для `NFR`, ADR-007).
+    availability_target: Option<f64>,
+    /// Цель RTO, минут (для `NFR`, ADR-007).
+    rto_minutes: Option<f64>,
+    /// Цель RPO, секунд (для `NFR`, ADR-007).
+    rpo_seconds: Option<f64>,
+    /// Цель пропускной способности, RPS (для `NFR`, ADR-007).
+    rps_target: Option<f64>,
+    /// Валюта стоимостного отчёта (для `NFR`, ADR-007).
+    currency: Option<String>,
+    /// Доступность участка, доля 0..1 (для `CMP`/`INT`, ADR-007).
+    availability: Option<f64>,
+    /// Число параллельных реплик участка (для `CMP`/`INT`, ADR-007).
+    replicas: Option<u32>,
+    /// Ёмкость инстанса, RPS (для `CMP`, ADR-007).
+    rps_per_instance: Option<f64>,
+    /// Число инстансов (для `CMP`, ADR-007).
+    instances: Option<u32>,
+    /// Тариф за инстанс в месяц (для `CMP`, ADR-007).
+    cost_per_instance_month: Option<f64>,
+    /// Разовая цена выхода (для `CMP`, ADR-007).
+    exit_cost: Option<f64>,
+    /// Источник стимула (для `QAS`, ADR-007).
+    source: Option<String>,
+    /// Стимул (для `QAS`, ADR-007).
+    stimulus: Option<String>,
+    /// Артефакт (для `QAS`, ADR-007).
+    artifact: Option<String>,
+    /// Реакция (для `QAS`, ADR-007).
+    response: Option<String>,
+    /// Мера реакции (для `QAS`, ADR-007).
+    measure: Option<String>,
 }
 
 /// Отделяет frontmatter от тела: `---` в первой строке, затем ближайший
@@ -221,6 +302,24 @@ pub fn parse_entity(file: &Path, text: &str) -> Result<Entity> {
         verified_by: fm.verified_by,
         verification: fm.verification,
         unverifiable: fm.unverifiable,
+        latency_budget_ms: fm.latency_budget_ms,
+        p99_target_ms: fm.p99_target_ms,
+        availability_target: fm.availability_target,
+        rto_minutes: fm.rto_minutes,
+        rpo_seconds: fm.rpo_seconds,
+        rps_target: fm.rps_target,
+        currency: fm.currency,
+        availability: fm.availability,
+        replicas: fm.replicas,
+        rps_per_instance: fm.rps_per_instance,
+        instances: fm.instances,
+        cost_per_instance_month: fm.cost_per_instance_month,
+        exit_cost: fm.exit_cost,
+        source: fm.source,
+        stimulus: fm.stimulus,
+        artifact: fm.artifact,
+        response: fm.response,
+        measure: fm.measure,
         body: body.trim_start_matches(['\r', '\n']).trim_end().to_string(),
         file: file.to_path_buf(),
     })
@@ -328,6 +427,74 @@ mod tests {
         assert_eq!(e.depends_on, ["CMP-002"]);
         assert_eq!(e.verified_by, ["C-001"]);
         assert_eq!(e.body, "Приём платёжных запросов.");
+        // Количественные поля ADR-007 опциональны: без них — None.
+        assert_eq!(e.latency_budget_ms, None);
+        assert_eq!(e.instances, None);
+        assert_eq!(e.source, None);
+    }
+
+    #[test]
+    fn parse_qas_and_quantitative_fields() {
+        let dir = tempfile::tempdir().expect("tmp");
+        let qas = write(
+            dir.path(),
+            "QAS-001-latency.md",
+            "---\nid: QAS-001\ntype: qas\ntitle: Latency при пике\nstatus: accepted\n\
+             implements: [NFR-001]\nsource: клиент канала\nstimulus: запрос в пике 5000 TPS\n\
+             artifact: CMP-003 Authorization\nresponse: ответ об авторизации\n\
+             measure: p99 < 2000 мс\n---\n\nПроза.\n",
+        );
+        let e = parse_entity(&qas, &std::fs::read_to_string(&qas).expect("чтение"))
+            .expect("QAS разбирается");
+        assert_eq!(e.kind, EntityKind::Qas);
+        assert_eq!(e.implements, ["NFR-001"]);
+        assert_eq!(e.source.as_deref(), Some("клиент канала"));
+        assert_eq!(e.stimulus.as_deref(), Some("запрос в пике 5000 TPS"));
+        assert_eq!(e.artifact.as_deref(), Some("CMP-003 Authorization"));
+        assert_eq!(e.response.as_deref(), Some("ответ об авторизации"));
+        assert_eq!(e.measure.as_deref(), Some("p99 < 2000 мс"));
+
+        let int = write(
+            dir.path(),
+            "INT-001-rail.md",
+            "---\nid: INT-001\ntype: int\ntitle: Рельс\nstatus: accepted\n\
+             latency_budget_ms: 800\n---\n",
+        );
+        let e = parse_entity(&int, &std::fs::read_to_string(&int).expect("чтение"))
+            .expect("INT разбирается");
+        assert_eq!(e.latency_budget_ms, Some(800.0));
+
+        let cmp = write(
+            dir.path(),
+            "CMP-001-gw.md",
+            "---\nid: CMP-001\ntype: cmp\ntitle: GW\nstatus: designed\n\
+             availability: 0.999\nreplicas: 3\nrps_per_instance: 2000\ninstances: 4\n\
+             cost_per_instance_month: 45000\nexit_cost: 300000\n---\n",
+        );
+        let e = parse_entity(&cmp, &std::fs::read_to_string(&cmp).expect("чтение"))
+            .expect("CMP разбирается");
+        assert_eq!(e.availability, Some(0.999));
+        assert_eq!(e.replicas, Some(3));
+        assert_eq!(e.rps_per_instance, Some(2000.0));
+        assert_eq!(e.instances, Some(4));
+        assert_eq!(e.cost_per_instance_month, Some(45000.0));
+        assert_eq!(e.exit_cost, Some(300000.0));
+
+        let nfr = write(
+            dir.path(),
+            "NFR-001-lat.md",
+            "---\nid: NFR-001\ntype: nfr\ntitle: Latency\nstatus: accepted\n\
+             verification: histogram\np99_target_ms: 2000\navailability_target: 0.9999\n\
+             rto_minutes: 15\nrpo_seconds: 0\nrps_target: 5000\ncurrency: RUB\n---\n",
+        );
+        let e = parse_entity(&nfr, &std::fs::read_to_string(&nfr).expect("чтение"))
+            .expect("NFR разбирается");
+        assert_eq!(e.p99_target_ms, Some(2000.0));
+        assert_eq!(e.availability_target, Some(0.9999));
+        assert_eq!(e.rto_minutes, Some(15.0));
+        assert_eq!(e.rpo_seconds, Some(0.0));
+        assert_eq!(e.rps_target, Some(5000.0));
+        assert_eq!(e.currency.as_deref(), Some("RUB"));
     }
 
     #[test]

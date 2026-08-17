@@ -4,9 +4,15 @@
 //! - Хранение: каталог `model/` целевого проекта, одна сущность = один
 //!   `.md`-файл с YAML-frontmatter (`id`, `type`, `title`, `status` +
 //!   опциональные `date`, `depends_on`, `implements`, `affects`,
-//!   `verified_by`, `verification`) и прозаическим телом;
+//!   `verified_by`, `verification`, количественные поля ADR-007 —
+//!   `latency_budget_ms`, `p99_target_ms`, `availability_target`,
+//!   `rto_minutes`, `rpo_seconds`, `rps_target`, `currency`,
+//!   `availability`, `replicas`, `rps_per_instance`, `instances`,
+//!   `cost_per_instance_month`, `exit_cost` и поля QAS `source`,
+//!   `stimulus`, `artifact`, `response`, `measure`) и прозаическим телом;
 //! - Стабильные типы ID: `CAP-`, `SYS-`, `CMP-`, `INT-`, `NFR-`, `REQ-`,
-//!   `AD-`, `ADR-`, `RISK-`, `OWNER-`; разбор ID — один regex
+//!   `AD-`, `ADR-`, `RISK-`, `OWNER-`, `QAS-` (сценарий атрибута качества,
+//!   ADR-007); разбор ID — один regex
 //!   ([`ID_PATTERN`]/[`id_re`]), переиспользуется в `control::adr_new`;
 //! - [`parse`] — разбор файлов в сущности, [`validate`] — ссылочная
 //!   целостность (битая ссылка/дубль/цикл — `error`; `ADR` без `CMP`,
@@ -42,7 +48,7 @@ pub use validate::{ModelIssue, Severity, ValidationReport, validate};
 /// ([`parse_id`] сверяет длину совпадения), и для префиксного разбора имён
 /// файлов (`ADR-001-saga.md` в `control::adr_new`). Группы: 1 — префикс,
 /// 2 — номер.
-pub const ID_PATTERN: &str = r"^(CAP|SYS|CMP|INT|NFR|REQ|AD|ADR|RISK|OWNER)-([0-9]+)";
+pub const ID_PATTERN: &str = r"^(CAP|SYS|CMP|INT|NFR|REQ|AD|ADR|RISK|OWNER|QAS)-([0-9]+)";
 
 /// Компилирует [`ID_PATTERN`]. Единственное место сборки regex идентификатора.
 ///
@@ -92,11 +98,14 @@ pub enum EntityKind {
     Risk,
     /// `OWNER-` — владелец (команда/роль).
     Owner,
+    /// `QAS-` — сценарий атрибута качества (source/stimulus/artifact/
+    /// response/measure, ADR-007).
+    Qas,
 }
 
 impl EntityKind {
     /// Все типы в стабильном порядке.
-    pub const ALL: [EntityKind; 10] = [
+    pub const ALL: [EntityKind; 11] = [
         EntityKind::Cap,
         EntityKind::Sys,
         EntityKind::Cmp,
@@ -107,6 +116,7 @@ impl EntityKind {
         EntityKind::Adr,
         EntityKind::Risk,
         EntityKind::Owner,
+        EntityKind::Qas,
     ];
 
     /// Префикс идентификатора (`CAP`, `ADR`, …).
@@ -123,6 +133,7 @@ impl EntityKind {
             EntityKind::Adr => "ADR",
             EntityKind::Risk => "RISK",
             EntityKind::Owner => "OWNER",
+            EntityKind::Qas => "QAS",
         }
     }
 
@@ -146,6 +157,7 @@ impl EntityKind {
             EntityKind::Adr => "adr",
             EntityKind::Risk => "risk",
             EntityKind::Owner => "owner",
+            EntityKind::Qas => "qas",
         }
     }
 
@@ -169,6 +181,7 @@ impl EntityKind {
             EntityKind::Adr => "архитектурное решение",
             EntityKind::Risk => "риск",
             EntityKind::Owner => "владелец",
+            EntityKind::Qas => "сценарий атрибута качества",
         }
     }
 
@@ -257,7 +270,7 @@ impl Tool for ModelQueryTool {
             description: "Запрос к типизированной модели архитектуры (каталог model/): \
                           карточка сущности по id со связями и обратными ссылками, либо \
                           список сущностей (с фильтром по типу: cap, sys, cmp, int, nfr, \
-                          req, ad, adr, risk, owner)"
+                          req, ad, adr, risk, owner, qas)"
                 .into(),
             parameters: json!({
                 "type": "object",
@@ -354,6 +367,7 @@ mod tests {
             ("ADR", EntityKind::Adr),
             ("RISK", EntityKind::Risk),
             ("OWNER", EntityKind::Owner),
+            ("QAS", EntityKind::Qas),
         ] {
             let got = parse_id(&format!("{prefix}-7")).expect("валидный ID");
             assert_eq!(got, (kind, 7), "префикс {prefix}");
