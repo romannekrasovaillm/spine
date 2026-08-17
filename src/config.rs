@@ -39,6 +39,8 @@ pub struct Config {
     pub bash: BashConfig,
     /// Настройки планировщика.
     pub cron: CronSettings,
+    /// Настройки LLM-судьи рубрик (калибровка, ADR-004).
+    pub judge: JudgeConfig,
     /// Пути к ассетам, отчётам и сессиям.
     pub paths: PathsConfig,
     /// Откуда конфиг загружен (нужно `harness_run` для горячего
@@ -412,6 +414,37 @@ impl Default for CronSettings {
     }
 }
 
+/// Настройки LLM-судьи рубрик (калибровка и верификация, ADR-004).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct JudgeConfig {
+    /// Сэмплов судьи на критерий: независимые прогоны, итоговый балл —
+    /// медиана сэмплов (1 — одиночная оценка, поведение до ADR-004).
+    pub samples: usize,
+    /// Порог population-σ баллов сэмплов: выше — критерий помечается
+    /// флагом `unstable` (разброс судьи, к итогу балл допускается).
+    pub unstable_stdev: f64,
+    /// Минимальное сходство цитаты-свидетельства с оцениваемым текстом
+    /// (0..=1; точный substring-матч засчитывается всегда). Цитата слабее
+    /// порога при балле ≥ 2 → флаг `evidence_not_found`, критерий
+    /// исключается из взвешенного итога.
+    pub evidence_min_similarity: f64,
+    /// Максимально допустимый MAE golden-прогона (`arch bench run --golden`):
+    /// итог выше порога → exit code 1 (регрессионный гейт качества судьи).
+    pub golden_max_mae: f64,
+}
+
+impl Default for JudgeConfig {
+    fn default() -> Self {
+        Self {
+            samples: 3,
+            unstable_stdev: 1.0,
+            evidence_min_similarity: 0.8,
+            golden_max_mae: 1.0,
+        }
+    }
+}
+
 /// Пути к ассетам и данным харнесса.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -584,6 +617,7 @@ impl Default for Config {
             hooks: HooksConfig::default(),
             bash: BashConfig::default(),
             cron: CronSettings::default(),
+            judge: JudgeConfig::default(),
             paths: PathsConfig::default(),
             loaded_from: None,
         }
@@ -750,5 +784,17 @@ mod tests {
         let back: Config = toml::from_str(&text).expect("deserialize");
         assert_eq!(back.default_model, cfg.default_model);
         assert_eq!(back.models.len(), cfg.models.len());
+    }
+
+    #[test]
+    fn judge_config_defaults_match_adr004() {
+        let cfg = Config::default();
+        assert_eq!(cfg.judge.samples, 3, "k сэмплов судьи по умолчанию");
+        assert!((cfg.judge.unstable_stdev - 1.0).abs() < 1e-9);
+        assert!((cfg.judge.evidence_min_similarity - 0.8).abs() < 1e-9);
+        assert!((cfg.judge.golden_max_mae - 1.0).abs() < 1e-9);
+        // Пустая секция [judge] в toml даёт те же дефолты (serde default).
+        let back: Config = toml::from_str("[judge]\n").expect("deserialize");
+        assert_eq!(back.judge.samples, 3);
     }
 }

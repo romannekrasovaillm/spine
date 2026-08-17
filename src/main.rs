@@ -287,10 +287,14 @@ enum BenchCmd {
     /// Прогнать бенчмарк.
     Run {
         /// Имя файла бенчмарка в assets/benchmarks (или путь).
-        name: String,
-        /// Испытуемая модель.
+        name: Option<String>,
+        /// Испытуемая модель (для --golden — модель-судья).
         #[arg(long)]
         model: Option<String>,
+        /// Прогон судьи по golden-set (assets/benchmarks/golden): метрика
+        /// согласия с эталоном MAE; выше порога judge.golden_max_mae — exit 1.
+        #[arg(long)]
+        golden: bool,
     },
 }
 
@@ -918,16 +922,52 @@ async fn cmd_bench(cfg: &Arc<Config>, cmd: BenchCmd) -> Result<()> {
                 println!("  {:<32} {} [{}]", b.name, b.description, b.tags.join(", "));
             }
         }
-        BenchCmd::Run { name, model } => {
-            let path = resolve_asset(&cfg.paths.benchmarks_dir(), &name, "yaml");
-            let bench = arch_harness::bench::load(&path)?;
+        BenchCmd::Run { name, model, golden } => {
             let registry = LlmRegistry::from_config(cfg)?;
             let provider = match &model {
                 Some(m) => registry.get(m)?,
                 None => registry.default(),
             };
+            if golden {
+                if name.is_some() {
+                    anyhow::bail!("`bench run --golden` не совместим с именем бенчмарка");
+                }
+                // Регрессионный гейт качества судьи (ADR-004): согласие с
+                // эталоном ниже порога — exit 1, как у `control check`.
+                let report = arch_harness::bench::run_golden(
+                    provider.as_ref(),
+                    &cfg.paths.rubrics_dir(),
+                    &cfg.paths.benchmarks_dir().join("golden"),
+                    &cfg.judge,
+                )
+                .await?;
+                println!(
+                    "Golden-прогон судьи '{}' (сэмплов на критерий: {}):",
+                    report.judge_model, cfg.judge.samples
+                );
+                for case in &report.cases {
+                    println!("  {:<32} MAE {:.2} ({} критериев)", case.doc, case.mae, case.compared);
+                }
+                let passed = report.mae <= cfg.judge.golden_max_mae;
+                println!(
+                    "Итог MAE: {:.2} по {} парам (порог {:.2}) — {}",
+                    report.mae,
+                    report.compared,
+                    cfg.judge.golden_max_mae,
+                    if passed { "PASS" } else { "FAIL" }
+                );
+                if !passed {
+                    std::process::exit(1);
+                }
+                return Ok(());
+            }
+            let Some(name) = name else {
+                anyhow::bail!("укажите имя бенчмарка или флаг --golden");
+            };
+            let path = resolve_asset(&cfg.paths.benchmarks_dir(), &name, "yaml");
+            let bench = arch_harness::bench::load(&path)?;
             let report =
-                arch_harness::bench::run(&bench, provider.as_ref(), &cfg.paths.rubrics_dir(), &cfg.paths.reports_dir)
+                arch_harness::bench::run(&bench, provider.as_ref(), &cfg.paths.rubrics_dir(), &cfg.paths.reports_dir, &cfg.judge)
                     .await?;
             println!(
                 "Бенчмарк '{}': {:.2} (порог {:.2}) — {}",

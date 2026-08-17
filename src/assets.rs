@@ -50,6 +50,39 @@ pub const BENCH_LEGACY_DECOMPOSITION: &str = include_str!("../assets/benchmarks/
 /// Бенчмарк: event-driven интеграция доменов.
 pub const BENCH_EVENT_DRIVEN_DESIGN: &str = include_str!("../assets/benchmarks/event_driven_design.yaml");
 
+/// Golden-set судьи рубрик (ADR-004): синтетический ADR-образец + эталонные
+/// оценки по рубрике adr_quality; прогон — `arch bench run --golden`.
+pub const GOLDEN_ADR_FULL_MD: &str = include_str!("../assets/benchmarks/golden/adr_full.md");
+/// Эталон к [`GOLDEN_ADR_FULL_MD`].
+pub const GOLDEN_ADR_FULL_EXPECTED: &str = include_str!("../assets/benchmarks/golden/adr_full.expected.yaml");
+/// Golden-set: середняк по всем критериям.
+pub const GOLDEN_ADR_DECENT_MD: &str = include_str!("../assets/benchmarks/golden/adr_decent.md");
+/// Эталон к [`GOLDEN_ADR_DECENT_MD`].
+pub const GOLDEN_ADR_DECENT_EXPECTED: &str = include_str!("../assets/benchmarks/golden/adr_decent.expected.yaml");
+/// Golden-set: сильный контекст без альтернатив.
+pub const GOLDEN_ADR_NO_ALTERNATIVES_MD: &str = include_str!("../assets/benchmarks/golden/adr_no_alternatives.md");
+/// Эталон к [`GOLDEN_ADR_NO_ALTERNATIVES_MD`].
+pub const GOLDEN_ADR_NO_ALTERNATIVES_EXPECTED: &str =
+    include_str!("../assets/benchmarks/golden/adr_no_alternatives.expected.yaml");
+/// Golden-set: только плюсы, без отрицательных последствий.
+pub const GOLDEN_ADR_NO_NEGATIVES_MD: &str = include_str!("../assets/benchmarks/golden/adr_no_negatives.md");
+/// Эталон к [`GOLDEN_ADR_NO_NEGATIVES_MD`].
+pub const GOLDEN_ADR_NO_NEGATIVES_EXPECTED: &str =
+    include_str!("../assets/benchmarks/golden/adr_no_negatives.expected.yaml");
+/// Golden-set: необратимое решение без оценки обратимости.
+pub const GOLDEN_ADR_IRREVERSIBLE_MD: &str = include_str!("../assets/benchmarks/golden/adr_irreversible.md");
+/// Эталон к [`GOLDEN_ADR_IRREVERSIBLE_MD`].
+pub const GOLDEN_ADR_IRREVERSIBLE_EXPECTED: &str =
+    include_str!("../assets/benchmarks/golden/adr_irreversible.expected.yaml");
+/// Golden-set: запись задним числом после реализации.
+pub const GOLDEN_ADR_POSTHOC_MD: &str = include_str!("../assets/benchmarks/golden/adr_posthoc.md");
+/// Эталон к [`GOLDEN_ADR_POSTHOC_MD`].
+pub const GOLDEN_ADR_POSTHOC_EXPECTED: &str = include_str!("../assets/benchmarks/golden/adr_posthoc.expected.yaml");
+/// Golden-set: заглушка из двух предложений (все критерии на 1).
+pub const GOLDEN_ADR_STUB_MD: &str = include_str!("../assets/benchmarks/golden/adr_stub.md");
+/// Эталон к [`GOLDEN_ADR_STUB_MD`].
+pub const GOLDEN_ADR_STUB_EXPECTED: &str = include_str!("../assets/benchmarks/golden/adr_stub.expected.yaml");
+
 /// Образец MCP-серверов (формат Claude Code `mcp.json`).
 pub const MCP_SERVERS_EXAMPLE: &str = include_str!("../examples/mcp.example.json");
 /// Образец расписания планировщика (`cron.toml`).
@@ -373,6 +406,32 @@ const DEFAULT_FILES: &[(&str, &str)] = &[
     ("assets/benchmarks/payment_integration.yaml", BENCH_PAYMENT_INTEGRATION),
     ("assets/benchmarks/legacy_decomposition.yaml", BENCH_LEGACY_DECOMPOSITION),
     ("assets/benchmarks/event_driven_design.yaml", BENCH_EVENT_DRIVEN_DESIGN),
+    ("assets/benchmarks/golden/adr_full.md", GOLDEN_ADR_FULL_MD),
+    ("assets/benchmarks/golden/adr_full.expected.yaml", GOLDEN_ADR_FULL_EXPECTED),
+    ("assets/benchmarks/golden/adr_decent.md", GOLDEN_ADR_DECENT_MD),
+    ("assets/benchmarks/golden/adr_decent.expected.yaml", GOLDEN_ADR_DECENT_EXPECTED),
+    ("assets/benchmarks/golden/adr_no_alternatives.md", GOLDEN_ADR_NO_ALTERNATIVES_MD),
+    (
+        "assets/benchmarks/golden/adr_no_alternatives.expected.yaml",
+        GOLDEN_ADR_NO_ALTERNATIVES_EXPECTED,
+    ),
+    ("assets/benchmarks/golden/adr_no_negatives.md", GOLDEN_ADR_NO_NEGATIVES_MD),
+    (
+        "assets/benchmarks/golden/adr_no_negatives.expected.yaml",
+        GOLDEN_ADR_NO_NEGATIVES_EXPECTED,
+    ),
+    ("assets/benchmarks/golden/adr_irreversible.md", GOLDEN_ADR_IRREVERSIBLE_MD),
+    (
+        "assets/benchmarks/golden/adr_irreversible.expected.yaml",
+        GOLDEN_ADR_IRREVERSIBLE_EXPECTED,
+    ),
+    ("assets/benchmarks/golden/adr_posthoc.md", GOLDEN_ADR_POSTHOC_MD),
+    (
+        "assets/benchmarks/golden/adr_posthoc.expected.yaml",
+        GOLDEN_ADR_POSTHOC_EXPECTED,
+    ),
+    ("assets/benchmarks/golden/adr_stub.md", GOLDEN_ADR_STUB_MD),
+    ("assets/benchmarks/golden/adr_stub.expected.yaml", GOLDEN_ADR_STUB_EXPECTED),
     ("mcp.json", MCP_SERVERS_EXAMPLE),
     ("cron.toml", CRON_EXAMPLE),
     ("CONSTRAINTS.example.yaml", CONSTRAINTS_EXAMPLE),
@@ -512,6 +571,44 @@ mod tests {
             assert!(!b.tags.is_empty(), "{}: нет тегов", b.name);
             assert!(b.task.lines().count() >= 10, "{}: постановка короче 10 строк", b.name);
             assert!(b.system_prompt.contains("architect"), "{}: system_prompt без роли", b.name);
+        }
+    }
+
+    #[test]
+    fn golden_set_pairs_parse_and_match_adr_quality_rubric() {
+        let rubric: crate::rubric::Rubric =
+            serde_yaml::from_str(RUBRIC_ADR_QUALITY).expect("рубрика adr_quality");
+        let pairs = [
+            (GOLDEN_ADR_FULL_MD, GOLDEN_ADR_FULL_EXPECTED),
+            (GOLDEN_ADR_DECENT_MD, GOLDEN_ADR_DECENT_EXPECTED),
+            (GOLDEN_ADR_NO_ALTERNATIVES_MD, GOLDEN_ADR_NO_ALTERNATIVES_EXPECTED),
+            (GOLDEN_ADR_NO_NEGATIVES_MD, GOLDEN_ADR_NO_NEGATIVES_EXPECTED),
+            (GOLDEN_ADR_IRREVERSIBLE_MD, GOLDEN_ADR_IRREVERSIBLE_EXPECTED),
+            (GOLDEN_ADR_POSTHOC_MD, GOLDEN_ADR_POSTHOC_EXPECTED),
+            (GOLDEN_ADR_STUB_MD, GOLDEN_ADR_STUB_EXPECTED),
+        ];
+        assert!((5..=10).contains(&pairs.len()), "golden-set: 5–10 документов по ADR-004");
+        for (doc, expected) in pairs {
+            assert!(doc.len() > 100, "golden-документ не должен быть пустышкой");
+            let exp: crate::bench::GoldenExpectation =
+                serde_yaml::from_str(expected).expect("эталон парсится");
+            assert_eq!(exp.rubric, "adr_quality", "эталонная рубрика");
+            assert_eq!(
+                exp.scores.len(),
+                rubric.criteria.len(),
+                "эталон покрывает все критерии рубрики"
+            );
+            for (id, score) in &exp.scores {
+                assert!(
+                    rubric.criteria.iter().any(|c| &c.id == id),
+                    "критерия '{id}' нет в рубрике adr_quality"
+                );
+                assert!(
+                    (1..=rubric.scale_max).contains(score),
+                    "{id}: балл {score} вне шкалы 1..={}",
+                    rubric.scale_max
+                );
+            }
         }
     }
 
