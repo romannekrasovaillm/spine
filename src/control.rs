@@ -498,9 +498,19 @@ fn default_timeout_secs() -> u64 {
 /// Корень CONSTRAINTS.yaml.
 #[derive(Debug, Deserialize)]
 struct ConstraintsFile {
-    /// Список правил.
+    /// Список правил (канонический корень `rules:`).
     #[serde(default)]
     rules: Vec<FitnessRule>,
+    /// Альтернативный корень `constraints:` (кейсы и handoff-пакеты).
+    #[serde(default)]
+    constraints: Vec<FitnessRule>,
+}
+
+impl ConstraintsFile {
+    /// Все правила из обоих допустимых корней.
+    fn all_rules(&self) -> impl Iterator<Item = &FitnessRule> {
+        self.rules.iter().chain(self.constraints.iter())
+    }
 }
 
 /// Прогон fitness functions из CONSTRAINTS.yaml по репозиторию.
@@ -522,9 +532,15 @@ pub fn check(repo: &Path, constraints: &Path) -> Result<FitnessReport> {
     let yaml =
         std::fs::read_to_string(constraints).map_err(|e| HarnessError::io(constraints, e))?;
     let parsed: ConstraintsFile = serde_yaml::from_str(&yaml)?;
+    if parsed.all_rules().next().is_none() {
+        return Err(HarnessError::Control(format!(
+            "{}: файл не содержит правил — ожидается непустой корень `rules:` или `constraints:`",
+            constraints.display()
+        )));
+    }
 
     let mut issues = Vec::new();
-    for rule in &parsed.rules {
+    for rule in parsed.all_rules() {
         run_rule(rule, repo, &mut issues)?;
     }
     issues.sort_by(|a, b| {
@@ -538,7 +554,7 @@ pub fn check(repo: &Path, constraints: &Path) -> Result<FitnessReport> {
     let warns = issues.len() - errors;
     let summary = format!(
         "Правил: {}, нарушений: {} (error: {errors}, warn: {warns})",
-        parsed.rules.len(),
+        parsed.all_rules().count(),
         issues.len()
     );
     Ok(FitnessReport {
@@ -549,21 +565,29 @@ pub fn check(repo: &Path, constraints: &Path) -> Result<FitnessReport> {
     })
 }
 
+/// Нормализует severity правила: канонические `error`/`warn` проходят как есть,
+/// шкала кейсов и handoff-пакетов маппится: `critical`/`high` → error
+/// (блокирующие), `medium` → warn (advisory).
+fn normalize_severity(raw: &str, rule_name: &str) -> Result<&'static str> {
+    match raw {
+        "error" | "critical" | "high" => Ok("error"),
+        "warn" | "medium" => Ok("warn"),
+        other => Err(HarnessError::Control(format!(
+            "правило '{rule_name}': severity должно быть error|warn|critical|high|medium, получено '{other}'"
+        ))),
+    }
+}
+
 /// Выполняет одно fitness-правило, добавляя находки в `issues`.
 fn run_rule(rule: &FitnessRule, repo: &Path, issues: &mut Vec<LintIssue>) -> Result<()> {
-    if rule.severity != "error" && rule.severity != "warn" {
-        return Err(HarnessError::Control(format!(
-            "правило '{}': severity должно быть error|warn, получено '{}'",
-            rule.name, rule.severity
-        )));
-    }
+    let severity = normalize_severity(&rule.severity, &rule.name)?;
     let mut issue = |file: PathBuf, line: usize, message: String| {
         issues.push(LintIssue {
             file,
             line,
             rule: rule.name.clone(),
             message,
-            severity: rule.severity.clone(),
+            severity: severity.to_string(),
         });
     };
     match rule.kind {
@@ -1553,6 +1577,63 @@ mod tests {
         assert!(
             check(&repo, &repo.join("missing.yaml")).is_err(),
             "несуществующий constraints — ошибка"
+        );
+    }
+
+    #[test]
+    fn fitness_accepts_constraints_root() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = dir.path().join("repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        std::fs::write(repo.join("ok.go"), "package main\n").unwrap();
+        // Корень `constraints:` (стиль кейсов/handoff-пакетов) читается наравне
+        // с каноническим `rules:`.
+        let file = write_file(
+            dir.path(),
+            "constraints.yaml",
+            "constraints:\n\
+             \x20 - id: C-001\n\
+             \x20   name: go-file\n\
+             \x20   type: must_contain\n\
+             \x20   glob: \"**/*.go\"\n\
+             \x20   pattern: package\n",
+        );
+        let report = check(&repo, &file).unwrap();
+        assert!(report.passed, "правило из корня constraints: выполняется");
+        let failing = write_file(
+            dir.path(),
+            "constraints-fail.yaml",
+            "constraints:\n\
+             \x20 - id: C-001\n\
+             \x20   name: no-todo\n\
+             \x20   type: must_not_contain\n\
+             \x20   glob: \"**/*.go\"\n\
+             \x20   pattern: package\n\
+             \x20   severity: critical\n",
+        );
+        let report = check(&repo, &failing).unwrap();
+        assert!(!report.passed, "нарушение из корня constraints: ловится");
+        assert!(
+            report.issues.iter().all(|i| i.severity == "error"),
+            "critical маппится в блокирующий error"
+        );
+    }
+
+    #[test]
+    fn fitness_rejects_constraints_file_without_rules() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = dir.path().join("repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        // Опечатка в корне (`rulez:`) не должна давать тихий PASS.
+        let typo = write_file(dir.path(), "typo.yaml", "rulez:\n  - name: x\n");
+        assert!(
+            check(&repo, &typo).is_err(),
+            "файл без правил rules:/constraints: — ошибка, а не тихий PASS"
+        );
+        let empty = write_file(dir.path(), "empty.yaml", "rules: []\n");
+        assert!(
+            check(&repo, &empty).is_err(),
+            "пустой список правил — ошибка"
         );
     }
 
