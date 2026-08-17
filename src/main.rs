@@ -1172,10 +1172,19 @@ fn cmd_model(cmd: ModelCmd) -> Result<()> {
                 .with_context(|| format!("загрузка модели {}", dir.display()))?;
             let report = arch_harness::model::validate(&model);
             for i in &report.issues {
-                println!("[{}] {}: {} — {}", i.severity, i.file.display(), i.rule, i.message);
+                println!(
+                    "[{}] {}: {} — {}",
+                    i.severity,
+                    i.file.display(),
+                    i.rule,
+                    i.message
+                );
             }
             println!("{}", report.summary());
-            println!("Итог: {}", if report.has_errors() { "FAIL" } else { "PASS" });
+            println!(
+                "Итог: {}",
+                if report.has_errors() { "FAIL" } else { "PASS" }
+            );
             if report.has_errors() {
                 std::process::exit(1);
             }

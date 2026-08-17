@@ -8,8 +8,8 @@
 use std::path::{Path, PathBuf};
 
 use crate::error::{HarnessError, Result};
-use crate::model::parse::{Entity, Model, load_model};
 use crate::model::EntityKind;
+use crate::model::parse::{Entity, Model, load_model};
 
 /// Отчёт проекции.
 #[derive(Debug)]
@@ -64,7 +64,10 @@ pub fn project_adr(model_dir: &Path) -> Result<ProjectReport> {
         )));
     }
     let case_root = model_dir.parent().ok_or_else(|| {
-        HarnessError::Model(format!("у {} нет родительского каталога", model_dir.display()))
+        HarnessError::Model(format!(
+            "у {} нет родительского каталога",
+            model_dir.display()
+        ))
     })?;
     let out_dir = case_root.join(".arch-handoff").join("adr");
     std::fs::create_dir_all(&out_dir).map_err(|e| HarnessError::io(&out_dir, e))?;
@@ -72,9 +75,10 @@ pub fn project_adr(model_dir: &Path) -> Result<ProjectReport> {
     let mut written = Vec::with_capacity(adrs.len());
     let mut produced: Vec<String> = Vec::with_capacity(adrs.len());
     for e in adrs {
-        let name = e.file.file_name().ok_or_else(|| {
-            HarnessError::Model(format!("у сущности {} нет имени файла", e.id))
-        })?;
+        let name = e
+            .file
+            .file_name()
+            .ok_or_else(|| HarnessError::Model(format!("у сущности {} нет имени файла", e.id)))?;
         let name = name.to_string_lossy().to_string();
         let target = out_dir.join(&name);
         std::fs::write(&target, render_adr(e)).map_err(|e| HarnessError::io(&target, e))?;
@@ -93,7 +97,9 @@ pub fn project_adr(model_dir: &Path) -> Result<ProjectReport> {
         }
         let name = entry.file_name().to_string_lossy().to_string();
         let is_adr = name.starts_with("ADR-")
-            && path.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("md"));
+            && path
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("md"));
         if is_adr && !produced.contains(&name) {
             std::fs::remove_file(&path).map_err(|e| HarnessError::io(&path, e))?;
             removed.push(path);
@@ -124,7 +130,13 @@ mod tests {
     #[test]
     fn render_adr_layout() {
         let dir = tempfile::tempdir().expect("tmp");
-        adr_entity(dir.path(), "ADR-001-x.md", "ADR-001", "Заголовок", "Тело решения.");
+        adr_entity(
+            dir.path(),
+            "ADR-001-x.md",
+            "ADR-001",
+            "Заголовок",
+            "Тело решения.",
+        );
         let m = load_model(dir.path()).expect("модель");
         let e = m.get("ADR-001").expect("сущность");
         assert_eq!(
@@ -151,7 +163,10 @@ mod tests {
         assert_eq!(report.removed, vec![out.join("ADR-099-stale.md")]);
         assert!(out.join("NOTES.md").exists(), "не-ADR файл не трогаем");
         let text = std::fs::read_to_string(out.join("ADR-001-a.md")).expect("чтение");
-        assert!(text.starts_with("# ADR-001. A\n\n- Date: 2026-08-15\n"), "{text}");
+        assert!(
+            text.starts_with("# ADR-001. A\n\n- Date: 2026-08-15\n"),
+            "{text}"
+        );
     }
 
     #[test]

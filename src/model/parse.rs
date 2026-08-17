@@ -153,9 +153,7 @@ pub fn split_frontmatter(text: &str) -> Result<(&str, &str)> {
             return Ok((&after_open[..pos], body));
         }
     }
-    Err(HarnessError::Model(
-        "нет закрывающего маркера `---`".into(),
-    ))
+    Err(HarnessError::Model("нет закрывающего маркера `---`".into()))
 }
 
 /// Разбирает одну сущность из текста файла `file`.
@@ -170,9 +168,8 @@ pub fn split_frontmatter(text: &str) -> Result<(&str, &str)> {
 pub fn parse_entity(file: &Path, text: &str) -> Result<Entity> {
     let (yaml, body) = split_frontmatter(text)
         .map_err(|e| HarnessError::Model(format!("{}: {e}", file.display())))?;
-    let fm: Frontmatter = serde_yaml::from_str(yaml).map_err(|e| {
-        HarnessError::Model(format!("{}: frontmatter: {e}", file.display()))
-    })?;
+    let fm: Frontmatter = serde_yaml::from_str(yaml)
+        .map_err(|e| HarnessError::Model(format!("{}: frontmatter: {e}", file.display())))?;
     if fm.id.trim().is_empty() {
         return Err(HarnessError::Model(format!(
             "{}: пустой `id`",
@@ -343,8 +340,7 @@ mod tests {
     fn parse_invalid_yaml_is_error() {
         let dir = tempfile::tempdir().expect("tmp");
         let file = write(dir.path(), "x.md", "---\nid: [unclosed\n---\nтело\n");
-        let err = parse_entity(&file, "---\nid: [unclosed\n---\nтело\n")
-            .expect_err("битый YAML");
+        let err = parse_entity(&file, "---\nid: [unclosed\n---\nтело\n").expect_err("битый YAML");
         assert!(err.to_string().contains("frontmatter"), "{err}");
     }
 

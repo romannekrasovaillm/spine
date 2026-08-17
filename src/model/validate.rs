@@ -167,7 +167,13 @@ pub fn validate(model: &Model) -> ValidationReport {
 }
 
 /// Добавляет находку в отчёт.
-fn issue(issues: &mut Vec<ModelIssue>, severity: Severity, file: &Path, rule: &'static str, message: String) {
+fn issue(
+    issues: &mut Vec<ModelIssue>,
+    severity: Severity,
+    file: &Path,
+    rule: &'static str,
+    message: String,
+) {
     issues.push(ModelIssue {
         severity,
         file: file.to_path_buf(),
@@ -184,7 +190,10 @@ fn check_not_empty(model: &Model, issues: &mut Vec<ModelIssue>) {
             Severity::Error,
             &model.dir,
             "empty-model",
-            format!("в каталоге {} нет ни одной сущности (*.md)", model.dir.display()),
+            format!(
+                "в каталоге {} нет ни одной сущности (*.md)",
+                model.dir.display()
+            ),
         );
     }
 }
@@ -199,7 +208,11 @@ fn check_ids(model: &Model, issues: &mut Vec<ModelIssue>) {
                 Severity::Error,
                 &e.file,
                 "duplicate-id",
-                format!("дубль ID '{}' (первое вхождение: {})", e.id, first.display()),
+                format!(
+                    "дубль ID '{}' (первое вхождение: {})",
+                    e.id,
+                    first.display()
+                ),
             );
         } else {
             seen.insert(e.id.as_str(), &e.file);
@@ -338,13 +351,14 @@ fn check_completeness(model: &Model, issues: &mut Vec<ModelIssue>) {
                     Severity::Warn,
                     &e.file,
                     "adr-without-component",
-                    format!("{} не затрагивает ни одного компонента (affects → CMP-*)", e.id),
+                    format!(
+                        "{} не затрагивает ни одного компонента (affects → CMP-*)",
+                        e.id
+                    ),
                 );
             }
         }
-        if e.kind == EntityKind::Nfr
-            && e.verification.as_deref().is_none_or(str::is_empty)
-        {
+        if e.kind == EntityKind::Nfr && e.verification.as_deref().is_none_or(str::is_empty) {
             issue(
                 issues,
                 Severity::Warn,
@@ -362,8 +376,7 @@ mod tests {
     use crate::model::parse::load_model;
 
     fn entity(dir: &Path, name: &str, frontmatter: &str) {
-        std::fs::write(dir.join(name), format!("{frontmatter}\n---\n\nТело.\n"))
-            .expect("фикстура");
+        std::fs::write(dir.join(name), format!("{frontmatter}\n---\n\nТело.\n")).expect("фикстура");
     }
 
     fn base(dir: &Path) {
@@ -490,7 +503,10 @@ mod tests {
         );
         let report = validate_dir(dir.path());
         assert!(
-            report.issues.iter().any(|i| i.rule == "adr-without-component"),
+            report
+                .issues
+                .iter()
+                .any(|i| i.rule == "adr-without-component"),
             "affects на AD не считается затронутым CMP: {}",
             report.summary()
         );

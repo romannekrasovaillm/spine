@@ -245,6 +245,9 @@ mod tests {
         entity(dir.path(), "CMP-001", "cmp", &["CMP-999"]);
         let m = load_model(dir.path()).expect("модель");
         let mm = graph_mermaid(&m);
-        assert!(!mm.contains("CMP_999"), "несуществующий узел не рисуется: {mm}");
+        assert!(
+            !mm.contains("CMP_999"),
+            "несуществующий узел не рисуется: {mm}"
+        );
     }
 }

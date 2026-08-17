@@ -314,16 +314,13 @@ impl Tool for ModelQueryTool {
             "Модель {}: {} сущностей{}\n",
             dir.display(),
             model.entities.len(),
-            kind.map_or_else(String::new, |k| format!(", тип {}",k.type_str()))
+            kind.map_or_else(String::new, |k| format!(", тип {}", k.type_str()))
         );
         for e in &model.entities {
             if kind.is_some_and(|k| e.kind != k) {
                 continue;
             }
-            let links: usize = LinkKind::ALL
-                .iter()
-                .map(|k| e.link_targets(*k).len())
-                .sum();
+            let links: usize = LinkKind::ALL.iter().map(|k| e.link_targets(*k).len()).sum();
             let _ = writeln!(
                 out,
                 "  {:<10} {:<5} {:<9} {:<3} {}",
@@ -369,14 +366,11 @@ mod tests {
     #[test]
     fn parse_id_rejects_garbage() {
         for bad in [
-            "",
-            "ADR",
-            "ADR-",
-            "FOO-1",
-            "ad-1",      // регистр префикса значим
-            "ADR-1x",    // номер не чисто числовой
-            "ADR-1.md",  // лишний хвост
-            " ADR-1",    // ведущий пробел
+            "", "ADR", "ADR-", "FOO-1",
+            "ad-1",     // регистр префикса значим
+            "ADR-1x",   // номер не чисто числовой
+            "ADR-1.md", // лишний хвост
+            " ADR-1",   // ведущий пробел
             "ADR--1",
         ] {
             assert_eq!(parse_id(bad), None, "'{bad}' не должен разбираться");
@@ -432,8 +426,16 @@ mod tests {
             .await
             .expect("вызов");
         assert!(!out.is_error, "{}", out.content);
-        for needle in ["ADR-001 · Решение", "implements → AD-1", "Контекст и решение."] {
-            assert!(out.content.contains(needle), "нет '{needle}' в {}", out.content);
+        for needle in [
+            "ADR-001 · Решение",
+            "implements → AD-1",
+            "Контекст и решение.",
+        ] {
+            assert!(
+                out.content.contains(needle),
+                "нет '{needle}' в {}",
+                out.content
+            );
         }
         let out = tool
             .call(json!({"dir": ".", "id": "CMP-999"}), &ctx)
@@ -457,13 +459,21 @@ mod tests {
             .await
             .expect("вызов");
         assert!(out.content.contains("ADR-001"), "{}", out.content);
-        assert!(!out.content.contains("AD-1 "), "фильтр по adr: {}", out.content);
+        assert!(
+            !out.content.contains("AD-1 "),
+            "фильтр по adr: {}",
+            out.content
+        );
         // Неизвестный тип — мягкая ошибка со списком допустимых.
         let out = tool
             .call(json!({"dir": ".", "type": "widget"}), &ctx)
             .await
             .expect("вызов");
-        assert!(out.is_error && out.content.contains("неизвестный тип"), "{}", out.content);
+        assert!(
+            out.is_error && out.content.contains("неизвестный тип"),
+            "{}",
+            out.content
+        );
         // Несуществующий каталог — мягкая ошибка, не паника.
         let out = tool
             .call(json!({"dir": "ghost-model"}), &ctx)
