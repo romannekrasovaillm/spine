@@ -3,7 +3,8 @@
 //! КОНТРАКТ (владелец: агент `harness`):
 //! - известные харнессы: claude-code, qwen-code, openclaw, hermes, theseus,
 //!   codewhale ([`known`]); конфиги — из `Config::harnesses`;
-//! - [`generate_handoff`] — каталог `<repo>/.arch-handoff/`: TASK.md (задача),
+//! - [`generate_handoff`] — каталог `<repo>/.arch-handoff/`: TASK.md (задача +
+//!   критерии приёмки из QAS-сущностей `<repo>/model/`, ADR-007),
 //!   ARCHITECTURE.md (свод спек/спайна), adr/ (копии ADR), CONSTRAINTS.yaml
 //!   (fitness-правила под стек репозитория — заготовка, переписывается
 //!   архитектором под spine), RUBRIC.yaml (якорная рубрика приёмки), MANIFEST.json
@@ -32,6 +33,7 @@ use crate::config::{CodingHarnessConfig, Config, PromptMode};
 use crate::control::Route;
 use crate::error::{HarnessError, Result};
 use crate::llm::ToolSpec;
+use crate::model::{EntityKind, load_model};
 use crate::tool::{Tool, ToolContext, ToolOutput};
 
 /// Имя каталога handoff-пакета в корне репозитория.
@@ -264,9 +266,15 @@ pub fn generate_handoff(
     std::fs::create_dir_all(&adr_dir).map_err(|e| HarnessError::io(&adr_dir, e))?;
 
     // TASK.md — всегда перезаписывается (задача новая на каждый прогон).
+    // Критерии приёмки разворачиваются из QAS-сущностей модели репозитория
+    // (ADR-007): нет model/ или нет QAS — секции нет; битая модель — ошибка.
+    let qas_section = qas_acceptance_section(repo)?;
     let task_path = dir.join("TASK.md");
-    std::fs::write(&task_path, render_task_md(task, &rollback_text))
-        .map_err(|e| HarnessError::io(&task_path, e))?;
+    std::fs::write(
+        &task_path,
+        render_task_md(task, &rollback_text, qas_section.as_deref()),
+    )
+    .map_err(|e| HarnessError::io(&task_path, e))?;
 
     // ARCHITECTURE.md — всегда перезаписывается (компиляция актуальных спек).
     let arch_md = compile_epic_context(spec_files)?;
@@ -357,13 +365,20 @@ pub fn generate_handoff(
     })
 }
 
-/// Рендерит TASK.md: задача + план отката + финализация (git-коммит) +
-/// контракт результата (headless JSON-статус).
-fn render_task_md(task: &str, rollback: &str) -> String {
+/// Рендерит TASK.md: задача + критерии приёмки из QAS (при наличии) +
+/// план отката + финализация (git-коммит) + контракт результата
+/// (headless JSON-статус).
+fn render_task_md(task: &str, rollback: &str, acceptance: Option<&str>) -> String {
     let mut s = String::with_capacity(task.len() + rollback.len() + 2000);
     s.push_str("# Задача для кодового харнесса\n\n");
     s.push_str(task.trim());
-    s.push_str("\n\n## План отката\n\n");
+    s.push('\n');
+    if let Some(acceptance) = acceptance {
+        s.push('\n');
+        s.push_str(acceptance.trim());
+        s.push('\n');
+    }
+    s.push_str("\n## План отката\n\n");
     s.push_str(rollback.trim());
     s.push('\n');
     s.push_str("\n## Финализация (обязательно)\n\n");
@@ -384,6 +399,60 @@ fn render_task_md(task: &str, rollback: &str) -> String {
     );
     s.push_str("Архитектурный контекст — `ARCHITECTURE.md`, ограничения — `CONSTRAINTS.yaml`, рубрика приёмки — `RUBRIC.yaml` (при наличии).\n");
     s
+}
+
+/// Секция «Критерии приёмки» из QAS-сущностей модели репозитория (ADR-007).
+///
+/// `None` — каталога `<repo>/model/` нет или в нём нет `QAS-*`; сценарии
+/// рендерятся в порядке модели (детерминированном), незаполненное поле
+/// помечается `—`.
+///
+/// # Errors
+/// Каталог `model/` есть, но модель не разбирается: молчаливый пропуск
+/// превратил бы «критерии попадают автоматически» в «иногда попадают».
+fn qas_acceptance_section(repo: &Path) -> Result<Option<String>> {
+    let model_dir = repo.join("model");
+    if !model_dir.is_dir() {
+        return Ok(None);
+    }
+    let model = load_model(&model_dir).map_err(|e| {
+        HarnessError::Model(format!(
+            "{}: модель для QAS-критериев приёмки не разбирается: {e}",
+            model_dir.display()
+        ))
+    })?;
+    let scenarios: Vec<&crate::model::Entity> = model
+        .entities
+        .iter()
+        .filter(|e| e.kind == EntityKind::Qas)
+        .collect();
+    if scenarios.is_empty() {
+        return Ok(None);
+    }
+    let mut s = String::new();
+    s.push_str("## Критерии приёмки (QAS из модели)\n\n");
+    s.push_str("Сценарии атрибутов качества из `model/` — обязательная часть приёмки:\n\n");
+    for q in scenarios {
+        let field = |v: &Option<String>| {
+            v.as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .unwrap_or("—")
+                .to_string()
+        };
+        let _ = writeln!(
+            s,
+            "- **{}** ({}): при {} от «{}» к «{}» → {}. Мера: {}.",
+            q.id,
+            q.title,
+            field(&q.stimulus),
+            field(&q.source),
+            field(&q.artifact),
+            field(&q.response),
+            field(&q.measure)
+        );
+    }
+    Ok(Some(s))
 }
 
 /// План отката по умолчанию (рубрика `handoff_quality::rollback_plan` требует
@@ -1774,6 +1843,84 @@ mod tests {
                 .contains("другая задача")
         );
         assert!(packet2.files.contains(&constraints));
+    }
+
+    /// Модель с QAS в `<repo>/model/` для тестов критериев приёмки (ADR-007).
+    fn repo_with_qas_model(repo: &Path) {
+        write_file(
+            &repo.join("model/NFR-001-lat.md"),
+            "---\nid: NFR-001\ntype: nfr\ntitle: Latency\nstatus: accepted\nverification: hist\n---\n\np99 < 2s.\n",
+        );
+        write_file(
+            &repo.join("model/QAS-001-peak.md"),
+            "---\nid: QAS-001\ntype: qas\ntitle: Пиковая нагрузка\nstatus: accepted\n\
+             implements: [NFR-001]\nsource: клиент канала\nstimulus: запрос авторизации в пике 5000 TPS\n\
+             artifact: CMP-003 Authorization\nresponse: ответ об авторизации возвращён\n\
+             measure: p99 < 2000 мс (NFR-001)\n---\n\nПроза.\n",
+        );
+    }
+
+    #[test]
+    fn handoff_unfolds_qas_into_acceptance_criteria() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let repo = tmp.path().join("repo");
+        std::fs::create_dir_all(&repo).expect("mkdir repo");
+        repo_with_qas_model(&repo);
+        let cfg = cfg_in(tmp.path());
+
+        generate_handoff(&repo, "задача", &[], &cfg, None, Route::Fast).expect("handoff");
+        let task_md = std::fs::read_to_string(repo.join(".arch-handoff/TASK.md")).expect("TASK.md");
+        // Секция появилась автоматически, без ручного копирования (DoD P1-1).
+        assert!(
+            task_md.contains("## Критерии приёмки (QAS из модели)"),
+            "{task_md}"
+        );
+        assert!(task_md.contains("QAS-001"), "{task_md}");
+        assert!(
+            task_md.contains("запрос авторизации в пике 5000 TPS"),
+            "{task_md}"
+        );
+        assert!(task_md.contains("p99 < 2000 мс (NFR-001)"), "{task_md}");
+        // Секция стоит после задачи и до плана отката.
+        let task_pos = task_md.find("задача").expect("задача");
+        let qas_pos = task_md.find("## Критерии приёмки").expect("секция");
+        let rollback_pos = task_md.find("## План отката").expect("откат");
+        assert!(task_pos < qas_pos && qas_pos < rollback_pos, "{task_md}");
+    }
+
+    #[test]
+    fn handoff_without_model_or_qas_has_no_acceptance_section() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let repo = tmp.path().join("repo");
+        std::fs::create_dir_all(&repo).expect("mkdir repo");
+        let cfg = cfg_in(tmp.path());
+        generate_handoff(&repo, "задача", &[], &cfg, None, Route::Fast).expect("handoff");
+        let task_md = std::fs::read_to_string(repo.join(".arch-handoff/TASK.md")).expect("TASK.md");
+        assert!(!task_md.contains("Критерии приёмки (QAS"), "{task_md}");
+
+        // Модель есть, но QAS в ней нет — секции тоже нет.
+        let repo2 = tmp.path().join("repo2");
+        std::fs::create_dir_all(&repo2).expect("mkdir repo2");
+        write_file(
+            &repo2.join("model/CMP-001-x.md"),
+            "---\nid: CMP-001\ntype: cmp\ntitle: X\nstatus: designed\n---\n",
+        );
+        generate_handoff(&repo2, "задача", &[], &cfg, None, Route::Fast).expect("handoff 2");
+        let task_md2 =
+            std::fs::read_to_string(repo2.join(".arch-handoff/TASK.md")).expect("TASK.md 2");
+        assert!(!task_md2.contains("Критерии приёмки (QAS"), "{task_md2}");
+    }
+
+    #[test]
+    fn handoff_with_broken_model_fails_loudly() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let repo = tmp.path().join("repo");
+        std::fs::create_dir_all(&repo).expect("mkdir repo");
+        write_file(&repo.join("model/broken.md"), "нет frontmatter\n");
+        let cfg = cfg_in(tmp.path());
+        let err = generate_handoff(&repo, "задача", &[], &cfg, None, Route::Fast)
+            .expect_err("битая модель — ошибка, не молчаливый пропуск");
+        assert!(err.to_string().contains("QAS"), "{err}");
     }
 
     #[test]

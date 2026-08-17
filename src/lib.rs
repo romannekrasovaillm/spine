@@ -40,6 +40,7 @@ pub mod mcp;
 pub mod mermaid;
 pub mod metrics;
 pub mod model;
+pub mod nfr;
 pub mod plugin;
 pub mod policy;
 pub mod ralph;

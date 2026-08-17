@@ -139,6 +139,12 @@ enum Cmd {
         #[command(subcommand)]
         cmd: TraceCmd,
     },
+    /// Количественные NFR поверх модели: latency-бюджет, доступность,
+    /// ёмкость, стоимость (ADR-007).
+    Nfr {
+        #[command(subcommand)]
+        cmd: NfrCmd,
+    },
     /// Библиотека скиллов: список, поиск, показ.
     Skills {
         #[command(subcommand)]
@@ -419,6 +425,35 @@ enum TraceCmd {
     /// CONSTRAINTS.yaml; AD без правила и без `unverifiable` — error
     /// (exit code 1). Отчёт markdown, пригоден для evidence bundle.
     Check {
+        /// Корень кейса (каталог с model/).
+        dir: PathBuf,
+    },
+}
+
+/// Подкоманды `arch nfr` (ADR-007).
+#[derive(Subcommand)]
+enum NfrCmd {
+    /// Latency-бюджет: сумма бюджетов hop'ов INT-* против цели p99 из NFR-*;
+    /// hop без бюджета или превышение — error (exit code 1).
+    Budget {
+        /// Корень кейса (каталог с model/).
+        dir: PathBuf,
+    },
+    /// Доступность: композиция последовательных/параллельных участков против
+    /// SLA из NFR-* + цели RTO/RPO; ниже SLA — error (exit code 1).
+    Availability {
+        /// Корень кейса (каталог с model/).
+        dir: PathBuf,
+    },
+    /// Пропускная способность: RPS-цель против ёмкости компонентов
+    /// (instances × rps_per_instance); дефицит — error (exit code 1).
+    Capacity {
+        /// Корень кейса (каталог с model/).
+        dir: PathBuf,
+    },
+    /// Стоимость: TCO (инстансы × тариф) и цена выхода (Σ exit_cost)
+    /// по тарифным данным сущностей.
+    Cost {
         /// Корень кейса (каталог с model/).
         dir: PathBuf,
     },
@@ -722,6 +757,7 @@ async fn main() -> Result<()> {
         Some(Cmd::Control { cmd }) => cmd_control(cmd)?,
         Some(Cmd::Model { cmd }) => cmd_model(cmd)?,
         Some(Cmd::Trace { cmd }) => cmd_trace(cmd)?,
+        Some(Cmd::Nfr { cmd }) => cmd_nfr(cmd)?,
         Some(Cmd::Skills { cmd }) => cmd_skills(&cfg, cmd)?,
         Some(Cmd::Plugins { cmd }) => cmd_plugins(&cfg, cmd)?,
         Some(Cmd::Policy { check }) => cmd_policy(&cfg, check)?,
@@ -1299,6 +1335,45 @@ fn cmd_trace(cmd: TraceCmd) -> Result<()> {
             let report = arch_harness::trace::trace_check(&dir)
                 .with_context(|| format!("трассировка кейса {}", dir.display()))?;
             print!("{}", arch_harness::trace::render_markdown(&report));
+            if report.has_errors() {
+                std::process::exit(1);
+            }
+        }
+    }
+    Ok(())
+}
+
+/// `arch nfr`: количественные NFR поверх модели (ADR-007); error — exit code 1.
+fn cmd_nfr(cmd: NfrCmd) -> Result<()> {
+    match cmd {
+        NfrCmd::Budget { dir } => {
+            let report = arch_harness::nfr::budget_check(&dir)
+                .with_context(|| format!("latency-бюджет кейса {}", dir.display()))?;
+            print!("{}", report.render());
+            if report.has_errors() {
+                std::process::exit(1);
+            }
+        }
+        NfrCmd::Availability { dir } => {
+            let report = arch_harness::nfr::availability_check(&dir)
+                .with_context(|| format!("расчёт доступности кейса {}", dir.display()))?;
+            print!("{}", report.render());
+            if report.has_errors() {
+                std::process::exit(1);
+            }
+        }
+        NfrCmd::Capacity { dir } => {
+            let report = arch_harness::nfr::capacity_check(&dir)
+                .with_context(|| format!("расчёт ёмкости кейса {}", dir.display()))?;
+            print!("{}", report.render());
+            if report.has_errors() {
+                std::process::exit(1);
+            }
+        }
+        NfrCmd::Cost { dir } => {
+            let report = arch_harness::nfr::cost_check(&dir)
+                .with_context(|| format!("расчёт стоимости кейса {}", dir.display()))?;
+            print!("{}", report.render());
             if report.has_errors() {
                 std::process::exit(1);
             }
