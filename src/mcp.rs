@@ -33,9 +33,10 @@ use crate::llm::ToolSpec;
 use crate::tool::{Tool, ToolContext, ToolOutput};
 
 /// Версия протокола MCP, запрашиваемая при handshake.
-const PROTOCOL_VERSION: &str = "2025-06-18";
+/// `pub(crate)`: её же анонсирует серверный режим (`crate::mcp_server`).
+pub(crate) const PROTOCOL_VERSION: &str = "2025-06-18";
 /// Запасная версия протокола (один fallback при протокольной ошибке).
-const PROTOCOL_VERSION_FALLBACK: &str = "2024-11-05";
+pub(crate) const PROTOCOL_VERSION_FALLBACK: &str = "2024-11-05";
 /// Лимит параллельных подключений/опросов серверов.
 const CONNECT_CONCURRENCY: usize = 4;
 
