@@ -7,7 +7,7 @@
 //! - [`core_registry`] — реестр ядерных инструментов;
 //! - [`full_registry`] — ядро + доменные инструменты (`mermaid::tools()`,
 //!   `rubric::tools()`, `web::tools()`, `kb::tools()`, `control::tools()`,
-//!   `model::tools()`, `harness::tools()`).
+//!   `model::tools()`, `trace::tools()`, `harness::tools()`).
 
 use std::sync::Arc;
 
@@ -49,6 +49,7 @@ fn domain_tools(cfg: &Config) -> Vec<Arc<dyn Tool>> {
     out.extend(crate::kb::tools());
     out.extend(crate::control::tools());
     out.extend(crate::model::tools());
+    out.extend(crate::trace::tools());
     out.extend(crate::harness::tools(cfg));
     out.extend(crate::plugin::tools(cfg));
     out.extend(crate::agentsmd::tools(cfg));
@@ -80,6 +81,7 @@ mod tests {
             "skill_search",
             "mermaid_render",
             "model_query",
+            "trace_check",
         ] {
             assert!(
                 names.iter().any(|n| n == expected),

@@ -2,7 +2,8 @@
 //!
 //! Правила (ADR-003): битая ссылка — `error`; дубль ID — `error`; цикл
 //! `depends_on` — `error`; `ADR` без затронутых `CMP` — `warn`; `NFR` без
-//! способа проверки — `warn`. Цели `verified_by` могут ссылаться на правила
+//! способа проверки — `warn`; `unverifiable` без обоснования — `error`
+//! (ADR-006). Цели `verified_by` могут ссылаться на правила
 //! `C-NNN` файла `CONSTRAINTS.yaml`, лежащего рядом с каталогом модели
 //! (файл отсутствует — такие ссылки не проверяются).
 
@@ -82,7 +83,7 @@ impl ValidationReport {
 }
 
 /// Состояние соседнего CONSTRAINTS.yaml для проверки ссылок `C-NNN`.
-enum Constraints {
+pub(crate) enum Constraints {
     /// Файла нет — ссылки на правила не проверяются.
     Absent,
     /// Набор ID правил (`id:` либо `name:`).
@@ -93,7 +94,7 @@ enum Constraints {
 
 /// Читает ID правил из `<model_dir>/../CONSTRAINTS.yaml`
 /// (корни `constraints:` или `rules:`, элементы с `id`/`name`).
-fn load_constraint_ids(model_dir: &Path) -> Constraints {
+pub(crate) fn load_constraint_ids(model_dir: &Path) -> Constraints {
     let Some(parent) = model_dir.parent() else {
         return Constraints::Absent;
     };
@@ -111,10 +112,13 @@ fn load_constraint_ids(model_dir: &Path) -> Constraints {
     for root in ["constraints", "rules"] {
         if let Some(seq) = yaml.get(root).and_then(|v| v.as_sequence()) {
             for item in seq {
-                for key in ["id", "name"] {
-                    if let Some(v) = item.get(key).and_then(|v| v.as_str()) {
-                        ids.insert(v.to_string());
-                    }
+                // ID правила — `id`, для харнесc-формата (rules:) — `name`.
+                if let Some(v) = item
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .or_else(|| item.get("name").and_then(|v| v.as_str()))
+                {
+                    ids.insert(v.to_string());
                 }
             }
         }
@@ -198,7 +202,8 @@ fn check_not_empty(model: &Model, issues: &mut Vec<ModelIssue>) {
     }
 }
 
-/// Правила: дубли ID, соответствие префикса ID типу.
+/// Правила: дубли ID, соответствие префикса ID типу, `unverifiable` обязан
+/// нести непустое обоснование (ADR-006).
 fn check_ids(model: &Model, issues: &mut Vec<ModelIssue>) {
     let mut seen: BTreeMap<&str, &Path> = BTreeMap::new();
     for e in &model.entities {
@@ -216,6 +221,18 @@ fn check_ids(model: &Model, issues: &mut Vec<ModelIssue>) {
             );
         } else {
             seen.insert(e.id.as_str(), &e.file);
+        }
+        if e.unverifiable
+            .as_deref()
+            .is_some_and(|s| s.trim().is_empty())
+        {
+            issue(
+                issues,
+                Severity::Error,
+                &e.file,
+                "empty-unverifiable",
+                format!("{}: `unverifiable` без обоснования", e.id),
+            );
         }
         if let Some((kind, _)) = parse_id(&e.id) {
             if kind != e.kind {
@@ -638,5 +655,34 @@ mod tests {
             "{}",
             report.summary()
         );
+    }
+
+    #[test]
+    fn unverifiable_with_justification_is_valid() {
+        let dir = tempfile::tempdir().expect("tmp");
+        entity(
+            dir.path(),
+            "AD-1-x.md",
+            "---\nid: AD-1\ntype: ad\ntitle: Практика\nstatus: ADOPTED\nunverifiable: проверяется регламентом, не кодом",
+        );
+        let report = validate_dir(dir.path());
+        assert!(report.issues.is_empty(), "{}", report.summary());
+    }
+
+    #[test]
+    fn unverifiable_without_justification_is_error() {
+        let dir = tempfile::tempdir().expect("tmp");
+        entity(
+            dir.path(),
+            "AD-1-x.md",
+            "---\nid: AD-1\ntype: ad\ntitle: Практика\nstatus: ADOPTED\nunverifiable: \"  \"",
+        );
+        let report = validate_dir(dir.path());
+        let issue = report
+            .issues
+            .iter()
+            .find(|i| i.rule == "empty-unverifiable")
+            .expect("error");
+        assert_eq!(issue.severity, Severity::Error);
     }
 }

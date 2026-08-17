@@ -150,6 +150,37 @@ pub struct LintIssue {
     pub severity: String,
 }
 
+/// Номера инвариантов `AD-<n>`, определённых в файле spine.
+///
+/// Семантика определения — как у [`lint_spine`]: заголовок `### AD-<n> …`
+/// либо строка `AD-<n>:` / `AD-<n>.` в начале строки. Используется
+/// трассировкой (`crate::trace`) для сверки модели со spine.
+///
+/// # Errors
+/// Файл не читается, некорректный идентификатор AD.
+pub fn spine_ad_ids(path: &Path) -> Result<BTreeSet<u64>> {
+    let content = std::fs::read_to_string(path).map_err(|e| HarnessError::io(path, e))?;
+    let re_def_heading = spine_regex(r"^\s{0,3}#{1,6}\s+AD-(\d+)\b")?;
+    let re_def_bare = spine_regex(r"^\s*AD-(\d+)\s*[:.]")?;
+    let mut ids = BTreeSet::new();
+    for (idx, line) in content.lines().enumerate() {
+        if let Some(caps) = re_def_heading
+            .captures(line)
+            .or_else(|| re_def_bare.captures(line))
+        {
+            let id: u64 = caps[1].parse().map_err(|_| {
+                HarnessError::Control(format!(
+                    "{}:{}: некорректный идентификатор AD",
+                    path.display(),
+                    idx + 1
+                ))
+            })?;
+            ids.insert(id);
+        }
+    }
+    Ok(ids)
+}
+
 /// Линтер ARCHITECTURE-SPINE.md.
 ///
 /// Определением AD-блока считается заголовок `### AD-<n> …` либо строка вида
@@ -1578,6 +1609,21 @@ mod tests {
             "ADR-001-outbox.md",
             "CMP-999/AD-27 не влияют на номер ADR"
         );
+    }
+
+    #[test]
+    fn spine_ad_ids_heading_and_bare_forms() {
+        // Заголовки `## AD-<n>:` и «голые» строки `AD-<n>.` — определения;
+        // вхождения AD-<n> в тексте — ссылки, не определения (ADR-006).
+        let dir = tempfile::tempdir().unwrap();
+        let spine = dir.path().join("ARCHITECTURE-SPINE.md");
+        std::fs::write(
+            &spine,
+            "# Spine\n\n## AD-1: Первый\n\nСсылаемся на AD-2 в тексте.\n\nAD-2. Второй (bare-форма)\n\n- **Rule**: AD-1 применяется.\n",
+        )
+        .unwrap();
+        let ids = spine_ad_ids(&spine).unwrap();
+        assert_eq!(ids, BTreeSet::from([1, 2]), "только определения");
     }
 
     #[test]

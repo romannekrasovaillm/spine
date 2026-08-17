@@ -49,6 +49,7 @@ pub mod secrets;
 pub mod subagent;
 pub mod tool;
 pub mod tools;
+pub mod trace;
 pub mod tui;
 pub mod web;
 pub mod worktree;

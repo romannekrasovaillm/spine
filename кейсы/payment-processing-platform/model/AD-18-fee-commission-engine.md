@@ -4,6 +4,7 @@ type: ad
 title: "Fee/Commission engine"
 status: "ADOPTED"
 affects: [CMP-002, CMP-012]
+verified_by: [C-029]
 ---
 
 - **Binds**: Payment Orchestrator ↔ Fee Engine (новый bounded context), Ledger

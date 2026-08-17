@@ -4,6 +4,7 @@ type: ad
 title: "Стратегия развёртывания (canary + zero-downtime DB migrations)"
 status: "ADOPTED"
 affects: [CMP-002, CMP-007]
+verified_by: [C-027]
 ---
 
 - **Binds**: все сервисы ↔ Kubernetes deployment, CI/CD pipeline

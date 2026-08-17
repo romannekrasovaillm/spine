@@ -4,6 +4,7 @@ type: ad
 title: "Вебхук/колбэк-стратегия для async рельсов"
 status: "ADOPTED"
 affects: [CMP-002, CMP-006]
+verified_by: [C-031]
 ---
 
 - **Binds**: Rail Connectors (SWIFT, БЭСП) ↔ Orchestrator, callback endpoint

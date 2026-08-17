@@ -4,6 +4,7 @@ type: ad
 title: "API versioning + backward compatibility"
 status: "ADOPTED"
 affects: [CMP-001]
+verified_by: [C-026]
 ---
 
 - **Binds**: Payment Gateway API ↔ все каналы (мобильный банк, Open API, партнёры)

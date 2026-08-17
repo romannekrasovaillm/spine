@@ -4,6 +4,7 @@ type: ad
 title: "Сильная консистентность для финансового состояния"
 status: "ADOPTED"
 affects: [CMP-002, CMP-003, CMP-007]
+verified_by: [C-025]
 ---
 
 - **Binds**: Payment Orchestrator, Ledger, Authorization ↔ PostgreSQL (single-writer per payment_id)

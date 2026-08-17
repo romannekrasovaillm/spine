@@ -38,6 +38,9 @@ pub struct Entity {
     pub verified_by: Vec<String>,
     /// Способ проверки (для `NFR`; свободный текст).
     pub verification: Option<String>,
+    /// Обоснованный отказ от механической проверки (для `AD`, ADR-006):
+    /// непустая строка — почему fitness-правило невозможно.
+    pub unverifiable: Option<String>,
     /// Тело документа (проза после frontmatter); ведущие пустые строки и
     /// хвостовые переводы строк срезаны.
     pub body: String,
@@ -121,6 +124,8 @@ struct Frontmatter {
     verified_by: Vec<String>,
     /// Способ проверки (для `NFR`).
     verification: Option<String>,
+    /// Отказ от механической проверки с обоснованием (для `AD`, ADR-006).
+    unverifiable: Option<String>,
 }
 
 /// Отделяет frontmatter от тела: `---` в первой строке, затем ближайший
@@ -215,6 +220,7 @@ pub fn parse_entity(file: &Path, text: &str) -> Result<Entity> {
         affects: fm.affects,
         verified_by: fm.verified_by,
         verification: fm.verification,
+        unverifiable: fm.unverifiable,
         body: body.trim_start_matches(['\r', '\n']).trim_end().to_string(),
         file: file.to_path_buf(),
     })

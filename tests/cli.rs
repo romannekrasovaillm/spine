@@ -216,3 +216,56 @@ fn doctor_without_keys_reports_problems_and_exits_1() {
         .stdout(contains("Итог:"))
         .stderr(contains("Error:").not());
 }
+
+/// Синтетический кейс для `arch trace check`: `model/` с одним AD,
+/// CONSTRAINTS.yaml, spine. `with_rule` — связывает AD с правилом C-001.
+fn trace_case(home: &Path, with_rule: bool) -> PathBuf {
+    let case = home.join("case");
+    let model = case.join("model");
+    std::fs::create_dir_all(&model).expect("mkdir model");
+    let verified = if with_rule {
+        "verified_by: [C-001]"
+    } else {
+        ""
+    };
+    std::fs::write(
+        model.join("AD-1.md"),
+        format!("---\nid: AD-1\ntype: ad\ntitle: Инвариант\nstatus: ADOPTED\n{verified}\n---\n"),
+    )
+    .expect("write AD");
+    std::fs::write(
+        case.join("CONSTRAINTS.yaml"),
+        "constraints:\n  - id: C-001\n    name: правило\n",
+    )
+    .expect("write constraints");
+    std::fs::write(case.join("ARCHITECTURE-SPINE.md"), "## AD-1: Инвариант\n")
+        .expect("write spine");
+    case
+}
+
+/// `arch trace check`: спайн покрыт правилом → PASS, exit 0 (ADR-006).
+#[test]
+fn trace_check_covered_spine_exits_0() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let case = trace_case(tmp.path(), true);
+    let mut cmd = arch_cmd(tmp.path());
+    cmd.arg("trace").arg("check").arg(case.as_os_str());
+    cmd.assert()
+        .success()
+        .stdout(contains("AD → fitness-правило | 1/1 | 100%"))
+        .stdout(contains("Итог: PASS"));
+}
+
+/// `arch trace check`: AD без правила и без `unverifiable` → FAIL, exit 1
+/// (скриптовый гейт CI флота, ADR-006).
+#[test]
+fn trace_check_uncovered_ad_exits_1() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let case = trace_case(tmp.path(), false);
+    let mut cmd = arch_cmd(tmp.path());
+    cmd.arg("trace").arg("check").arg(case.as_os_str());
+    cmd.assert()
+        .code(1)
+        .stdout(contains("ad-not-verified"))
+        .stdout(contains("Итог: FAIL"));
+}

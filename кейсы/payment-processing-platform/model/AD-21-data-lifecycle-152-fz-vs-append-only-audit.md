@@ -4,6 +4,7 @@ type: ad
 title: "Data lifecycle — 152-ФЗ vs append-only audit"
 status: "ADOPTED"
 affects: [CMP-002, CMP-007]
+verified_by: [C-032]
 ---
 
 - **Binds**: все сервисы ↔ data retention, pseudonymization policy

@@ -4,6 +4,7 @@ type: ad
 title: "Chaos engineering"
 status: "ADOPTED"
 affects: [CMP-002]
+verified_by: [C-033]
 ---
 
 - **Binds**: все компоненты ↔ chaos testing platform, game day schedule

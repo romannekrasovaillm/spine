@@ -4,6 +4,7 @@ type: ad
 title: "Multi-currency / FX"
 status: "ADOPTED"
 affects: [CMP-002, CMP-014]
+verified_by: [C-034]
 ---
 
 - **Binds**: Payment Orchestrator ↔ FX Service (новый bounded context), Ledger

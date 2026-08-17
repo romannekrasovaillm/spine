@@ -4,6 +4,7 @@ type: ad
 title: "Queue Load Leveling для пиковых нагрузок"
 status: "ADOPTED"
 affects: [CMP-001, CMP-002]
+verified_by: [C-028]
 ---
 
 - **Binds**: Payment Gateway ↔ Payment Orchestrator (через Kafka command topic)

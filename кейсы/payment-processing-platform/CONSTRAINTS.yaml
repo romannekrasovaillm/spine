@@ -162,3 +162,71 @@ constraints:
     type: file_exists
     path: "docs/runbooks/dr-failover.md"
     severity: critical
+
+  - id: C-025
+    name: "Сильная консистентность: optimistic locking (version)"
+    type: must_contain
+    glob: "**/migrations/*.sql"
+    pattern: "version|VERSION"
+    severity: high
+
+  - id: C-026
+    name: "API versioning: версионные заголовки и Sunset"
+    type: must_contain
+    glob: "**/*.go"
+    pattern: "application/vnd\\.|Sunset|API-Version"
+    severity: high
+
+  - id: C-027
+    name: "Canary-деплой: конфигурация progressive delivery"
+    type: file_exists
+    path: "deploy/canary-analysis.yaml"
+    severity: high
+
+  - id: C-028
+    name: "Queue Load Leveling: команда через Kafka-топик"
+    type: must_contain
+    glob: "**/*.go"
+    pattern: "payments\\.commands|ProcessPayment"
+    severity: high
+
+  - id: C-029
+    name: "Fee Engine: тарифные планы в коде"
+    type: must_contain
+    glob: "**/fee/*.go"
+    pattern: "tariff|Tariff|Fee|fee"
+    severity: high
+
+  - id: C-030
+    name: "Dispute flow: статусы споров"
+    type: must_contain
+    glob: "**/dispute/*.go"
+    pattern: "DISPUTE_|chargeback|Chargeback"
+    severity: high
+
+  - id: C-031
+    name: "Async-рельсы: callback endpoints"
+    type: must_contain
+    glob: "**/connectors/*.go"
+    pattern: "callback|Callback"
+    severity: high
+
+  - id: C-032
+    name: "Data lifecycle: партиционирование/retention"
+    type: must_contain
+    glob: "**/migrations/*.sql"
+    pattern: "PARTITION BY|retention|RETENTION"
+    severity: medium
+
+  - id: C-033
+    name: "Chaos engineering: runbook game days"
+    type: file_exists
+    path: "docs/runbooks/chaos-game-day.md"
+    severity: medium
+
+  - id: C-034
+    name: "FX: курсы и конвертация в коде"
+    type: must_contain
+    glob: "**/fx/*.go"
+    pattern: "rate|Rate|currency"
+    severity: high

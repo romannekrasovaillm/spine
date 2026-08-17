@@ -4,6 +4,7 @@ type: ad
 title: "Dispute/Chargeback flow"
 status: "ADOPTED"
 affects: [CMP-013]
+verified_by: [C-030]
 ---
 
 - **Binds**: Rail Connectors (card) ↔ Dispute Service (новый bounded context), Orchestrator

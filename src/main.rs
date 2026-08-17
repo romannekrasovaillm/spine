@@ -134,6 +134,11 @@ enum Cmd {
         #[command(subcommand)]
         cmd: ModelCmd,
     },
+    /// Трассируемость модели как fitness-функция (ADR-006).
+    Trace {
+        #[command(subcommand)]
+        cmd: TraceCmd,
+    },
     /// Библиотека скиллов: список, поиск, показ.
     Skills {
         #[command(subcommand)]
@@ -403,6 +408,18 @@ enum ModelCmd {
     /// (зеркально; устаревшие ADR-*.md удаляются).
     Project {
         /// Каталог модели.
+        dir: PathBuf,
+    },
+}
+
+/// Подкоманды `arch trace` (ADR-006).
+#[derive(Subcommand)]
+enum TraceCmd {
+    /// Позвенная трассируемость: REQ → NFR → AD/ADR → CMP → правило
+    /// CONSTRAINTS.yaml; AD без правила и без `unverifiable` — error
+    /// (exit code 1). Отчёт markdown, пригоден для evidence bundle.
+    Check {
+        /// Корень кейса (каталог с model/).
         dir: PathBuf,
     },
 }
@@ -704,6 +721,7 @@ async fn main() -> Result<()> {
         }
         Some(Cmd::Control { cmd }) => cmd_control(cmd)?,
         Some(Cmd::Model { cmd }) => cmd_model(cmd)?,
+        Some(Cmd::Trace { cmd }) => cmd_trace(cmd)?,
         Some(Cmd::Skills { cmd }) => cmd_skills(&cfg, cmd)?,
         Some(Cmd::Plugins { cmd }) => cmd_plugins(&cfg, cmd)?,
         Some(Cmd::Policy { check }) => cmd_policy(&cfg, check)?,
@@ -1269,6 +1287,21 @@ fn cmd_model(cmd: ModelCmd) -> Result<()> {
                 report.written.len(),
                 report.removed.len()
             );
+        }
+    }
+    Ok(())
+}
+
+/// `arch trace`: трассируемость модели как fitness-функция (ADR-006).
+fn cmd_trace(cmd: TraceCmd) -> Result<()> {
+    match cmd {
+        TraceCmd::Check { dir } => {
+            let report = arch_harness::trace::trace_check(&dir)
+                .with_context(|| format!("трассировка кейса {}", dir.display()))?;
+            print!("{}", arch_harness::trace::render_markdown(&report));
+            if report.has_errors() {
+                std::process::exit(1);
+            }
         }
     }
     Ok(())
