@@ -5,6 +5,10 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/romannekrasovaillm/spine/actions/workflows/ci.yml"><img src="https://github.com/romannekrasovaillm/spine/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+</p>
+
+<p align="center">
   <img src="docs/screenshots/02-chat-mermaid.png" alt="Spine: архитектурный ход — скиллы, база знаний, скоринг, живой mermaid-арт, индикатор контекста и фоновые субагенты · architecture turn: skills, KB, scoring, live mermaid, context gauge, background subagents" width="88%">
 </p>
 
@@ -318,7 +322,7 @@ arch [--config <path>] <command>   # без команды — TUI
 | `prompts [name]` | Библиотека промптов |
 | `mermaid <file>` | Рендер mermaid в Unicode/ASCII-арт |
 | `rubric list` / `rubric run <rubric> <target>` | Рубрики: список / оценка LLM-судьёй |
-| `bench list` / `bench run <name>` | Архитектурные бенчмарки |
+| `bench list` / `bench run <name>` / `bench run --golden` | Архитектурные бенчмарки; `--golden` — калибровка LLM-судьи по golden-set (MAE против эталона; выше `judge.golden_max_mae` — exit 1) |
 | `kb <query> [--limit]` | Поиск по локальной базе знаний |
 | `web search <query> [--arch]` / `web fetch <url>` / `web sites` | Веб: поиск, фетч, кураторские сайты |
 | `mcp list` / `mcp call <server__tool>` | MCP-серверы и вызовы инструментов |
@@ -326,6 +330,8 @@ arch [--config <path>] <command>   # без команды — TUI
 | `harness-run <harness> --repo <path> [--task]` | Прогнать кодовый харнесс по пакету |
 | `harnesses` | Известные кодовые харнессы и их доступность |
 | `control check/spine/sensors/score/adr` | Архитектурный контроль (fitness, линтеры, значимость) |
+| `model validate/show/graph/project` | Типизированная модель архитектуры (model/): ссылочная целостность, карточки сущностей, граф связей, проекция ADR |
+| `trace check <dir>` | Трассируемость модели: покрытие звеньев REQ → NFR → AD/ADR → CMP → fitness-правило, сироты, exit 1 на обязательных звеньях |
 | `agents-md refresh/lint/lint-all <repo>` | AGENTS.md для репозиториев команд |
 | `evidence pack/verify` | Evidence Bundle как гейт выпуска |
 | `metrics` | Операционные и трансформационные KPI |
@@ -349,7 +355,9 @@ arch [--config <path>] <command>   # без команды — TUI
   контекста кодовому харнессу, кадр за кадром), `docs/mcp.md`, `docs/cron_and_md_pipes.md`,
   `docs/web_kb.md`, `docs/agents_md.md`, `docs/SOURCE_BRIEF.md` (источник идей).
 
-Конфигурация: `config.example.toml`, `cron.example.toml`. Тесты: `cargo test`.
+Конфигурация: `config.example.toml`, `cron.example.toml`. Тесты: `cargo test` (включая
+интеграционные CLI-тесты `tests/cli.rs` на `assert_cmd`; live-LLM — `#[ignore]`d).
+CI: fmt / clippy / test / MSRV 1.85 / cargo audit — `.github/workflows/ci.yml`.
 
 ---
 
@@ -438,8 +446,17 @@ BMAD, Spec Kit, OpenSpec, and more):
   (OpenSpec state machine), **AGENTS.md generator + drift linter** for team repos.
 - **Metrics** (`arch metrics`): operational counters plus transformation KPIs —
   approval-theater detection, architecture drift rate, cost per validated outcome.
-- **Anchor & dynamic rubrics** with an evidence-bound LLM judge, banking
-  architecture benchmarks, fitness functions, spine linter.
+- **Anchor & dynamic rubrics** with an evidence-bound LLM judge (k-sample
+  median, quote verification, prompt-injection isolation — ADR-004), banking
+  architecture benchmarks, fitness functions, spine linter; judge calibration
+  gate: `arch bench run --golden` (MAE vs golden set, exit 1 above
+  `judge.golden_max_mae`).
+- **Typed architecture model** (`arch model validate/show/graph/project`):
+  markdown+frontmatter entities (CAP/SYS/CMP/INT/NFR/REQ/AD/ADR/RISK/OWNER)
+  with referential-integrity validation, relation graph, and ADR projection
+  (ADR-003). **Traceability as a fitness function** (`arch trace check`):
+  REQ → NFR → AD/ADR → CMP → fitness-rule coverage with named orphans,
+  exit 1 on mandatory links (ADR-006).
 
 **Handoff to coding harnesses**: Claude Code, Qwen Code, OpenClaw, Hermes,
 Theseus, CodeWhale — `.arch-handoff/` packages with invariants, acceptance
@@ -569,7 +586,8 @@ Fully commented sample: `config.example.toml`.
   The detailed docs are mostly in Russian — the code and CLI speak English.
 
 Configuration: `config.example.toml`, `cron.example.toml` — fully commented.
-Tests: `cargo test` (live-LLM tests are `#[ignore]`d).
+Tests: `cargo test` (incl. CLI integration tests in `tests/cli.rs` via `assert_cmd`; live-LLM tests are `#[ignore]`d).
+CI: fmt / clippy / test / MSRV 1.85 / cargo audit — `.github/workflows/ci.yml`.
 
 ### License
 
