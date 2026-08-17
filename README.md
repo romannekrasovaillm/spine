@@ -132,7 +132,7 @@ BMAD, Spec Kit, OpenSpec и др.):
 > плоский индекс скиллов со всех плагинов, а не отдельный реестр.
 
 - Шесть встроенных плагинов (`arch init` раскладывает в `~/.arch-harness/plugins`):
-  **arch-core** (14 методических скиллов архитектора, вкл. мета-скилл `skill-authoring`),
+  **arch-core** (15 методических скиллов архитектора, вкл. мета-скилл `skill-authoring`),
   **patterns-integration** (сага, outbox, CQRS, strangler+ACL, идемпотентность —
   дистилляты microservices.io), **patterns-resilience** (circuit breaker+retry,
   bulkhead, load leveling, cache-aside, throttling — дистилляты Azure),
@@ -421,7 +421,7 @@ BMAD, Spec Kit, OpenSpec, and more):
 > they live inside a plugin (`skills/<name>/SKILL.md`). `arch skills …` is a
 > flat index over all plugins, not a separate registry.
 
-- Six built-in plugins (deployed by `arch init`): **arch-core** (14 architecture
+- Six built-in plugins (deployed by `arch init`): **arch-core** (15 architecture
   method skills incl. the `skill-authoring` meta-skill), **patterns-integration**
   (saga, outbox, CQRS, strangler+ACL — distilled from microservices.io),
   **patterns-resilience** (circuit breaker, bulkhead, load leveling — Azure
