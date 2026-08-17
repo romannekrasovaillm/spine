@@ -12,6 +12,27 @@
 переносимый пакет компонентов для агентов: **скиллы + MCP-серверы** в одном каталоге,
 плюс клиентские расширения (субагенты, хуки).
 
+## Библиотека плагинов: что это и зачем
+
+**Библиотека плагинов** — это набор каталогов-плагинов в директориях
+`[plugins] dirs` (по умолчанию `~/.arch-harness/plugins`). Она решает три
+задачи доменного харнесса:
+
+1. **Методики под рукой.** Скиллы — это дистиллированные методики
+   архитектора (как писать ADR, как маршрутизировать по значимости, как
+   считать NFR). Агент находит их сам по запросу (`skill_search`) и
+   подгружает в контекст (`skill_load`), не раздувая системный промпт.
+2. **Расширение без перекомпиляции.** Новый плагин = скопировать каталог в
+   библиотеку — скиллы, MCP-серверы, субагенты и хуки подхватываются на
+   старте сессии. Свой плагин собирается за 5 минут (рецепт ниже).
+3. **Накопление знаний.** `/distill` и `skill_distill` превращают статьи и
+   транскрипты сессий в новые скиллы managed-зоны `arch-distilled` —
+   библиотека растёт от практики, а не только от поставщика.
+
+Стандарт [agent-plugins.org](https://agent-plugins.org/) делает плагины
+переносимыми между агентными харнессами: один каталог с манифестом читается
+и Spine, и другими совместимыми клиентами.
+
 ## Стандарт: layout плагина
 
 ```
@@ -62,11 +83,11 @@ include_mcp = true   # MCP из плагинов → общий пул, имен
 
 ## Встроенные плагины (раскладываются `arch init`)
 
-- **arch-core** (14 скиллов) — ядро методов solution-архитектора: `adr-authoring`,
+- **arch-core** (15 скиллов) — ядро методов solution-архитектора: `adr-authoring`,
   `spine-invariants`, `significance-routing`, `c4-mermaid`, `nfr-design`,
   `readiness-gate`, `adversarial-review`, `handoff-packaging`, `reverse-discovery`,
   `delta-spec`, `fitness-functions`, `rubric-judging`, `skill-authoring` (мета-скилл
-  создания скиллов), `dsh-harness-patterns`. Субагенты: `repo-scout`, `adr-reviewer`,
+  создания скиллов), `agents-md-authoring` (AGENTS.md для команд), `dsh-harness-patterns`. Субагенты: `repo-scout`, `adr-reviewer`,
   `nfr-auditor`. Хуки: блок force-push в bash (PreToolUse, exit 2), напоминание о
   spine/ADR после правок (PostToolUse), заметка SessionStart. MCP: `arch-memory`.
 - **patterns-integration** (5 скиллов) — дистилляты pattern language Криса Ричардсона

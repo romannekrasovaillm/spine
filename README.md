@@ -353,7 +353,7 @@ arch [--config <path>] <command>   # без команды — TUI
 
 - `docs/architecture.md` — устройство, контракты, как расширять.
 - `AGENTS.md` — путеводитель для агентов и контрибьюторов (установка, карта модулей, конвенции); `AGENTS-READERS.md` — для агентов-читателей (навигация по идеям за 5 минут, безопасное чтение без ключей).
-- `docs/slash_commands.md` — слэш-команды TUI; `docs/tools.md` — инструменты.
+- `docs/slash_commands.md` — слэш-команды TUI; `docs/tools.md` — инструменты (карта «база vs архитектурные» + полные параметры).
 - `docs/models.md` — подключение LLM (DeepSeek/Kimi/GLM, свои endpoint'ы).
 - `docs/plugins_and_skills.md` — плагины и библиотека скиллов.
 - `docs/rubrics_and_benchmarks.md`, `docs/control.md`, `docs/governance.md`,
@@ -597,7 +597,7 @@ Fully commented sample: `config.example.toml`.
 
 - `docs/architecture.md` — system design, contracts, how to extend.
 - `AGENTS.md` — guide for agents and contributors (install, module map, conventions); `AGENTS-READERS.md` — for reading agents (5-minute idea map, key-free safe exploration).
-- `docs/tools.md` — full tool reference (30+ tools with parameters).
+- `docs/tools.md` — full tool reference (core vs architecture map, 30+ tools with parameters).
 - `docs/slash_commands.md`, `docs/models.md`, `docs/plugins_and_skills.md`,
   `docs/rubrics_and_benchmarks.md`, `docs/harness_integrations.md`,
   `docs/handoff_walkthrough.md` (handing context to a coding harness,
