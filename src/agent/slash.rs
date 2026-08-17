@@ -433,7 +433,13 @@ async fn cmd_rubric(rest: &str, ctx: &ToolContext) -> Result<SlashOutcome> {
             let target = std::fs::read_to_string(&target_path)
                 .map_err(|e| HarnessError::io(&target_path, e))?;
             let provider = default_provider(ctx)?;
-            let report = crate::rubric::evaluate(&rubric, &target, provider.as_ref()).await?;
+            let report = crate::rubric::evaluate_with_options(
+                &rubric,
+                &target,
+                provider.as_ref(),
+                &ctx.config.judge,
+            )
+            .await?;
             Ok(SlashOutcome::Handled(report.to_markdown()))
         }
         _ => Ok(SlashOutcome::Handled(
@@ -476,6 +482,7 @@ async fn cmd_bench(rest: &str, ctx: &ToolContext) -> Result<SlashOutcome> {
                 provider.as_ref(),
                 &ctx.config.paths.rubrics_dir(),
                 &ctx.config.paths.reports_dir,
+                &ctx.config.judge,
             )
             .await?;
             let verdict = if report.passed { "PASS" } else { "FAIL" };
