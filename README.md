@@ -319,6 +319,46 @@ CI-джобой `dogfood` (`arch control spine` + `arch control check .` + ск�
 - **Планировщик md-задач** «md + cron + LLM + баш-пайпы» (`docs/cron_and_md_pipes.md`).
 - **Библиотека промптов** (`assets/prompts/`, `arch prompts`).
 
+### Разработка в цифрах: токены и где окупилась архитектура
+
+Проект за 4 дня (14–17 августа 2026) написан AI-агентом (Kimi K3) под
+управлением solution-архитектора-человека. Расход измерен точно — сумма
+событий `usage.record` из wire-логов трёх сессий (72 агента: основной +
+рой субагентов):
+
+| Метрика | Значение |
+|---|---|
+| LLM-запросов | 5 628 |
+| Output (код, доки, ответы) | 4,2 млн токенов |
+| Свежий input (новый контент) | 15,9 млн токенов |
+| Cache-read (перечитывание контекста ходами) | 986,6 млн токенов |
+| **Всего обработано** | **≈ 1,007 млрд токенов** |
+
+Отдельно, не в этой сумме: прогоны самого харнесса (кейсы 001–006, флоты
+исполнителей) на DeepSeek/GLM/Kimi K3 API — ещё ~5–10 млн токенов.
+
+Где окупилась архитектурная дисциплина (работа архитектора, а не модели):
+
+- **Спайн удерживает дрейф — доказано контролируемым экспериментом**
+  ([кейс 006](кейсы/drift-control/)): одна задача двумя руками — голая →
+  дрейф по орг-инвариантам при полностью зелёных тестах (гейт FAIL, exit
+  1), с handoff-пакетом → PASS 6/6. Цена спайна по стене — нулевая
+  (360 с против 372 с).
+- **Спайн как клей параллелизма** (кейсы [004](кейсы/parallel-epics/) и
+  [005](кейсы/fleet-of-ten/)): 3 и 10 исполнителей без взаимной видимости
+  сошлись на контрактах с первой сборки; контракт «Финализация», рождённый
+  из дефекта кейса 004, дал 10/10 самокоммитов флота в кейсе 005.
+- **Якорные рубрики как детектор слабости обвязки**: оценка handoff_quality
+  2.90/5 на Critical-кейсе локализовала разрыв (текстовый JSON-контракт
+  результата не парсился механически) — фиксы ушли в генератор handoff и
+  предгейты, а не в кодовый агент.
+- **Внешнее архитектурное ревью → инженерные гейты**: по ревью появились
+  догфудинг (свои `ARCHITECTURE-SPINE.md` + `CONSTRAINTS.yaml` и CI-джоба
+  dogfood — она уже поймала реальный инцидент: personal-paths scan
+  остановил коммит с мусором сборки), clippy `-D warnings` с явной
+  политикой исключений, миграция на поддерживаемый YAML-крейт, блок
+  безопасности исполнения кодовых харнессов.
+
 ### Быстрый старт
 
 ```bash
@@ -663,6 +703,49 @@ Enter queues, Alt+Enter or a "!!" prefix jumps to the front, fullscreen viewer
 with horizontal pan, docx/xlsx export, option-picker modals), MCP client,
 curated architecture websites + local knowledge base, markdown-task cron,
 `arch doctor` diagnostics.
+
+### Development in numbers: tokens and where architecture paid off
+
+The project was built in 4 days (August 14–17, 2026) by an AI agent (Kimi
+K3) steered by a human solution architect. Usage is measured exactly —
+the sum of `usage.record` events across three session wire logs (72
+agents: the main loop plus the sub-agent swarm):
+
+| Metric | Value |
+|---|---|
+| LLM requests | 5,628 |
+| Output (code, docs, replies) | 4.2M tokens |
+| Fresh input (new content) | 15.9M tokens |
+| Cache-read (context re-reads per turn) | 986.6M tokens |
+| **Total processed** | **≈ 1.007B tokens** |
+
+Not included: the harness's own runs (cases 001–006, executor fleets) on
+the DeepSeek/GLM/Kimi K3 APIs — roughly another 5–10M tokens.
+
+Where architectural discipline (the architect's work, not the model's)
+paid off:
+
+- **The spine holds against drift — proven by a controlled experiment**
+  ([case 006](кейсы/drift-control/)): the same task in two arms — bare →
+  drift on org invariants with all tests green (gate FAIL, exit 1), with
+  a handoff package → PASS 6/6. The spine costs zero wall time
+  (360s vs 372s).
+- **Spine as the glue of parallelism** (cases [004](кейсы/parallel-epics/)
+  and [005](кейсы/fleet-of-ten/)): 3 and 10 executors with zero
+  cross-visibility converged on first-build integration; the
+  "Finalization" contract, born from a case-004 defect, yielded 10/10
+  self-commits in case 005.
+- **Anchored rubrics as a wiring-weakness detector**: a handoff_quality
+  score of 2.90/5 on a Critical case pinpointed the gap (the textual JSON
+  result contract was not machine-parsed) — fixes went into the handoff
+  generator and pre-gates, not into the coding agent.
+- **External architecture review → engineering gates**: the review
+  produced dogfooding (our own `ARCHITECTURE-SPINE.md` +
+  `CONSTRAINTS.yaml` and a dogfood CI job — which already caught a real
+  incident: the personal-paths scan stopped a commit carrying build
+  junk), clippy `-D warnings` with an explicit allow policy, a migration
+  to the maintained YAML crate, and the code-harness execution-safety
+  block.
 
 ### Quick start
 
