@@ -253,6 +253,10 @@ BMAD, Spec Kit, OpenSpec и др.):
   `docs/handoff_walkthrough.md`).
 - **MCP-клиент** (`docs/mcp.md`), **веб-доступ** (11 кураторских сайтов
   архитектора) и **локальная база знаний** (`docs/web_kb.md`).
+- **MCP-сервер** `arch mcp serve` (ADR-008): инструменты `spine_lint`, `fitness_check`,
+  `significance_score`, `trace_check`, `model_query`, `rubric_run` наружу кодовым агентам
+  (Claude Code и др.) — структурированный verdict (`passed` + находки) в момент написания
+  кода; read-only, пути аргументами вызова (`docs/mcp.md`).
 - **Планировщик md-задач** «md + cron + LLM + баш-пайпы» (`docs/cron_and_md_pipes.md`).
 - **Библиотека промптов** (`assets/prompts/`, `arch prompts`).
 
@@ -320,18 +324,20 @@ arch [--config <path>] <command>   # без команды — TUI
 | `run [prompt] [--model] [--no-stream] [--quiet] [--think on\|off]` | Headless-прогон агента; `-` или пайп — stdin; `-q`: stdout только финальный ответ (для скриптов) |
 | `models` | Список настроенных моделей |
 | `prompts [name]` | Библиотека промптов |
-| `mermaid <file>` | Рендер mermaid в Unicode/ASCII-арт |
+| `mermaid <file>` | Рендер mermaid в Unicode/ASCII-арт (flowchart, sequenceDiagram, erDiagram, C4Context/C4Container/C4Component) |
 | `rubric list` / `rubric run <rubric> <target>` | Рубрики: список / оценка LLM-судьёй |
 | `bench list` / `bench run <name>` / `bench run --golden` | Архитектурные бенчмарки; `--golden` — калибровка LLM-судьи по golden-set (MAE против эталона; выше `judge.golden_max_mae` — exit 1) |
 | `kb <query> [--limit]` | Поиск по локальной базе знаний |
 | `web search <query> [--arch]` / `web fetch <url>` / `web sites` | Веб: поиск, фетч, кураторские сайты |
 | `mcp list` / `mcp call <server__tool>` | MCP-серверы и вызовы инструментов |
+| `mcp serve` | MCP-сервер (stdio): архитектурный контроль кодовым агентам — verdict в момент написания кода (ADR-008, `docs/mcp.md`) |
 | `handoff <harness> --repo <path> --task <text>` | Handoff-пакет `.arch-handoff/` |
 | `harness-run <harness> --repo <path> [--task]` | Прогнать кодовый харнесс по пакету |
 | `harnesses` | Известные кодовые харнессы и их доступность |
 | `control check/spine/sensors/score/adr` | Архитектурный контроль (fitness, линтеры, значимость) |
-| `model validate/show/graph/project` | Типизированная модель архитектуры (model/): ссылочная целостность, карточки сущностей, граф связей, проекция ADR |
+| `model validate/show/graph/project/export/import` | Типизированная модель архитектуры (model/): ссылочная целостность, карточки сущностей, граф связей, проекция ADR; обмен с отраслевыми форматами — экспорт SYS/CMP/INT в Structurizr DSL/PlantUML/drawio, импорт Structurizr DSL (round-trip, ADR-009) |
 | `trace check <dir>` | Трассируемость модели: покрытие звеньев REQ → NFR → AD/ADR → CMP → fitness-правило, сироты, exit 1 на обязательных звеньях |
+| `nfr budget/availability/capacity/cost <dir>` | Количественные NFR поверх модели (ADR-007): latency-бюджет по hop'ам INT-* против цели p99 (расхождение — error с виновными hop'ами), доступность участков против SLA (+RTO/RPO), ёмкость против RPS-цели, TCO и цена выхода; error → exit 1 |
 | `agents-md refresh/lint/lint-all <repo>` | AGENTS.md для репозиториев команд |
 | `evidence pack/verify` | Evidence Bundle как гейт выпуска |
 | `metrics` | Операционные и трансформационные KPI |
@@ -451,12 +457,26 @@ BMAD, Spec Kit, OpenSpec, and more):
   architecture benchmarks, fitness functions, spine linter; judge calibration
   gate: `arch bench run --golden` (MAE vs golden set, exit 1 above
   `judge.golden_max_mae`).
-- **Typed architecture model** (`arch model validate/show/graph/project`):
-  markdown+frontmatter entities (CAP/SYS/CMP/INT/NFR/REQ/AD/ADR/RISK/OWNER)
+- **Typed architecture model** (`arch model validate/show/graph/project/export/import`):
+  markdown+frontmatter entities (CAP/SYS/CMP/INT/NFR/REQ/AD/ADR/RISK/OWNER/QAS)
   with referential-integrity validation, relation graph, and ADR projection
-  (ADR-003). **Traceability as a fitness function** (`arch trace check`):
+  (ADR-003); industry-format exchange — export SYS/CMP/INT to Structurizr
+  DSL/PlantUML/drawio, import Structurizr DSL back (round-trip, ADR-009).
+  **Traceability as a fitness function** (`arch trace check`):
   REQ → NFR → AD/ADR → CMP → fitness-rule coverage with named orphans,
   exit 1 on mandatory links (ADR-006).
+- **Quantitative NFRs** (`arch nfr budget/availability/capacity/cost`, ADR-007):
+  latency-budget decomposition over `INT-*` hops vs the p99 target (mismatch →
+  error naming the guilty hops), availability composition (serial ∏Aᵢ,
+  parallel 1−(1−A)ⁿ) vs SLA with RTO/RPO targets, capacity vs RPS target, TCO
+  and exit price — all from entity data, deterministic, no LLM. **Quality
+  attribute scenarios** (`QAS-*` entities: source/stimulus/artifact/response/
+  measure) unfold automatically into the acceptance-criteria section of the
+  handoff `TASK.md`.
+- **MCP server** `arch mcp serve` (ADR-008): exposes `spine_lint`, `fitness_check`,
+  `significance_score`, `trace_check`, `model_query`, `rubric_run` to coding agents
+  (Claude Code etc.) — structured verdict (`passed` + findings) at code-writing
+  time; read-only, all targets passed as call arguments (`docs/mcp.md`).
 
 **Handoff to coding harnesses**: Claude Code, Qwen Code, OpenClaw, Hermes,
 Theseus, CodeWhale — `.arch-handoff/` packages with invariants, acceptance

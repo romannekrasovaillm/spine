@@ -25,16 +25,18 @@ function calling), ошибки инструментов — данные для
 | `agent.rs` | Агентный цикл `AgentSession`, события `AgentEvent`, JSONL-журнал сессии. |
 | `agent/slash.rs` | Слэш-команды TUI (`docs/slash_commands.md`). |
 | `agent/prompts.rs` | Библиотека промптов `assets/prompts/*.md`; плейсхолдеры `{{var}}`. |
-| `mermaid.rs`, `mermaid/{parse,model,layout,draw}.rs` | Подмножество mermaid (flowchart, sequenceDiagram) → символьная сетка; layered layout (Sugiyama-lite). |
+| `mermaid.rs`, `mermaid/{parse,model,layout,draw}.rs` | Подмножество mermaid (flowchart, sequenceDiagram, erDiagram, C4Context/C4Container/C4Component) → символьная сетка; ER/C4 понижаются к flowchart-AST (многострочные метки узлов); layered layout (Sugiyama-lite). |
 | `rubric.rs` | Движок рубрик: якорные/динамические, LLM-судья (k сэмплов → медиана, метки `unstable`/`evidence_not_found`, механическая проверка цитат, лимит длины — явная ошибка, изоляция текста — ADR-004), `RubricReport`. |
 | `bench.rs` | Бенчмарки: YAML-сценарий → ответ модели → оценка рубрикой → отчёты md+json; golden-set судьи (`assets/benchmarks/golden/`, `run_golden`, метрика MAE, гейт по `judge.golden_max_mae`). |
 | `web.rs` | DuckDuckGo-поиск, site:-ограничение по кураторским сайтам, fetch html→text. |
 | `kb.rs` | Локальная база знаний: walkdir + fuzzy-скоринг + сниппеты. |
 | `mcp.rs` | MCP-клиент: stdio NDJSON JSON-RPC, `McpManager`, `McpToolAdapter`. |
+| `mcp_server.rs` | MCP-сервер (ADR-008): stdio NDJSON JSON-RPC, `arch mcp serve`; 6 read-only инструментов контроля (verdict passed+находки) кодовым агентам; -32700/-32601/-32602/isError, rubric_run без ключа → -32603. |
 | `harness.rs` | Handoff-пакеты `.arch-handoff/` и запуск кодовых харнессов. |
 | `control.rs` | Архитектурный контроль: score, линтер spine, сенсоры, fitness, ADR. |
-| `model.rs`, `model/{parse,graph,validate,project}.rs` | Типизированная модель архитектуры (ADR-003): сущности model/*.md (frontmatter + проза), валидация ссылок, граф (text/mermaid), проекция ADR в .arch-handoff/adr/; инструмент model_query. |
+| `model.rs`, `model/{parse,graph,validate,project,exchange}.rs` | Типизированная модель архитектуры (ADR-003): сущности model/*.md (frontmatter + проза; в т.ч. `QAS-*` и количественные поля ADR-007), валидация ссылок, граф (text/mermaid), проекция ADR в .arch-handoff/adr/, обмен с отраслевыми форматами (exchange: экспорт Structurizr DSL/PlantUML/drawio, импорт Structurizr DSL, round-trip — ADR-009); инструмент model_query. |
 | `trace.rs` | Трассируемость как fitness-функция (ADR-006): позвенное покрытие REQ → NFR → AD/ADR → CMP → правило CONSTRAINTS.yaml, сверка модели со spine, отчёт markdown для evidence bundle; инструмент trace_check. |
+| `nfr.rs` | Количественные NFR (ADR-007): `arch nfr budget` (сумма latency-бюджетов hop'ов INT-* против p99-цели NFR), `availability` (∏Aᵢ последовательно, 1−(1−A)ⁿ по replicas, сверка с SLA, цели RTO/RPO), `capacity` (instances × rps_per_instance против rps_target), `cost` (TCO и цена выхода из тарифов сущностей); error → exit 1. |
 | `cron.rs` | Планировщик md-задач: `cron.toml`, дюжность, прогон, отчёт. |
 | `tui.rs`, `tui/{app,render,text,theme}.rs` | TUI: event loop, состояние, отрисовка, markdown-lite, палитра Tokyo Night. |
 | `assets.rs` | Встроенные ассеты (`include_str!` из `assets/`, `examples/`); `write_defaults` для `arch init` (не затирает существующие файлы). |
