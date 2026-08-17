@@ -65,6 +65,9 @@ pub enum HarnessError {
     /// Ошибка архитектурного контроля (fitness functions, линтер spine).
     #[error("control: {0}")]
     Control(String),
+    /// Ошибка типизированной модели архитектуры (разбор/валидация/проекция).
+    #[error("model: {0}")]
+    Model(String),
     /// Ошибка адаптера кодового харнесса.
     #[error("harness: {0}")]
     Harness(String),

@@ -1,0 +1,9 @@
+---
+id: NFR-016
+type: nfr
+title: "Error budget"
+status: "accepted"
+verification: "SLO burn rate alert"
+---
+
+Цель: 99.99% → 52 min/month budget.

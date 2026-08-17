@@ -4,6 +4,7 @@
 
 - Модель проектирования: **GLM-5.2** (одна сессия; handoff-пакет сгенерирован позже — его `MANIFEST.json` фиксирует модель на момент генерации: `deepseek`).
 - Ключевые документы: `ARCHITECTURE.md` (целевая архитектура), `ARCHITECTURE-SPINE.md` (27 инвариантов AD-1…AD-27), `CONSTRAINTS.yaml` (24 fitness-правила под код), `docs/adr/ADR-001…016`.
+- Типизированная модель `model/` (96 сущностей: SYS/CAP/CMP/INT/NFR/REQ/AD/ADR/RISK/OWNER со связями; ADR-003 в `docs/adr/` харнесса): `arch model validate model` — ссылочная целостность, `arch model show ADR-001 --dir model` — карточка, `arch model graph --dir model [--format mermaid]` — граф связей.
 - Статус: дизайн готов, подготовлен handoff-пакет на **Walking Skeleton H0** (сквозной внутренний перевод A→B, Go/PostgreSQL/Redis/Kafka). Реализация не начата.
 
 ## Структура
@@ -12,6 +13,8 @@
 ARCHITECTURE.md              целевая архитектура: рельсы, bounded contexts, NFR, риски
 ARCHITECTURE-SPINE.md        27 инвариантов AD-1…AD-27 (Binds/Prevents/Rule, статусы)
 CONSTRAINTS.yaml             24 fitness-правила под код (must_contain/must_not_contain, critical)
+model/                       типизированная модель архитектуры (одна сущность = один .md
+                             с YAML-frontmatter; ссылки depends_on/implements/affects/verified_by)
 docs/adr/ADR-001…016.md      решения: сага-оркестрация, outbox, database-per-service,
                              trust-зоны, идемпотентность, state machine, DLQ, backoff,
                              сверка, DR (RTO 15мин/RPO 0), Vault/HSM, версионирование API,
@@ -23,7 +26,7 @@ docs/adr/ADR-001…016.md      решения: сага-оркестрация, 
   CONSTRAINTS.yaml           fitness-правила для `arch control check`
   RUBRIC.yaml                якорная рубрика handoff_quality
   MANIFEST.json              модель, источники, бюджет epic-context
-  adr/                       копии ADR на момент передачи
+  adr/                       проекция ADR из model/ (`arch model project model`), не редактировать
 ```
 
 ## Что смотреть в первую очередь

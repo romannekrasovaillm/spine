@@ -782,23 +782,31 @@ fn run_with_timeout(repo: &Path, command: &str, timeout: Duration) -> Result<Opt
 /// Consequences/Reversibility/References) с очередным номером в каталоге.
 ///
 /// Номер — max(существующие `ADR-NNN-*`) + 1; каталог создаётся при
-/// отсутствии. Имя файла: `ADR-NNN-kebab-case-title.md` (не-ASCII символы
-/// заменяются на `-`, без транслитерации).
+/// отсутствии. Имя файла: `ADR-NNN-kebab-case-title.md` (кириллица
+/// транслитерируется, ADR-002). Разбор ID — общий regex модели
+/// (`crate::model::id_re`, ADR-003), файлы не-ADR сущностей игнорируются.
 ///
 /// # Errors
 /// Каталог недоступен/не создаётся, файл уже существует.
 pub fn adr_new(dir: &Path, title: &str) -> Result<PathBuf> {
     std::fs::create_dir_all(dir).map_err(|e| HarnessError::io(dir, e))?;
-    let re_adr = Regex::new(r"^ADR-(\d+)")
-        .map_err(|e| HarnessError::Control(format!("внутренний regex ADR: {e}")))?;
+    let re_id = crate::model::id_re()
+        .map_err(|e| HarnessError::Control(format!("внутренний regex ID: {e}")))?;
     let mut max_n = 0u64;
     let rd = std::fs::read_dir(dir).map_err(|e| HarnessError::io(dir, e))?;
     for entry in rd {
         let entry = entry.map_err(|e| HarnessError::io(dir, e))?;
         let name = entry.file_name();
         let name = name.to_string_lossy();
-        if let Some(caps) = re_adr.captures(&name) {
-            let n: u64 = caps[1].parse().map_err(|_| {
+        if let Some(caps) = re_id.captures(&name) {
+            // Нумеруются только ADR-файлы; прочие сущности (CMP-*, AD-*) мимо.
+            if caps.get(1).is_none_or(|m| m.as_str() != "ADR") {
+                continue;
+            }
+            let Some(num) = caps.get(2) else {
+                continue; // группа номера гарантирована паттерном; страховка от паники
+            };
+            let n: u64 = num.as_str().parse().map_err(|_| {
                 HarnessError::Control(format!("некорректный номер ADR в имени файла '{name}'"))
             })?;
             max_n = max_n.max(n);
@@ -1547,6 +1555,28 @@ mod tests {
             second.file_name().unwrap().to_string_lossy(),
             "ADR-002-shina-sobytiy.md",
             "кириллица транслитерируется (ADR-002)"
+        );
+    }
+
+    #[test]
+    fn adr_new_ignores_non_adr_entity_files() {
+        // Общий regex ID (model::id_re) матчит и CMP-*/AD-* имена —
+        // нумерацию ADR они затрагивать не должны (ADR-003).
+        let dir = tempfile::tempdir().unwrap();
+        let adr_dir = dir.path().join("docs/adr");
+        std::fs::create_dir_all(&adr_dir).unwrap();
+        for name in [
+            "CMP-999-payment-gateway.md",
+            "AD-27-multi-currency.md",
+            "README.md",
+        ] {
+            std::fs::write(adr_dir.join(name), "посторонний файл").unwrap();
+        }
+        let first = adr_new(&adr_dir, "Outbox").unwrap();
+        assert_eq!(
+            first.file_name().unwrap().to_string_lossy(),
+            "ADR-001-outbox.md",
+            "CMP-999/AD-27 не влияют на номер ADR"
         );
     }
 
