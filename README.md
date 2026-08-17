@@ -288,6 +288,22 @@ CI-джобой `dogfood` (`arch control spine` + `arch control check .` + ск�
   возвращается с рекомендацией `git status`
   (`docs/harness_integrations.md`; пошаговый разбор с кадрами —
   `docs/handoff_walkthrough.md`).
+
+  > **⚠ Безопасность исполнения кодовых харнессов.** Адаптеры запускают
+  > харнессы с флагами, обходящими интерактивные подтверждения (пример:
+  > `claude -p --dangerously-skip-permissions` — без него headless-режим
+  > вечно ждёт permission-промпт). Это допустимо **только в изолированном
+  > контуре**: отдельный git worktree (`arch worktree new`), sandbox/VM или
+  > контейнер. Никогда не направляйте такой прогон в основной рабочий
+  > чекаут и тем более в продакшен-контур — blast radius процесса с
+  > отключёнными разрешениями вне изолята неприемлем. Слои сдерживания в
+  > Spine: изоляция worktree + baseline-коммит как якорь отката, чистое
+  > окружение процесса через whitelist `env_allow`, завершение всей
+  > процессной группы по таймауту, авто-коммит для аудиторского следа.
+  > Это исследовательский прототип, а не промышленный периметр: для
+  > промышленного применения нужен отдельный hardening-трек (threat model,
+  > sandboxing bash/harness-инструментов, запрет skip-permissions вне
+  > изолята, SBOM, подпись и провенанс плагинов).
 - **MCP-клиент** (`docs/mcp.md`), **веб-доступ** (11 кураторских сайтов
   архитектора) и **локальная база знаний** (`docs/web_kb.md`).
 - **MCP-сервер** `arch mcp serve` (ADR-008): инструменты `spine_lint`, `fitness_check`,
@@ -581,6 +597,22 @@ alone, on abort the whole process group is killed (no orphans), and partial
 output comes back with a `git status` recommendation
 (`docs/harness_integrations.md`; step-by-step walkthrough with frames —
 `docs/handoff_walkthrough.md`).
+
+> **⚠ Coding-harness execution safety.** Adapters launch harnesses with flags
+> that bypass interactive confirmations (e.g. `claude -p
+> --dangerously-skip-permissions` — without it the headless mode waits on a
+> permission prompt forever). This is acceptable **only inside an isolated
+> boundary**: a separate git worktree (`arch worktree new`), a sandbox/VM, or
+> a container. Never point such a run at your main working checkout, let
+> alone a production environment — the blast radius of a process with
+> permissions switched off is unacceptable outside an isolate. Containment
+> layers in Spine: worktree isolation + a baseline commit as the rollback
+> anchor, a clean process environment via the `env_allow` whitelist, whole
+> process-group kill on timeout, and auto-commit for the audit trail. This
+> is a research prototype, not an industrial perimeter: production use needs
+> a dedicated hardening track (threat model, sandboxing of the bash/harness
+> tools, a ban on skip-permissions outside isolates, SBOM, plugin signing
+> and provenance).
 
 **Training cases**: [`кейсы/`](кейсы/AGENTS.md) — end-to-end samples of the
 solution-architect cycle produced with the harness. Case 001:
