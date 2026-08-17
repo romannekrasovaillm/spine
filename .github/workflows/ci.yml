@@ -1,0 +1,71 @@
+# CI: fmt, clippy, тесты, MSRV, аудит зависимостей.
+# Решения и отложенные пункты — docs/adr/ADR-005-ci-and-cli-tests.md.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  fmt:
+    name: rustfmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all -- --check
+
+  clippy:
+    # Без -D warnings: ~378 существующих pedantic-предупреждений (AGENTS.md
+    # их толерирует). Ужесточение — отдельная задача P2-4 ревью (ADR-005).
+    name: clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --all-targets
+
+  test:
+    name: cargo test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test
+
+  msrv:
+    name: MSRV 1.85 (cargo check)
+    runs-on: ubuntu-latest
+    env:
+      # rust-toolchain.toml пиннит stable и перекрывает дефолт rustup;
+      # RUSTUP_TOOLCHAIN имеет приоритет над toolchain-файлом.
+      RUSTUP_TOOLCHAIN: "1.85"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.85"
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check
+
+  audit:
+    name: cargo audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        # rust-cache кэширует $CARGO_HOME/bin — cargo-audit собирается раз.
+      - run: cargo install cargo-audit --locked
+      - run: cargo audit
