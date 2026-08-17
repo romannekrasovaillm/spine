@@ -129,6 +129,11 @@ enum Cmd {
         #[command(subcommand)]
         cmd: ControlCmd,
     },
+    /// Типизированная модель архитектуры (каталог model/, ADR-003).
+    Model {
+        #[command(subcommand)]
+        cmd: ModelCmd,
+    },
     /// Библиотека скиллов: список, поиск, показ.
     Skills {
         #[command(subcommand)]
@@ -360,6 +365,41 @@ enum ControlCmd {
         /// Каталог ADR (по умолчанию ./docs/adr).
         #[arg(long)]
         dir: Option<PathBuf>,
+    },
+}
+
+/// Подкоманды `arch model` (ADR-003).
+#[derive(Subcommand)]
+enum ModelCmd {
+    /// Ссылочная целостность модели: битая ссылка/дубль ID/цикл `depends_on` —
+    /// error (exit code 1, как у `control check`); ADR без CMP, NFR без
+    /// способа проверки — warn.
+    Validate {
+        /// Каталог модели.
+        dir: PathBuf,
+    },
+    /// Карточка сущности: шапка, связи, обратные ссылки, тело.
+    Show {
+        /// ID сущности (ADR-001, CMP-002, …).
+        id: String,
+        /// Каталог модели (по умолчанию ./model).
+        #[arg(long, default_value = "model")]
+        dir: PathBuf,
+    },
+    /// Граф связей модели.
+    Graph {
+        /// Каталог модели (по умолчанию ./model).
+        #[arg(long, default_value = "model")]
+        dir: PathBuf,
+        /// Формат: text (список) или mermaid (flowchart, совместим с `arch mermaid`).
+        #[arg(long, default_value = "text")]
+        format: String,
+    },
+    /// Проекция: рендер ADR-файлов из модели в <кейс>/.arch-handoff/adr/
+    /// (зеркально; устаревшие ADR-*.md удаляются).
+    Project {
+        /// Каталог модели.
+        dir: PathBuf,
     },
 }
 
@@ -636,6 +676,7 @@ async fn main() -> Result<()> {
             }
         }
         Some(Cmd::Control { cmd }) => cmd_control(cmd)?,
+        Some(Cmd::Model { cmd }) => cmd_model(cmd)?,
         Some(Cmd::Skills { cmd }) => cmd_skills(&cfg, cmd)?,
         Some(Cmd::Plugins { cmd }) => cmd_plugins(&cfg, cmd)?,
         Some(Cmd::Policy { check }) => cmd_policy(&cfg, check)?,
@@ -1050,6 +1091,59 @@ fn cmd_control(cmd: ControlCmd) -> Result<()> {
             let dir = dir.unwrap_or_else(|| PathBuf::from("docs/adr"));
             let path = arch_harness::control::adr_new(&dir, &title)?;
             println!("ADR создан: {}", path.display());
+        }
+    }
+    Ok(())
+}
+
+/// `arch model`: типизированная модель архитектуры (ADR-003).
+fn cmd_model(cmd: ModelCmd) -> Result<()> {
+    match cmd {
+        ModelCmd::Validate { dir } => {
+            let model = arch_harness::model::load_model(&dir)
+                .with_context(|| format!("загрузка модели {}", dir.display()))?;
+            let report = arch_harness::model::validate(&model);
+            for i in &report.issues {
+                println!("[{}] {}: {} — {}", i.severity, i.file.display(), i.rule, i.message);
+            }
+            println!("{}", report.summary());
+            println!("Итог: {}", if report.has_errors() { "FAIL" } else { "PASS" });
+            if report.has_errors() {
+                std::process::exit(1);
+            }
+        }
+        ModelCmd::Show { id, dir } => {
+            let model = arch_harness::model::load_model(&dir)
+                .with_context(|| format!("загрузка модели {}", dir.display()))?;
+            let entity = model
+                .get(&id)
+                .with_context(|| format!("сущность '{id}' не найдена в {}", dir.display()))?;
+            print!("{}", arch_harness::model::card(&model, entity));
+        }
+        ModelCmd::Graph { dir, format } => {
+            let model = arch_harness::model::load_model(&dir)
+                .with_context(|| format!("загрузка модели {}", dir.display()))?;
+            match format.as_str() {
+                "text" => print!("{}", arch_harness::model::graph_text(&model)),
+                "mermaid" => print!("{}", arch_harness::model::graph_mermaid(&model)),
+                other => anyhow::bail!("неизвестный формат '{other}' (допустимы: text, mermaid)"),
+            }
+        }
+        ModelCmd::Project { dir } => {
+            let report = arch_harness::model::project_adr(&dir)
+                .with_context(|| format!("проекция модели {}", dir.display()))?;
+            for f in &report.written {
+                println!("записан: {}", f.display());
+            }
+            for f in &report.removed {
+                println!("удалён (нет сущности): {}", f.display());
+            }
+            println!(
+                "Проекция {}: {} ADR-файлов, удалено устаревших: {}",
+                report.out_dir.display(),
+                report.written.len(),
+                report.removed.len()
+            );
         }
     }
     Ok(())

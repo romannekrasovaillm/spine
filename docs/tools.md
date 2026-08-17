@@ -139,6 +139,7 @@ ralph-циклы — `~/.arch-harness/reports/ralph/<id>/` (`round-NN.md`,
 | Инструмент | Назначение | Параметры |
 |---|---|---|
 | `significance_score` | Score по 15 триггерам → маршрут Fast/Standard/Critical (в начале любой задачи проектирования) | `triggers`* — объект `{new_component: true, …}` |
+| `model_query` | Запрос к типизированной модели архитектуры (`model/`, ADR-003): карточка сущности по ID со связями и обратными ссылками, либо список сущностей с фильтром по типу | `dir` (каталог модели, по умолчанию `model`); `id` (карточка); `type` (фильтр: `cmp`, `adr`, …) |
 | `adr_new` | ADR по шаблону AI-DLC в `docs/adr/` (очередной номер, kebab-title) | `title`* |
 | `spine_lint` | Линтер ARCHITECTURE-SPINE.md: дубли AD-id, пустые Binds/Prevents/Rule, заглушки, непиннутые версии | `path`* |
 | `fitness_check` | Fitness functions из CONSTRAINTS.yaml по репозиторию → PASS/FAIL с находками `file:line` | `repo`*; `constraints` (путь к YAML, иначе `<repo>/.arch-handoff/CONSTRAINTS.yaml`) |

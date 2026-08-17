@@ -53,7 +53,7 @@ No-LLM smoke: `arch mermaid examples/mermaid/flow.mmd`,
 | Agent loop | `src/agent.rs`, `src/agent/{slash,prompts}.rs` | turn loop, tool dispatch, compaction (L1/prune/L3), session journal (append-only JSONL), slash commands |
 | LLM | `src/llm.rs`, `src/llm/openai_compat.rs`, `{deepseek,kimi,glm}.rs` | OpenAI-compatible client (SSE streaming, retries, stream-break recovery, `reasoning_content` echo, thinking maps) |
 | Tools | `src/tool.rs`, `src/tools/{bash,fs,ask}.rs`, `src/tools.rs` | registry, policy gate (R0–R5), bash with env-scrub + orthogonal outcome markers, file ops with fuzzy edit |
-| Domain tools | `src/{rubric,bench,control,agentsmd,evidence,metrics,delta,worktree,subagent,ralph,distill,harness,kb,web,mcp,mermaid,plugin}.rs` | architect-specific tooling (see README) |
+| Domain tools | `src/{rubric,bench,control,model,agentsmd,evidence,metrics,delta,worktree,subagent,ralph,distill,harness,kb,web,mcp,mermaid,plugin}.rs` | architect-specific tooling (see README) |
 | TUI | `src/tui.rs`, `src/tui/{app,render,text,theme}.rs` | ratatui Tokyo Night; ask-modal, model picker, tabs, fullscreen viewer |
 | Config | `src/config.rs` | `~/.config/arch-harness/config.toml` (all personal paths live HERE, never in code) |
 | Assets | `assets/`, `src/assets.rs` | embedded prompts/rubrics/benchmarks/plugins, deployed by `arch init` |
