@@ -207,9 +207,21 @@ mod tests {
     async fn headless_without_bridge_returns_text_instruction() {
         let tool = ProposeOptionsTool;
         let out = tool.call(good_args(), &ctx()).await.expect("call");
-        assert!(!out.is_error, "headless — не ошибка, а инструкция: {}", out.content);
-        assert!(out.content.contains("недоступен"), "инструкция: {}", out.content);
-        assert!(out.content.contains("брокер"), "вопрос сохранён: {}", out.content);
+        assert!(
+            !out.is_error,
+            "headless — не ошибка, а инструкция: {}",
+            out.content
+        );
+        assert!(
+            out.content.contains("недоступен"),
+            "инструкция: {}",
+            out.content
+        );
+        assert!(
+            out.content.contains("брокер"),
+            "вопрос сохранён: {}",
+            out.content
+        );
     }
 
     #[tokio::test]
@@ -221,7 +233,10 @@ mod tests {
             .expect("call");
         assert!(out.is_error);
         let out = tool
-            .call(json!({"question": "q", "options": [{"label": "a"}]}), &ctx())
+            .call(
+                json!({"question": "q", "options": [{"label": "a"}]}),
+                &ctx(),
+            )
             .await
             .expect("call");
         assert!(out.is_error);
@@ -239,7 +254,11 @@ mod tests {
         req.reply.send("NATS".to_string()).expect("ответ");
         let out = call.await.expect("join").expect("call");
         assert!(!out.is_error);
-        assert!(out.content.contains("NATS"), "выбор в результате: {}", out.content);
+        assert!(
+            out.content.contains("NATS"),
+            "выбор в результате: {}",
+            out.content
+        );
     }
 
     #[tokio::test]
@@ -249,7 +268,9 @@ mod tests {
         let tool = ProposeOptionsTool;
         let call = tokio::spawn(async move { tool.call(good_args(), &ctx).await });
         let req = rx.recv().await.expect("запрос");
-        req.reply.send(String::new()).expect("отказ — пустая строка");
+        req.reply
+            .send(String::new())
+            .expect("отказ — пустая строка");
         let out = call.await.expect("join").expect("call");
         assert!(out.content.contains("отказался"), "отказ: {}", out.content);
     }

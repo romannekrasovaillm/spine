@@ -68,9 +68,15 @@ fn required_artifacts(route: Route) -> Vec<(&'static str, &'static str)> {
         Route::Critical => base.extend([
             ("adr_or_pattern", "ADR с оценкой обратимости"),
             ("spine", "ARCHITECTURE-SPINE с затронутыми инвариантами"),
-            ("decision_a3", "запись человеческого решения A3 (choice/rationale/rejected/expiry)"),
+            (
+                "decision_a3",
+                "запись человеческого решения A3 (choice/rationale/rejected/expiry)",
+            ),
             ("walking_skeleton", "отчёт walking skeleton"),
-            ("adversarial_review", "вердикт состязательного ревью READY/NOT-READY"),
+            (
+                "adversarial_review",
+                "вердикт состязательного ревью READY/NOT-READY",
+            ),
             ("validation", "доказательства валидации (тесты/отчёт)"),
             ("fitness_report", "прогон fitness functions"),
         ]),
@@ -233,7 +239,10 @@ pub fn verify(change_dir: &Path) -> Result<EvidenceVerdict> {
         }
         let (hash, _) = hash_artifact(&path)?;
         if hash != item.hash {
-            tampered.push(format!("{} (изменён после упаковки: {})", item.key, item.path));
+            tampered.push(format!(
+                "{} (изменён после упаковки: {})",
+                item.key, item.path
+            ));
         }
     }
     let passed = missing.is_empty() && tampered.is_empty();
@@ -266,7 +275,11 @@ mod tests {
         let tmp = tempfile::tempdir().expect("tmp");
         let dir = tmp.path();
         put(dir, "PROBLEM.md", "# Проблема\n");
-        put(dir, "SPEC.md", "## Проблема\n## Критерии приёмки\n## Риски\n");
+        put(
+            dir,
+            "SPEC.md",
+            "## Проблема\n## Критерии приёмки\n## Риски\n",
+        );
         put(dir, "RISK.md", "Fast: 0 триггеров\n");
         put(dir, "ROLLBACK.md", "git revert\n");
         let (bundle, verdict) = pack(dir, Route::Fast).expect("pack");
@@ -303,6 +316,10 @@ mod tests {
         put(dir, "SPEC.md", "ТИХО ПЕРЕПИСАЛИ");
         let v = verify(dir).expect("verify");
         assert!(!v.passed);
-        assert!(v.tampered.iter().any(|t| t.contains("spec_or_delta")), "{:?}", v.tampered);
+        assert!(
+            v.tampered.iter().any(|t| t.contains("spec_or_delta")),
+            "{:?}",
+            v.tampered
+        );
     }
 }

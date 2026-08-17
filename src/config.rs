@@ -212,17 +212,72 @@ impl Default for WebConfig {
             timeout_secs: 30,
             max_fetch_chars: 24_000,
             arch_sites: vec![
-                site("aws-arch", "https://docs.aws.amazon.com/architecture/", "docs.aws.amazon.com", "AWS Architecture Center: reference architectures, Well-Architected"),
-                site("azure-arch", "https://learn.microsoft.com/azure/architecture/", "learn.microsoft.com", "Azure Architecture Center: паттерны, reference architectures"),
-                site("gcp-arch", "https://cloud.google.com/architecture", "cloud.google.com", "Google Cloud Architecture Center"),
-                site("fowler", "https://martinfowler.com/architecture/", "martinfowler.com", "Мартин Фаулер: эссе по архитектуре, микросервисам, эволюционному дизайну"),
-                site("infoq-arch", "https://www.infoq.com/architecture-design/", "infoq.com", "InfoQ Architecture & Design: статьи и тренды"),
-                site("microservices-io", "https://microservices.io/", "microservices.io", "Каталог паттернов микросервисов (Крис Ричардсон)"),
-                site("c4", "https://c4model.com/", "c4model.com", "C4 model: нотация визуализации архитектуры"),
-                site("arc42", "https://docs.arc42.org/", "docs.arc42.org", "arc42: шаблон документирования архитектуры"),
-                site("togaf", "https://pubs.opengroup.org/togaf-standard/", "pubs.opengroup.org", "TOGAF Standard (Open Group)"),
-                site("sei", "https://insights.sei.cmu.edu/library/", "insights.sei.cmu.edu", "SEI/CAD: ATAM, архитектурные тактики, quality attributes"),
-                site("awesome-arch", "https://awesome-architecture.com/", "awesome-architecture.com", "Кураторский список ресурсов по software architecture"),
+                site(
+                    "aws-arch",
+                    "https://docs.aws.amazon.com/architecture/",
+                    "docs.aws.amazon.com",
+                    "AWS Architecture Center: reference architectures, Well-Architected",
+                ),
+                site(
+                    "azure-arch",
+                    "https://learn.microsoft.com/azure/architecture/",
+                    "learn.microsoft.com",
+                    "Azure Architecture Center: паттерны, reference architectures",
+                ),
+                site(
+                    "gcp-arch",
+                    "https://cloud.google.com/architecture",
+                    "cloud.google.com",
+                    "Google Cloud Architecture Center",
+                ),
+                site(
+                    "fowler",
+                    "https://martinfowler.com/architecture/",
+                    "martinfowler.com",
+                    "Мартин Фаулер: эссе по архитектуре, микросервисам, эволюционному дизайну",
+                ),
+                site(
+                    "infoq-arch",
+                    "https://www.infoq.com/architecture-design/",
+                    "infoq.com",
+                    "InfoQ Architecture & Design: статьи и тренды",
+                ),
+                site(
+                    "microservices-io",
+                    "https://microservices.io/",
+                    "microservices.io",
+                    "Каталог паттернов микросервисов (Крис Ричардсон)",
+                ),
+                site(
+                    "c4",
+                    "https://c4model.com/",
+                    "c4model.com",
+                    "C4 model: нотация визуализации архитектуры",
+                ),
+                site(
+                    "arc42",
+                    "https://docs.arc42.org/",
+                    "docs.arc42.org",
+                    "arc42: шаблон документирования архитектуры",
+                ),
+                site(
+                    "togaf",
+                    "https://pubs.opengroup.org/togaf-standard/",
+                    "pubs.opengroup.org",
+                    "TOGAF Standard (Open Group)",
+                ),
+                site(
+                    "sei",
+                    "https://insights.sei.cmu.edu/library/",
+                    "insights.sei.cmu.edu",
+                    "SEI/CAD: ATAM, архитектурные тактики, quality attributes",
+                ),
+                site(
+                    "awesome-arch",
+                    "https://awesome-architecture.com/",
+                    "awesome-architecture.com",
+                    "Кураторский список ресурсов по software architecture",
+                ),
             ],
         }
     }
@@ -567,9 +622,18 @@ impl Default for Config {
                 PromptMode::Flag,
             ),
         );
-        harnesses.insert("hermes".into(), harness("hermes", &["-z", "{prompt}"], PromptMode::Flag));
-        harnesses.insert("theseus".into(), harness("theseus", &["-p", "{prompt}"], PromptMode::Flag));
-        harnesses.insert("codewhale".into(), harness("codewhale", &["-p", "{prompt}"], PromptMode::Flag));
+        harnesses.insert(
+            "hermes".into(),
+            harness("hermes", &["-z", "{prompt}"], PromptMode::Flag),
+        );
+        harnesses.insert(
+            "theseus".into(),
+            harness("theseus", &["-p", "{prompt}"], PromptMode::Flag),
+        );
+        harnesses.insert(
+            "codewhale".into(),
+            harness("codewhale", &["-p", "{prompt}"], PromptMode::Flag),
+        );
 
         Self {
             default_model: "deepseek".into(),
@@ -621,8 +685,7 @@ impl Config {
         };
         for path in &candidates {
             if path.is_file() {
-                let text = std::fs::read_to_string(path)
-                    .map_err(|e| HarnessError::io(path, e))?;
+                let text = std::fs::read_to_string(path).map_err(|e| HarnessError::io(path, e))?;
                 let mut cfg: Config = toml::from_str(&text)?;
                 cfg.expand_tildes();
                 cfg.loaded_from = Some(path.clone());
@@ -699,9 +762,27 @@ mod tests {
         let cfg = Config::default();
         let h = &cfg.harnesses;
         let flags = |name: &str| (h[name].args.clone(), h[name].prompt_mode.clone());
-        assert_eq!(flags("hermes"), (vec!["-z".to_string(), "{prompt}".to_string()], PromptMode::Flag));
-        assert_eq!(flags("theseus"), (vec!["-p".to_string(), "{prompt}".to_string()], PromptMode::Flag));
-        assert_eq!(flags("codewhale"), (vec!["-p".to_string(), "{prompt}".to_string()], PromptMode::Flag));
+        assert_eq!(
+            flags("hermes"),
+            (
+                vec!["-z".to_string(), "{prompt}".to_string()],
+                PromptMode::Flag
+            )
+        );
+        assert_eq!(
+            flags("theseus"),
+            (
+                vec!["-p".to_string(), "{prompt}".to_string()],
+                PromptMode::Flag
+            )
+        );
+        assert_eq!(
+            flags("codewhale"),
+            (
+                vec!["-p".to_string(), "{prompt}".to_string()],
+                PromptMode::Flag
+            )
+        );
         assert_eq!(
             flags("openclaw"),
             (

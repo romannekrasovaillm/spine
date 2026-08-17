@@ -135,13 +135,25 @@ fn scan_node(cur: &mut Cursor<'_>, line_no: usize, full: &str) -> Result<NodeRef
     let id = scan_id(cur, line_no, full)?;
     let (shape, label) = if cur.rest().starts_with("((") {
         cur.pos += 2;
-        (Some(Shape::Circle), Some(scan_label_until(cur, "))", line_no, full)?))
+        (
+            Some(Shape::Circle),
+            Some(scan_label_until(cur, "))", line_no, full)?),
+        )
     } else if cur.eat("[") {
-        (Some(Shape::Rect), Some(scan_label_until(cur, "]", line_no, full)?))
+        (
+            Some(Shape::Rect),
+            Some(scan_label_until(cur, "]", line_no, full)?),
+        )
     } else if cur.eat("(") {
-        (Some(Shape::Rounded), Some(scan_label_until(cur, ")", line_no, full)?))
+        (
+            Some(Shape::Rounded),
+            Some(scan_label_until(cur, ")", line_no, full)?),
+        )
     } else if cur.eat("{") {
-        (Some(Shape::Rhombus), Some(scan_label_until(cur, "}", line_no, full)?))
+        (
+            Some(Shape::Rhombus),
+            Some(scan_label_until(cur, "}", line_no, full)?),
+        )
     } else {
         (None, None)
     };
@@ -149,7 +161,12 @@ fn scan_node(cur: &mut Cursor<'_>, line_no: usize, full: &str) -> Result<NodeRef
 }
 
 /// Сканирует метку до закрывающего токена (внутри кавычек токен не ищется).
-fn scan_label_until(cur: &mut Cursor<'_>, close: &str, line_no: usize, full: &str) -> Result<String> {
+fn scan_label_until(
+    cur: &mut Cursor<'_>,
+    close: &str,
+    line_no: usize,
+    full: &str,
+) -> Result<String> {
     let start = cur.pos;
     let mut in_quotes = false;
     loop {
@@ -171,7 +188,11 @@ fn scan_label_until(cur: &mut Cursor<'_>, close: &str, line_no: usize, full: &st
 /// Сканирует оператор связи: `-->`, `-.->`, `---`, `-- метка -->`,
 /// pipe-метки `-->|метка|` / `---|метка|` / `-.->|метка|`.
 /// Возвращает `(метка, plain)`: `plain = true` для линии без стрелки.
-fn scan_edge_op(cur: &mut Cursor<'_>, line_no: usize, full: &str) -> Result<(Option<String>, bool)> {
+fn scan_edge_op(
+    cur: &mut Cursor<'_>,
+    line_no: usize,
+    full: &str,
+) -> Result<(Option<String>, bool)> {
     let mut label = None;
     let plain = if cur.eat("-.->") {
         false
@@ -190,19 +211,31 @@ fn scan_edge_op(cur: &mut Cursor<'_>, line_no: usize, full: &str) -> Result<(Opt
         } else if cur.eat("---") {
             true
         } else {
-            return Err(err_at(line_no, full, "ожидалось '-->' или '---' после метки ребра"));
+            return Err(err_at(
+                line_no,
+                full,
+                "ожидалось '-->' или '---' после метки ребра",
+            ));
         };
         if !raw.is_empty() {
             label = Some(raw);
         }
         plain
     } else {
-        return Err(err_at(line_no, full, "ожидалась связь '-->', '-.->', '---' или '-- метка -->'"));
+        return Err(err_at(
+            line_no,
+            full,
+            "ожидалась связь '-->', '-.->', '---' или '-- метка -->'",
+        ));
     };
     // Pipe-метка после оператора: `-->|Да|`, `---|путь|`, `-.->|x|`.
     if cur.eat("|") {
         let Some(idx) = find_outside_quotes(cur.rest(), "|") else {
-            return Err(err_at(line_no, full, "незакрытая pipe-метка ребра (ожидалась '|')"));
+            return Err(err_at(
+                line_no,
+                full,
+                "незакрытая pipe-метка ребра (ожидалась '|')",
+            ));
         };
         let raw = unquote(&cur.rest()[..idx]);
         cur.pos += idx + 1;
@@ -214,7 +247,11 @@ fn scan_edge_op(cur: &mut Cursor<'_>, line_no: usize, full: &str) -> Result<(Opt
 }
 
 /// Регистрирует узел (первое упоминание) или обновляет метку/форму существующего.
-fn register_node(nref: NodeRef, nodes: &mut Vec<FlowNode>, ids: &mut HashMap<String, usize>) -> usize {
+fn register_node(
+    nref: NodeRef,
+    nodes: &mut Vec<FlowNode>,
+    ids: &mut HashMap<String, usize>,
+) -> usize {
     if let Some(&i) = ids.get(&nref.id) {
         if let Some(label) = nref.label {
             nodes[i].label = label;
@@ -254,7 +291,12 @@ fn parse_flow_statement(
         let (label, plain) = scan_edge_op(&mut cur, line_no, text)?;
         let next_ref = scan_node(&mut cur, line_no, text)?;
         let next = register_node(next_ref, nodes, ids);
-        edges.push(FlowEdge { from: prev, to: next, label, plain });
+        edges.push(FlowEdge {
+            from: prev,
+            to: next,
+            label,
+            plain,
+        });
         prev = next;
     }
 }
@@ -275,17 +317,25 @@ fn parse_flow_header(text: &str, line_no: usize) -> Result<Direction> {
     let mut parts = text.split_whitespace();
     let kw = parts.next().unwrap_or("");
     if kw != "graph" && kw != "flowchart" {
-        return Err(err_at(line_no, text, "ожидался заголовок 'graph'/'flowchart'"));
+        return Err(err_at(
+            line_no,
+            text,
+            "ожидался заголовок 'graph'/'flowchart'",
+        ));
     }
-    let dir_token = parts.next().ok_or_else(|| {
-        err_at(line_no, text, "укажите направление: TD, TB, BT, LR или RL")
-    })?;
+    let dir_token = parts
+        .next()
+        .ok_or_else(|| err_at(line_no, text, "укажите направление: TD, TB, BT, LR или RL"))?;
     match dir_token.to_ascii_uppercase().as_str() {
         "TD" | "TB" => Ok(Direction::TopDown),
         "BT" => Ok(Direction::BottomUp),
         "LR" => Ok(Direction::LeftRight),
         "RL" => Ok(Direction::RightLeft),
-        _ => Err(err_at(line_no, text, "неизвестное направление (ожидалось TD|TB|BT|LR|RL)")),
+        _ => Err(err_at(
+            line_no,
+            text,
+            "неизвестное направление (ожидалось TD|TB|BT|LR|RL)",
+        )),
     }
 }
 
@@ -311,7 +361,10 @@ pub(crate) fn parse_flowchart(input: &str) -> Result<FlowAst> {
             continue;
         }
         if is_skippable_flow(text) {
-            skipped.push(Skipped { line: line_no, text: text.to_owned() });
+            skipped.push(Skipped {
+                line: line_no,
+                text: text.to_owned(),
+            });
             continue;
         }
         parse_flow_statement(text, line_no, &mut nodes, &mut ids, &mut edges)?;
@@ -322,9 +375,16 @@ pub(crate) fn parse_flowchart(input: &str) -> Result<FlowAst> {
         ));
     };
     if nodes.is_empty() {
-        return Err(HarnessError::Mermaid("диаграмма не содержит ни одного узла".into()));
+        return Err(HarnessError::Mermaid(
+            "диаграмма не содержит ни одного узла".into(),
+        ));
     }
-    Ok(FlowAst { dir, nodes, edges, skipped })
+    Ok(FlowAst {
+        dir,
+        nodes,
+        edges,
+        skipped,
+    })
 }
 
 /// Разбирает `participant X` / `participant X as Метка` (после ключевого слова).
@@ -335,9 +395,16 @@ fn parse_participant(rest: &str, line_no: usize, full: &str) -> Result<(String, 
         (rest.trim(), None)
     };
     if id.is_empty() || id.contains(char::is_whitespace) {
-        return Err(err_at(line_no, full, "некорректный идентификатор участника"));
+        return Err(err_at(
+            line_no,
+            full,
+            "некорректный идентификатор участника",
+        ));
     }
-    Ok((id.to_owned(), label.filter(|l| !l.is_empty()).map(str::to_owned)))
+    Ok((
+        id.to_owned(),
+        label.filter(|l| !l.is_empty()).map(str::to_owned),
+    ))
 }
 
 /// Регистрирует участника (первое упоминание) или обновляет его подпись.
@@ -387,7 +454,12 @@ fn parse_message(
     let label = unquote(cur.rest());
     let from = register_participant(&from, None, participants, ids);
     let to = register_participant(&to, None, participants, ids);
-    Ok(SeqMessage { from, to, label, dotted })
+    Ok(SeqMessage {
+        from,
+        to,
+        label,
+        dotted,
+    })
 }
 
 /// Разбирает `left of X: текст` / `right of X: текст` (после `Note `).
@@ -403,7 +475,11 @@ fn parse_note(
     } else if let Some(t) = rest.strip_prefix("right of ") {
         (NoteSide::Right, t)
     } else {
-        return Err(err_at(line_no, full, "ожидалось 'Note left of' или 'Note right of'"));
+        return Err(err_at(
+            line_no,
+            full,
+            "ожидалось 'Note left of' или 'Note right of'",
+        ));
     };
     let Some(colon) = tail.find(':') else {
         return Err(err_at(line_no, full, "ожидалось ':' в Note"));
@@ -414,7 +490,11 @@ fn parse_note(
         return Err(err_at(line_no, full, "пустой участник или текст Note"));
     }
     let participant = register_participant(id, None, participants, ids);
-    Ok(SeqNote { participant, side, text: text.to_owned() })
+    Ok(SeqNote {
+        participant,
+        side,
+        text: text.to_owned(),
+    })
 }
 
 /// Первое слово — известная неподдерживаемая конструкция sequence (пропускаем).
@@ -424,9 +504,25 @@ fn is_skippable_seq(text: &str) -> bool {
     };
     matches!(
         first,
-        "loop" | "alt" | "else" | "opt" | "par" | "and" | "critical" | "break" | "end"
-            | "autonumber" | "activate" | "deactivate" | "create" | "destroy" | "rect" | "box"
-            | "title" | "link" | "links"
+        "loop"
+            | "alt"
+            | "else"
+            | "opt"
+            | "par"
+            | "and"
+            | "critical"
+            | "break"
+            | "end"
+            | "autonumber"
+            | "activate"
+            | "deactivate"
+            | "create"
+            | "destroy"
+            | "rect"
+            | "box"
+            | "title"
+            | "link"
+            | "links"
     )
 }
 
@@ -452,15 +548,25 @@ pub(crate) fn parse_sequence(input: &str) -> Result<SeqAst> {
                 header_seen = true;
                 continue;
             }
-            return Err(err_at(line_no, text, "ожидался заголовок 'sequenceDiagram'"));
+            return Err(err_at(
+                line_no,
+                text,
+                "ожидался заголовок 'sequenceDiagram'",
+            ));
         }
-        if let Some(rest) = text.strip_prefix("participant ").or_else(|| text.strip_prefix("actor ")) {
+        if let Some(rest) = text
+            .strip_prefix("participant ")
+            .or_else(|| text.strip_prefix("actor "))
+        {
             let (id, label) = parse_participant(rest, line_no, text)?;
             register_participant(&id, label, &mut participants, &mut ids);
             continue;
         }
         if text.starts_with("Note over") || is_skippable_seq(text) {
-            skipped.push(Skipped { line: line_no, text: text.to_owned() });
+            skipped.push(Skipped {
+                line: line_no,
+                text: text.to_owned(),
+            });
             continue;
         }
         if let Some(rest) = text.strip_prefix("Note ") {
@@ -472,12 +578,20 @@ pub(crate) fn parse_sequence(input: &str) -> Result<SeqAst> {
         items.push(SeqItem::Message(msg));
     }
     if !header_seen {
-        return Err(HarnessError::Mermaid("пустой ввод: ожидался 'sequenceDiagram'".into()));
+        return Err(HarnessError::Mermaid(
+            "пустой ввод: ожидался 'sequenceDiagram'".into(),
+        ));
     }
     if participants.is_empty() {
-        return Err(HarnessError::Mermaid("sequenceDiagram не содержит участников".into()));
+        return Err(HarnessError::Mermaid(
+            "sequenceDiagram не содержит участников".into(),
+        ));
     }
-    Ok(SeqAst { participants, items, skipped })
+    Ok(SeqAst {
+        participants,
+        items,
+        skipped,
+    })
 }
 
 #[cfg(test)]

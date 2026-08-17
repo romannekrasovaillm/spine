@@ -16,7 +16,11 @@ const DEFAULT_BASE_URL: &str = "https://api.deepseek.com/v1";
 /// # Errors
 /// Пустой `model`, ошибка сборки HTTP-клиента.
 pub fn provider(name: &str, cfg: &ModelConfig) -> Result<Arc<dyn LlmProvider>> {
-    Ok(Arc::new(OpenAiCompat::with_preset(name, cfg, DEFAULT_BASE_URL)?))
+    Ok(Arc::new(OpenAiCompat::with_preset(
+        name,
+        cfg,
+        DEFAULT_BASE_URL,
+    )?))
 }
 
 #[cfg(test)]

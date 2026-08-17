@@ -358,7 +358,11 @@ mod tests {
         let short = ToolOutput::ok("коротко").truncated(100);
         assert_eq!(short.content, "коротко", "короткий текст не трогаем");
         let long = ToolOutput::ok("y".repeat(500)).truncated(100);
-        assert!(long.content.contains("[усечено: 100 из 500 байт]"), "{}", long.content);
+        assert!(
+            long.content.contains("[усечено: 100 из 500 байт]"),
+            "{}",
+            long.content
+        );
         assert!(long.content.chars().count() < 140, "усечение работает");
         // Кириллица: len() в байтах — маркер честно показывает байты.
         let cyr = ToolOutput::ok("я".repeat(500)).truncated(100);
@@ -396,7 +400,11 @@ mod tests {
         let reg = ToolRegistry::new();
         let out = reg.dispatch("ghost", json!({}), &ctx(&dir)).await;
         assert!(out.is_error);
-        assert!(out.content.contains("неизвестный инструмент"), "{}", out.content);
+        assert!(
+            out.content.contains("неизвестный инструмент"),
+            "{}",
+            out.content
+        );
     }
 
     #[tokio::test]

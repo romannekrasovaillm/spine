@@ -121,9 +121,9 @@ impl RpcError {
     /// Конвертирует в доменную ошибку с контекстом сервера и метода.
     fn into_harness(self, server: &str, method: &str) -> HarnessError {
         match self {
-            Self::Rpc { code, message } => {
-                HarnessError::Mcp(format!("{server}: {method}: ошибка JSON-RPC {code}: {message}"))
-            }
+            Self::Rpc { code, message } => HarnessError::Mcp(format!(
+                "{server}: {method}: ошибка JSON-RPC {code}: {message}"
+            )),
             Self::Timeout => HarnessError::Mcp(format!("{server}: таймаут вызова {method}")),
             Self::Transport(msg) => HarnessError::Mcp(format!("{server}: {method}: {msg}")),
         }
@@ -357,10 +357,9 @@ async fn connect_server(config: &McpServerConfig, timeout: Duration) -> Result<M
                 config.name, config.command
             ))
         })?;
-    let stdout = child
-        .stdout
-        .take()
-        .ok_or_else(|| HarnessError::Mcp(format!("{}: stdout процесса не захвачен", config.name)))?;
+    let stdout = child.stdout.take().ok_or_else(|| {
+        HarnessError::Mcp(format!("{}: stdout процесса не захвачен", config.name))
+    })?;
     let stdin = child
         .stdin
         .take()
@@ -380,7 +379,9 @@ async fn connect_server(config: &McpServerConfig, timeout: Duration) -> Result<M
 /// лайфтаймы позднесвязанные, поэтому они «general enough» для HRTB-проверок
 /// `Send` в местах вроде `tokio::spawn` — замыкание, возвращающее future,
 /// захватывающий `&T`, такой проверки не проходит.
-async fn connect_indexed(item: ((usize, &McpServerConfig), Duration)) -> Option<(usize, McpServer)> {
+async fn connect_indexed(
+    item: ((usize, &McpServerConfig), Duration),
+) -> Option<(usize, McpServer)> {
     let ((idx, config), timeout) = item;
     match connect_server(config, timeout).await {
         Ok(server) => {
@@ -439,7 +440,7 @@ impl McpManager {
             .buffer_unordered(CONNECT_CONCURRENCY)
             .filter_map(std::future::ready)
             .collect()
-        .await;
+            .await;
         // buffer_unordered меняет порядок — восстанавливаем порядок конфигурации.
         indexed.sort_by_key(|(idx, _)| *idx);
         let connected: Vec<McpServer> = indexed.into_iter().map(|(_, server)| server).collect();
@@ -460,12 +461,13 @@ impl McpManager {
     /// Спецификации инструментов всех серверов (`server__tool`).
     /// Сбой опроса одного сервера — предупреждение в лог и пропуск.
     pub async fn tools(&self) -> Vec<ToolSpec> {
-        let mut indexed: Vec<(usize, Vec<ToolSpec>)> = stream::iter(self.servers.iter().enumerate())
-            .map(list_indexed)
-            .buffer_unordered(CONNECT_CONCURRENCY)
-            .filter_map(std::future::ready)
-            .collect()
-            .await;
+        let mut indexed: Vec<(usize, Vec<ToolSpec>)> =
+            stream::iter(self.servers.iter().enumerate())
+                .map(list_indexed)
+                .buffer_unordered(CONNECT_CONCURRENCY)
+                .filter_map(std::future::ready)
+                .collect()
+                .await;
         indexed.sort_by_key(|(idx, _)| *idx);
         indexed.into_iter().flat_map(|(_, specs)| specs).collect()
     }
@@ -576,7 +578,10 @@ fn parse_tool_result(result: &Value) -> ToolOutput {
     let content = items
         .iter()
         .map(|item| {
-            let kind = item.get("type").and_then(Value::as_str).unwrap_or("unknown");
+            let kind = item
+                .get("type")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown");
             if kind == "text" {
                 item.get("text")
                     .and_then(Value::as_str)
@@ -671,7 +676,10 @@ mod tests {
             }
         });
         let (reader, writer) = tokio::io::split(client_end);
-        (McpConnection::new("test".into(), reader, writer, timeout), log)
+        (
+            McpConnection::new("test".into(), reader, writer, timeout),
+            log,
+        )
     }
 
     /// Стандартный сценарий: initialize ok, один инструмент echo,
@@ -722,7 +730,12 @@ mod tests {
             conn,
             child: Mutex::new(None),
         };
-        (McpManager { servers: vec![server] }, log)
+        (
+            McpManager {
+                servers: vec![server],
+            },
+            log,
+        )
     }
 
     #[tokio::test]
@@ -838,7 +851,10 @@ mod tests {
         };
         let (manager, _log) = manager_for(handler);
         let out = manager.call("test__echo", json!({})).await.expect("call");
-        assert_eq!(out.content, "[неподдерживаемый content type: image]\nготово");
+        assert_eq!(
+            out.content,
+            "[неподдерживаемый content type: image]\nготово"
+        );
     }
 
     #[tokio::test]
@@ -936,7 +952,9 @@ mod tests {
 
     #[tokio::test]
     async fn connect_allows_empty_server_list() {
-        let manager = McpManager::connect(&[], 1).await.expect("пустой список — ок");
+        let manager = McpManager::connect(&[], 1)
+            .await
+            .expect("пустой список — ок");
         assert!(manager.server_names().is_empty());
     }
 
@@ -959,7 +977,10 @@ mod tests {
         assert_eq!(servers[0].name, "kb", "BTreeMap сортирует по имени");
         assert_eq!(servers[0].command, "kb-mcp");
         assert_eq!(servers[0].args, vec!["--stdio".to_string()]);
-        assert_eq!(servers[0].env.get("KB_DIR").map(String::as_str), Some("/data"));
+        assert_eq!(
+            servers[0].env.get("KB_DIR").map(String::as_str),
+            Some("/data")
+        );
         assert_eq!(servers[1].name, "plain");
         assert!(servers[1].args.is_empty());
         assert!(servers[1].env.is_empty());

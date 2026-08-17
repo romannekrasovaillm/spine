@@ -72,7 +72,10 @@ impl HarnessMetrics {
         if self.asks == 0 {
             None
         } else {
-            Some(100.0 * (self.asks_declined + self.asks_chose_recommended) as f64 / self.asks as f64)
+            Some(
+                100.0 * (self.asks_declined + self.asks_chose_recommended) as f64
+                    / self.asks as f64,
+            )
         }
     }
 
@@ -97,11 +100,41 @@ impl HarnessMetrics {
     /// Markdown-отчёт.
     pub fn to_markdown(&self) -> String {
         let mut out = String::from("# Метрики харнесса arch\n\n");
-        out.push_str(&format!("- Сессий: **{}** (user: {}, assistant: {})\n", self.sessions, self.user_messages, self.assistant_messages));
-        out.push_str(&format!("- Вызовов инструментов: **{}**, ошибок: {} ({:.1}%)\n", self.tool_calls, self.tool_errors, self.tool_error_rate() * 100.0));
-        out.push_str(&format!("- Оценка токенов: ~{} (≈ {:.2}₽ при 0.1₽/1K)\n", self.approx_tokens, self.approx_tokens as f64 * 0.0001));
-        out.push_str(&format!("- Рубричных отчётов: {}, средний балл: {}\n", self.rubric_reports, self.rubric_avg.map(|a| format!("{a:.2}")).unwrap_or_else(|| "—".into())));
-        out.push_str(&format!("- Бенчей: {}, прошло: {} ({})\n", self.bench_reports, self.bench_passed, if self.bench_reports > 0 { format!("{:.0}%", 100.0 * self.bench_passed as f64 / self.bench_reports as f64) } else { "—".into() }));
+        out.push_str(&format!(
+            "- Сессий: **{}** (user: {}, assistant: {})\n",
+            self.sessions, self.user_messages, self.assistant_messages
+        ));
+        out.push_str(&format!(
+            "- Вызовов инструментов: **{}**, ошибок: {} ({:.1}%)\n",
+            self.tool_calls,
+            self.tool_errors,
+            self.tool_error_rate() * 100.0
+        ));
+        out.push_str(&format!(
+            "- Оценка токенов: ~{} (≈ {:.2}₽ при 0.1₽/1K)\n",
+            self.approx_tokens,
+            self.approx_tokens as f64 * 0.0001
+        ));
+        out.push_str(&format!(
+            "- Рубричных отчётов: {}, средний балл: {}\n",
+            self.rubric_reports,
+            self.rubric_avg
+                .map(|a| format!("{a:.2}"))
+                .unwrap_or_else(|| "—".into())
+        ));
+        out.push_str(&format!(
+            "- Бенчей: {}, прошло: {} ({})\n",
+            self.bench_reports,
+            self.bench_passed,
+            if self.bench_reports > 0 {
+                format!(
+                    "{:.0}%",
+                    100.0 * self.bench_passed as f64 / self.bench_reports as f64
+                )
+            } else {
+                "—".into()
+            }
+        ));
         out.push_str(&format!("- Cron-отчётов: {}\n", self.cron_reports));
         out.push_str("\n## Трансформационные KPI (обзоры _24_августа)\n\n");
         match self.auto_approval_pct() {
@@ -205,7 +238,10 @@ fn parse_journal(text: &str, m: &mut HarnessMetrics) {
                     if v.get("declined").and_then(|d| d.as_bool()).unwrap_or(false) {
                         m.asks_declined += 1;
                     }
-                    if v.get("chose_recommended").and_then(|c| c.as_bool()).unwrap_or(false) {
+                    if v.get("chose_recommended")
+                        .and_then(|c| c.as_bool())
+                        .unwrap_or(false)
+                    {
                         m.asks_chose_recommended += 1;
                     }
                 }

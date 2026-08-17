@@ -1414,7 +1414,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let repo = dir.path().join("repo");
         write_file(&repo, "src/bad.py", "print('hi')\n");
-        write_file(&repo, ".arch-handoff/TASK.md", "Контекст: print( запрещён в проде\n");
+        write_file(
+            &repo,
+            ".arch-handoff/TASK.md",
+            "Контекст: print( запрещён в проде\n",
+        );
         write_file(&repo, "node_modules/pkg/index.js", "print('junk')\n");
         let constraints = write_file(
             dir.path(),
@@ -1426,7 +1430,12 @@ mod tests {
              \x20   pattern: 'print\\('\n",
         );
         let report = check(&repo, &constraints).unwrap();
-        assert_eq!(report.issues.len(), 1, "только код, не пакет: {:?}", report.issues);
+        assert_eq!(
+            report.issues.len(),
+            1,
+            "только код, не пакет: {:?}",
+            report.issues
+        );
         assert!(report.issues[0].file.ends_with("src/bad.py"));
     }
 
@@ -1558,10 +1567,7 @@ mod tests {
     #[test]
     fn kebab_slug_mixed_latin_cyrillic() {
         assert_eq!(kebab_slug("Outbox паттерн"), "outbox-pattern");
-        assert_eq!(
-            kebab_slug("ADR для async рельсов"),
-            "adr-dlya-async-relsov"
-        );
+        assert_eq!(kebab_slug("ADR для async рельсов"), "adr-dlya-async-relsov");
     }
 
     #[test]

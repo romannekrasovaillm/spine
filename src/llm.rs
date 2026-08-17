@@ -143,7 +143,12 @@ impl ChatMessage {
     pub fn rough_tokens(&self) -> usize {
         (self.content.len()
             + self.reasoning_content.as_deref().unwrap_or("").len()
-            + self.tool_calls.iter().map(|c| c.arguments.to_string().len()).sum::<usize>()) / 4
+            + self
+                .tool_calls
+                .iter()
+                .map(|c| c.arguments.to_string().len())
+                .sum::<usize>())
+            / 4
     }
 }
 
@@ -334,7 +339,11 @@ mod tests {
     fn constructors_set_expected_fields() {
         let sys = ChatMessage::system("s");
         assert_eq!(sys.role, Role::System);
-        assert!(sys.tool_calls.is_empty() && sys.tool_call_id.is_none() && sys.reasoning_content.is_none());
+        assert!(
+            sys.tool_calls.is_empty()
+                && sys.tool_call_id.is_none()
+                && sys.reasoning_content.is_none()
+        );
         let tool = ChatMessage::tool_result("id-1", "ok");
         assert_eq!(tool.role, Role::Tool);
         assert_eq!(tool.tool_call_id.as_deref(), Some("id-1"));
@@ -345,11 +354,14 @@ mod tests {
 
     #[test]
     fn rough_tokens_counts_content_reasoning_and_tool_args() {
-        let mut msg = ChatMessage::assistant("x".repeat(400), vec![ToolCall {
-            id: "c".into(),
-            name: "bash".into(),
-            arguments: serde_json::json!({"command": "y".repeat(388)}),
-        }]);
+        let mut msg = ChatMessage::assistant(
+            "x".repeat(400),
+            vec![ToolCall {
+                id: "c".into(),
+                name: "bash".into(),
+                arguments: serde_json::json!({"command": "y".repeat(388)}),
+            }],
+        );
         // arguments сериализуются в JSON: 400 символов строки-значения + обёртка.
         msg.reasoning_content = Some("r".repeat(400));
         let tokens = msg.rough_tokens();

@@ -154,7 +154,11 @@ pub fn specs_from_plugin_json(text: &str) -> Vec<HookSpec> {
                 continue;
             };
             for cmd in commands {
-                let command = cmd.get("command").and_then(Value::as_str).unwrap_or("").trim();
+                let command = cmd
+                    .get("command")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .trim();
                 if command.is_empty() {
                     continue;
                 }
@@ -306,7 +310,10 @@ fn run_hook(spec: &HookSpec, event: HookEvent, tool: Option<&str>, context: &str
                 if let Some(mut pipe) = child.stdout.take() {
                     let mut buf = Vec::new();
                     let _ = pipe.read_to_end(&mut buf);
-                    stdout = String::from_utf8_lossy(&buf).chars().take(MAX_HOOK_OUTPUT).collect();
+                    stdout = String::from_utf8_lossy(&buf)
+                        .chars()
+                        .take(MAX_HOOK_OUTPUT)
+                        .collect();
                 }
                 return HookOutcome {
                     command: spec.command.clone(),
@@ -404,12 +411,20 @@ mod tests {
         assert_eq!(specs[0].tool.as_deref(), Some("write_file"));
         assert_eq!(specs[1].tool.as_deref(), Some("edit_file"));
         assert_eq!(specs[1].timeout_secs, Some(3));
-        assert_eq!(specs[2].tool, None, "пустой matcher — все инструменты/события");
+        assert_eq!(
+            specs[2].tool, None,
+            "пустой matcher — все инструменты/события"
+        );
         assert_eq!(specs[2].event, "SessionStart");
         // Битый JSON и отсутствующие поля — пусто, не паника.
         assert!(specs_from_plugin_json("{битый").is_empty());
         assert!(specs_from_plugin_json("{}").is_empty());
-        assert!(specs_from_plugin_json(r#"{"hooks":{"PostToolUse":[{"matcher":"bash","hooks":[{"type":"command"}]}]}}"#).is_empty());
+        assert!(
+            specs_from_plugin_json(
+                r#"{"hooks":{"PostToolUse":[{"matcher":"bash","hooks":[{"type":"command"}]}]}}"#
+            )
+            .is_empty()
+        );
     }
 
     #[test]
@@ -448,7 +463,10 @@ mod tests {
         let set = HookSet::from_specs(&[spec("SessionStart", None, "sleep 30")]);
         let started = Instant::now();
         let out = set.fire(HookEvent::SessionStart, None, "{}");
-        assert!(started.elapsed() < Duration::from_secs(10), "таймаут сработал");
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "таймаут сработал"
+        );
         assert!(out[0].code.is_none());
         assert!(out[0].note.as_deref().unwrap_or("").contains("таймаут"));
     }

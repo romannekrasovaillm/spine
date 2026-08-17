@@ -55,9 +55,10 @@ pub fn new(repo: &Path, name: &str) -> Result<PathBuf> {
     }
     std::fs::create_dir_all(&dir).map_err(|e| HarnessError::io(&dir, e))?;
     let path = dir.join("DELTA.md");
-    let content = DELTA_TEMPLATE
-        .replace("{name}", name)
-        .replace("{date}", &chrono::Local::now().format("%Y-%m-%d").to_string());
+    let content = DELTA_TEMPLATE.replace("{name}", name).replace(
+        "{date}",
+        &chrono::Local::now().format("%Y-%m-%d").to_string(),
+    );
     std::fs::write(&path, content).map_err(|e| HarnessError::io(&path, e))?;
     Ok(path)
 }
@@ -118,7 +119,14 @@ pub fn validate(repo: &Path, name: &str) -> Result<Vec<LintIssue>> {
     let path = find_delta(repo, name)?;
     let text = std::fs::read_to_string(&path).map_err(|e| HarnessError::io(&path, e))?;
     let mut issues = Vec::new();
-    for section in ["## Проблема", "## ADDED", "## MODIFIED", "## REMOVED", "## План отката", "## Критерии приёмки"] {
+    for section in [
+        "## Проблема",
+        "## ADDED",
+        "## MODIFIED",
+        "## REMOVED",
+        "## План отката",
+        "## Критерии приёмки",
+    ] {
         if !text.contains(section) {
             issues.push(LintIssue {
                 file: path.clone(),
@@ -137,14 +145,19 @@ pub fn validate(repo: &Path, name: &str) -> Result<Vec<LintIssue>> {
                 file: path.clone(),
                 line: n + 1,
                 rule: "stub_marker".into(),
-                message: format!("незаполненное место: {}", t.chars().take(60).collect::<String>()),
+                message: format!(
+                    "незаполненное место: {}",
+                    t.chars().take(60).collect::<String>()
+                ),
                 severity: "warn".into(),
             });
         }
     }
     // Все три блока пустые — дельта ни о чём.
     let has_content = ["## ADDED", "## MODIFIED", "## REMOVED"].iter().any(|s| {
-        section_body(&text, s).lines().any(|l| l.trim().starts_with('-') && !l.contains('<'))
+        section_body(&text, s)
+            .lines()
+            .any(|l| l.trim().starts_with('-') && !l.contains('<'))
     });
     if !has_content {
         issues.push(LintIssue {
@@ -196,7 +209,10 @@ pub fn archive(repo: &Path, name: &str) -> Result<PathBuf> {
 
 /// Находит DELTA.md по имени (предложенная или архивная).
 fn find_delta(repo: &Path, name: &str) -> Result<PathBuf> {
-    for base in [repo.join("changes").join(name), repo.join("changes/archive").join(name)] {
+    for base in [
+        repo.join("changes").join(name),
+        repo.join("changes/archive").join(name),
+    ] {
         let p = base.join("DELTA.md");
         if p.is_file() {
             return Ok(p);
@@ -236,11 +252,16 @@ mod tests {
         // Свежий шаблон не валиден (пустые блоки ADDED/MODIFIED/REMOVED).
         let issues = validate(repo, "saga-pilot").expect("validate");
         assert!(
-            issues.iter().any(|i| i.rule == "empty_delta" && i.severity == "error"),
+            issues
+                .iter()
+                .any(|i| i.rule == "empty_delta" && i.severity == "error"),
             "issues: {issues:?}"
         );
         // Архивация невалидной дельты — отказ.
-        assert!(archive(repo, "saga-pilot").is_err(), "error-находки блокируют архив");
+        assert!(
+            archive(repo, "saga-pilot").is_err(),
+            "error-находки блокируют архив"
+        );
         // Заполняем — валидация чиста (error-находок нет), архивируется.
         fill_delta(&path);
         let issues = validate(repo, "saga-pilot").expect("validate2");

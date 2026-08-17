@@ -202,10 +202,7 @@ impl Tool for SkillDistillTool {
             .and_then(Value::as_str)
             .unwrap_or("")
             .trim();
-        let content = args
-            .get("content")
-            .and_then(Value::as_str)
-            .unwrap_or("");
+        let content = args.get("content").and_then(Value::as_str).unwrap_or("");
         let plugin = args.get("plugin").and_then(Value::as_str).unwrap_or("");
         let Some(root) = &self.plugins_root else {
             return Ok(ToolOutput::err(
@@ -302,7 +299,11 @@ mod tests {
         assert_eq!(outcome.skill_name, "saga-staging");
         let text = std::fs::read_to_string(&outcome.path).expect("read");
         assert!(text.starts_with("---\nname: saga-staging"), "text: {text}");
-        assert!(outcome.path.ends_with("arch-distilled/skills/saga-staging/SKILL.md"));
+        assert!(
+            outcome
+                .path
+                .ends_with("arch-distilled/skills/saga-staging/SKILL.md")
+        );
     }
 
     #[tokio::test]
@@ -343,9 +344,15 @@ mod tests {
         let foreign = tmp.path().join("arch-core/skills/saga-staging/SKILL.md");
         std::fs::create_dir_all(foreign.parent().expect("parent")).expect("mkdir");
         std::fs::write(&foreign, "пользовательский скилл").expect("write");
-        let err = distill_to_skill(&long_content(), "saga-staging", "arch-core", &provider, tmp.path())
-            .await
-            .expect_err("защита чужой зоны");
+        let err = distill_to_skill(
+            &long_content(),
+            "saga-staging",
+            "arch-core",
+            &provider,
+            tmp.path(),
+        )
+        .await
+        .expect_err("защита чужой зоны");
         assert!(err.to_string().contains("не затираю"), "{err}");
         let kept = std::fs::read_to_string(&foreign).expect("read");
         assert_eq!(kept, "пользовательский скилл");

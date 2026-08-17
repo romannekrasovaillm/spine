@@ -120,9 +120,8 @@ impl TerminalGuard {
     /// # Errors
     /// Терминал недоступен (нет TTY, запуск в пайпе/CI).
     fn enter() -> Result<Self> {
-        enable_raw_mode().map_err(|e| {
-            HarnessError::Tui(format!("raw mode недоступен (нужен TTY): {e}"))
-        })?;
+        enable_raw_mode()
+            .map_err(|e| HarnessError::Tui(format!("raw mode недоступен (нужен TTY): {e}")))?;
         if let Err(e) = execute!(io::stdout(), EnterAlternateScreen, EnableMouseCapture) {
             let _ = disable_raw_mode();
             return Err(HarnessError::Tui(format!("alternate screen: {e}")));

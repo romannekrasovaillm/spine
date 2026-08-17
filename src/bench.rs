@@ -150,7 +150,8 @@ pub async fn run(
         sanitize_file_part(provider.model())
     );
     let md_path = out_dir.join(format!("{base}.md"));
-    std::fs::write(&md_path, report_markdown(bench, &report)).map_err(|e| HarnessError::io(&md_path, e))?;
+    std::fs::write(&md_path, report_markdown(bench, &report))
+        .map_err(|e| HarnessError::io(&md_path, e))?;
     let json_path = out_dir.join(format!("{base}.json"));
     let json = serde_json::to_string_pretty(&report)?;
     std::fs::write(&json_path, json).map_err(|e| HarnessError::io(&json_path, e))?;
@@ -176,7 +177,11 @@ fn report_markdown(bench: &Benchmark, report: &BenchReport) -> String {
     let verdict = if report.passed { "PASS" } else { "FAIL" };
     let _ = writeln!(out, "# Бенчмарк «{}» — {}\n", report.bench_name, verdict);
     let _ = writeln!(out, "**Модель:** {}", report.model);
-    let _ = writeln!(out, "**Дата:** {}", chrono::Local::now().format("%Y-%m-%d %H:%M:%S"));
+    let _ = writeln!(
+        out,
+        "**Дата:** {}",
+        chrono::Local::now().format("%Y-%m-%d %H:%M:%S")
+    );
     let _ = writeln!(
         out,
         "**Взвешенный итог:** {:.2}/5 (порог {:.2})\n",
@@ -184,7 +189,11 @@ fn report_markdown(bench: &Benchmark, report: &BenchReport) -> String {
     );
     let _ = writeln!(out, "## Задача\n\n{}\n", bench.task);
     let _ = writeln!(out, "## Ответ модели\n\n{}\n", report.response);
-    let _ = writeln!(out, "## Оценка по рубрике\n\n{}\n", report.rubric_report.to_markdown());
+    let _ = writeln!(
+        out,
+        "## Оценка по рубрике\n\n{}\n",
+        report.rubric_report.to_markdown()
+    );
     let cmp = if report.passed { ">=" } else { "<" };
     let _ = writeln!(
         out,
@@ -280,7 +289,11 @@ tags:
         std::fs::write(dir.path().join("broken.yml"), "{{{").expect("write");
         std::fs::write(dir.path().join("README.md"), "не бенч").expect("write");
         let items = list(dir.path()).expect("list");
-        assert_eq!(items.len(), 1, "битый и не-yaml файлы должны быть пропущены");
+        assert_eq!(
+            items.len(),
+            1,
+            "битый и не-yaml файлы должны быть пропущены"
+        );
         assert_eq!(items[0].name, "adr-basic");
         assert_eq!(items[0].tags, vec!["adr".to_string()]);
     }
@@ -345,7 +358,8 @@ tags:
         assert!(md_text.contains("ADR-001"), "ответ модели в отчёте");
         assert!(md_text.contains("| Критерий | Вес | Балл | Обоснование |"));
         let parsed: BenchReport =
-            serde_json::from_str(&std::fs::read_to_string(json_path).expect("read json")).expect("parse json");
+            serde_json::from_str(&std::fs::read_to_string(json_path).expect("read json"))
+                .expect("parse json");
         assert!(parsed.passed);
         assert_eq!(parsed.response, report.response);
         assert_eq!(parsed.rubric_report.scores.len(), 2);

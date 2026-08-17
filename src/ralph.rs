@@ -29,14 +29,14 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::config::Config;
 use crate::error::Result;
 use crate::llm::{LlmProvider, ToolSpec};
 use crate::subagent::{
-    SUBAGENT_TOOLS, SubagentRegistry, SubagentSpec, SubagentTask, TaskStatus,
-    available_specs, general_spec, now_iso,
+    SUBAGENT_TOOLS, SubagentRegistry, SubagentSpec, SubagentTask, TaskStatus, available_specs,
+    general_spec, now_iso,
 };
 use crate::tool::{Tool, ToolContext, ToolOutput};
 
@@ -124,7 +124,8 @@ fn round_prompt(
     prev: Option<&RalphHandoff>,
     context: Option<&str>,
 ) -> String {
-    let mut p = format!("ЦЕЛЬ (неизменна весь цикл): {objective}\n\nРаунд {round} из {max_rounds}.");
+    let mut p =
+        format!("ЦЕЛЬ (неизменна весь цикл): {objective}\n\nРаунд {round} из {max_rounds}.");
     if let Some(ctx) = context.map(str::trim).filter(|s| !s.is_empty()) {
         let _ = write!(
             p,
@@ -202,16 +203,30 @@ pub(crate) fn launch_ralph(
     let registry2 = registry.clone();
     let task_id = id.clone();
     tokio::spawn(async move {
-        let out_dir = tool_ctx.config.paths.reports_dir.join("ralph").join(&task_id);
+        let out_dir = tool_ctx
+            .config
+            .paths
+            .reports_dir
+            .join("ralph")
+            .join(&task_id);
         if let Err(e) = std::fs::create_dir_all(&out_dir) {
-            tracing::warn!("ralph: каталог отчётов не создан {}: {e}", out_dir.display());
+            tracing::warn!(
+                "ralph: каталог отчётов не создан {}: {e}",
+                out_dir.display()
+            );
         }
         let mut prev: Option<RalphHandoff> = None;
         let mut rounds_log: Vec<String> = Vec::new();
         let mut status = TaskStatus::Done;
         let mut stop_reason = format!("раунды исчерпаны ({max_rounds})");
         for round in 1..=max_rounds {
-            let prompt = round_prompt(&objective, round, max_rounds, prev.as_ref(), context.as_deref());
+            let prompt = round_prompt(
+                &objective,
+                round,
+                max_rounds,
+                prev.as_ref(),
+                context.as_deref(),
+            );
             let mut session = crate::agent::AgentSession::new(
                 tool_ctx.config.clone(),
                 provider.clone(),
@@ -228,18 +243,28 @@ pub(crate) fn launch_ralph(
                         &round_file,
                         format!("# Ralph-цикл {task_id}, раунд {round}\n\n{text}\n"),
                     ) {
-                        tracing::warn!("ralph: отчёт раунда не записан {}: {e}", round_file.display());
+                        tracing::warn!(
+                            "ralph: отчёт раунда не записан {}: {e}",
+                            round_file.display()
+                        );
                     }
                     let handoff_file = out_dir.join(format!("handoff-{round:02}.json"));
                     if let Ok(json) = serde_json::to_string_pretty(&handoff) {
                         if let Err(e) = std::fs::write(&handoff_file, json) {
-                            tracing::warn!("ralph: handoff не записан {}: {e}", handoff_file.display());
+                            tracing::warn!(
+                                "ralph: handoff не записан {}: {e}",
+                                handoff_file.display()
+                            );
                         }
                     }
                     rounds_log.push(format!(
                         "Раунд {round} [{}]: {}",
                         handoff.status,
-                        handoff.summary.chars().take(SUMMARY_IN_LOG_CHARS).collect::<String>()
+                        handoff
+                            .summary
+                            .chars()
+                            .take(SUMMARY_IN_LOG_CHARS)
+                            .collect::<String>()
                     ));
                     let round_status = handoff.status.clone();
                     prev = Some(handoff);
@@ -372,10 +397,20 @@ impl Tool for RalphRunTool {
             .clone()
             .or_else(|| ctx.llm.as_ref().map(|r| r.default()))
         else {
-            return Ok(ToolOutput::err("нет модели для ralph-цикла: LLM не настроен в контексте"));
+            return Ok(ToolOutput::err(
+                "нет модели для ralph-цикла: LLM не настроен в контексте",
+            ));
         };
         let context = args.get("context").and_then(Value::as_str);
-        match launch_ralph(registry, &spec, &objective, rounds, context, provider, ctx.clone()) {
+        match launch_ralph(
+            registry,
+            &spec,
+            &objective,
+            rounds,
+            context,
+            provider,
+            ctx.clone(),
+        ) {
             Ok(id) => Ok(ToolOutput::ok(format!(
                 "ralph-цикл запущен в фоне: {id} (раундов: до {rounds}, агент: {}). \
                  Каждый раунд — свежий агент; состояние — файлы + handoff. \
@@ -515,13 +550,27 @@ mod tests {
         }
         let task = task.expect("цикл завершился");
         assert_eq!(task.status, TaskStatus::Done, "report: {}", task.report);
-        assert!(task.report.contains("цель достигнута за 2"), "report: {}", task.report);
-        assert!(task.report.contains("Раунд 1 [continue]"), "report: {}", task.report);
+        assert!(
+            task.report.contains("цель достигнута за 2"),
+            "report: {}",
+            task.report
+        );
+        assert!(
+            task.report.contains("Раунд 1 [continue]"),
+            "report: {}",
+            task.report
+        );
         // Стоп на done: третий ответ не потребовался.
         assert_eq!(*provider.calls.lock().expect("calls"), 2);
         // Артефакты: round-01/02 + handoff-02 + FINAL.md.
         let dir = tmp.path().join("reports/ralph").join(&id);
-        for f in ["round-01.md", "round-02.md", "handoff-01.json", "handoff-02.json", "FINAL.md"] {
+        for f in [
+            "round-01.md",
+            "round-02.md",
+            "handoff-01.json",
+            "handoff-02.json",
+            "FINAL.md",
+        ] {
             assert!(dir.join(f).is_file(), "нет {f}");
         }
     }
@@ -549,7 +598,11 @@ mod tests {
         }
         let task = task.expect("цикл завершился");
         assert_eq!(task.status, TaskStatus::Done);
-        assert!(task.report.contains("блокерами на раунде 1"), "report: {}", task.report);
+        assert!(
+            task.report.contains("блокерами на раунде 1"),
+            "report: {}",
+            task.report
+        );
     }
 
     #[tokio::test]

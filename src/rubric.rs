@@ -15,7 +15,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::error::{HarnessError, Result};
 use crate::llm::{ChatMessage, ChatRequest, LlmProvider, ToolSpec};
@@ -33,8 +33,7 @@ const RETRY_JSON_HINT: &str = "Ответ не разобран как JSON. В�
      \"verdict\": \"...\"} — без markdown-обёрток и любого текста до и после.";
 
 /// Подсказка генератору при повторном запросе: только YAML.
-const RETRY_YAML_HINT: &str =
-    "Ответ не разобран как YAML. Верни ТОЛЬКО YAML рубрики той же схемы — без markdown-обёрток и пояснений.";
+const RETRY_YAML_HINT: &str = "Ответ не разобран как YAML. Верни ТОЛЬКО YAML рубрики той же схемы — без markdown-обёрток и пояснений.";
 
 /// Критерий рубрики с весом и якорями уровней.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -129,7 +128,11 @@ impl RubricReport {
         let _ = writeln!(out, "\n**Взвешенный итог:** {:.2}/5", self.weighted_total);
         let _ = writeln!(out, "**Вердикт:** {}", self.verdict);
         let _ = writeln!(out, "**Судья:** {}", self.judge_model);
-        let _ = writeln!(out, "**Дата:** {}", chrono::Local::now().format("%Y-%m-%d %H:%M:%S"));
+        let _ = writeln!(
+            out,
+            "**Дата:** {}",
+            chrono::Local::now().format("%Y-%m-%d %H:%M:%S")
+        );
         out
     }
 }
@@ -195,7 +198,11 @@ async fn complete_idempotent(llm: &dyn LlmProvider, req: ChatRequest) -> Result<
 ///
 /// # Errors
 /// Ошибка модели или разбора её структурированного ответа.
-pub async fn evaluate(rubric: &Rubric, target: &str, llm: &dyn LlmProvider) -> Result<RubricReport> {
+pub async fn evaluate(
+    rubric: &Rubric,
+    target: &str,
+    llm: &dyn LlmProvider,
+) -> Result<RubricReport> {
     if rubric.criteria.is_empty() {
         return Err(HarnessError::Rubric(format!(
             "рубрика '{}' не содержит критериев",
@@ -261,7 +268,12 @@ pub async fn generate_dynamic(
          Ответ — только YAML, без пояснений."
     );
     if let Some(anchor) = anchor {
-        let ids: Vec<&str> = anchor.criteria.iter().take(3).map(|c| c.id.as_str()).collect();
+        let ids: Vec<&str> = anchor
+            .criteria
+            .iter()
+            .take(3)
+            .map(|c| c.id.as_str())
+            .collect();
         let _ = write!(
             user,
             "\n\nСохрани шкалу (scale_max = {}) и включи обязательные критерии якорной рубрики: {}.",
@@ -289,7 +301,9 @@ pub async fn generate_dynamic(
         }
     };
     if rubric.criteria.is_empty() {
-        return Err(HarnessError::Rubric("сгенерированная рубрика без критериев".into()));
+        return Err(HarnessError::Rubric(
+            "сгенерированная рубрика без критериев".into(),
+        ));
     }
     rubric.origin = "dynamic".into();
     Ok(rubric)
@@ -382,7 +396,9 @@ where
     D: serde::Deserializer<'de>,
 {
     match Value::deserialize(deserializer)? {
-        Value::Number(n) => n.as_f64().ok_or_else(|| serde::de::Error::custom("балл не число")),
+        Value::Number(n) => n
+            .as_f64()
+            .ok_or_else(|| serde::de::Error::custom("балл не число")),
         Value::String(s) => s
             .trim()
             .parse::<f64>()
@@ -402,7 +418,10 @@ fn extract_json_object(text: &str) -> Option<&str> {
 /// Разбирает JSON-ответ судьи (с извлечением объекта из обёртки).
 fn parse_judge_response(text: &str) -> Result<JudgeResponse> {
     let json = extract_json_object(text).ok_or_else(|| {
-        HarnessError::Rubric(format!("в ответе судьи нет JSON-объекта: {}", fragment(text)))
+        HarnessError::Rubric(format!(
+            "в ответе судьи нет JSON-объекта: {}",
+            fragment(text)
+        ))
     })?;
     serde_json::from_str(json)
         .map_err(|e| HarnessError::Rubric(format!("разбор JSON судьи: {e}: {}", fragment(json))))
@@ -465,7 +484,10 @@ fn weighted_total(criteria: &[Criterion], scores: &[CriterionScore]) -> Result<f
     let mut sum = 0.0;
     let mut weights = 0.0;
     for c in criteria {
-        let score = scores.iter().find(|s| s.criterion_id == c.id).map_or(1, |s| s.score);
+        let score = scores
+            .iter()
+            .find(|s| s.criterion_id == c.id)
+            .map_or(1, |s| s.score);
         sum += f64::from(score) * c.weight;
         weights += c.weight;
     }
@@ -526,7 +548,8 @@ impl Tool for RubricListTool {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
             name: "rubric_list".into(),
-            description: "Список рубрик архитектурного контроля (имя, описание, число критериев)".into(),
+            description: "Список рубрик архитектурного контроля (имя, описание, число критериев)"
+                .into(),
             parameters: json!({"type": "object", "properties": {}}),
         }
     }
@@ -535,7 +558,10 @@ impl Tool for RubricListTool {
         let dir = ctx.config.paths.rubrics_dir();
         let items = list(&dir)?;
         if items.is_empty() {
-            return Ok(ToolOutput::ok(format!("рубрики не найдены в {}", dir.display())));
+            return Ok(ToolOutput::ok(format!(
+                "рубрики не найдены в {}",
+                dir.display()
+            )));
         }
         let mut out = String::new();
         for r in &items {
@@ -587,7 +613,8 @@ impl Tool for RubricEvaluateTool {
         };
         let llm = registry.default();
         let target_path = ctx.resolve(target_arg);
-        let text = std::fs::read_to_string(&target_path).map_err(|e| HarnessError::io(&target_path, e))?;
+        let text =
+            std::fs::read_to_string(&target_path).map_err(|e| HarnessError::io(&target_path, e))?;
         let rubric_path = resolve_rubric_path(ctx, rubric_arg);
         let rubric = match args.get("dynamic_subject").and_then(Value::as_str) {
             Some(subject) => {
@@ -730,7 +757,11 @@ mod tests {
     fn load_reads_yaml_and_list_skips_broken() {
         let dir = tempfile::tempdir().expect("tempdir");
         let good = dir.path().join("good.yaml");
-        std::fs::write(&good, serde_yaml::to_string(&sample_rubric()).expect("yaml")).expect("write");
+        std::fs::write(
+            &good,
+            serde_yaml::to_string(&sample_rubric()).expect("yaml"),
+        )
+        .expect("write");
         std::fs::write(dir.path().join("broken.yaml"), "name: [unclosed").expect("write");
         std::fs::write(dir.path().join("notes.txt"), "не yaml").expect("write");
 
@@ -738,7 +769,11 @@ mod tests {
         assert_eq!(loaded.name, "adr-quality");
 
         let items = list(dir.path()).expect("list");
-        assert_eq!(items.len(), 1, "битый и не-yaml файлы должны быть пропущены");
+        assert_eq!(
+            items.len(),
+            1,
+            "битый и не-yaml файлы должны быть пропущены"
+        );
         assert_eq!(items[0].name, "adr-quality");
         assert_eq!(items[0].criteria_count, 2);
     }
@@ -841,7 +876,10 @@ mod tests {
             .await
             .expect_err("должна быть ошибка разбора");
         let msg = err.to_string();
-        assert!(msg.contains("мусор второй"), "фрагмент ответа в ошибке: {msg}");
+        assert!(
+            msg.contains("мусор второй"),
+            "фрагмент ответа в ошибке: {msg}"
+        );
     }
 
     #[tokio::test]
@@ -923,18 +961,22 @@ mod tests {
         let mut cfg = crate::config::Config::default();
         cfg.paths.assets_dir = dir.path().join("assets");
         let ctx = ToolContext::new(dir.path().to_path_buf(), Arc::new(cfg));
-        let out = RubricListTool
-            .call(json!({}), &ctx)
-            .await
-            .expect("call");
+        let out = RubricListTool.call(json!({}), &ctx).await.expect("call");
         assert!(!out.is_error);
-        assert!(out.content.contains("adr-quality"), "вывод: {}", out.content);
+        assert!(
+            out.content.contains("adr-quality"),
+            "вывод: {}",
+            out.content
+        );
     }
 
     #[tokio::test]
     async fn rubric_evaluate_tool_without_llm_is_err() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let ctx = ToolContext::new(dir.path().to_path_buf(), Arc::new(crate::config::Config::default()));
+        let ctx = ToolContext::new(
+            dir.path().to_path_buf(),
+            Arc::new(crate::config::Config::default()),
+        );
         let out = RubricEvaluateTool
             .call(json!({"rubric": "x", "target": "y"}), &ctx)
             .await

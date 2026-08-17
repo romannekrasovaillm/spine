@@ -150,7 +150,9 @@ impl Panels {
                 "Пока пусто. Здесь появится последний рендер диаграммы \
                  (инструмент mermaid_render или /mermaid)."
             }
-            RightTab::Rubric => "Пока пусто. Здесь появится последний отчёт рубрики (/rubric run …).",
+            RightTab::Rubric => {
+                "Пока пусто. Здесь появится последний отчёт рубрики (/rubric run …)."
+            }
             RightTab::Knowledge => {
                 "Пока пусто. Здесь появится последний результат поиска (/kb, /web, /fetch)."
             }
@@ -233,10 +235,7 @@ impl InputState {
     fn line_col(&self) -> (usize, usize) {
         let before = &self.text[..self.cursor];
         let line = before.matches('\n').count();
-        let col = before
-            .rsplit('\n')
-            .next()
-            .map_or(0, |s| s.chars().count());
+        let col = before.rsplit('\n').next().map_or(0, |s| s.chars().count());
         (line, col)
     }
 
@@ -327,7 +326,11 @@ impl InputState {
     /// Курсор в конец текущей логической строки (по '\n').
     fn move_end(&mut self) {
         let (line, _) = self.line_col();
-        let len = self.text.split('\n').nth(line).map_or(0, |s| s.chars().count());
+        let len = self
+            .text
+            .split('\n')
+            .nth(line)
+            .map_or(0, |s| s.chars().count());
         self.cursor = self.byte_at_line_col(line, len);
     }
 
@@ -719,9 +722,7 @@ impl App {
     /// Обработка клавиши.
     pub(crate) fn handle_key(&mut self, key: KeyEvent) {
         // Ctrl-C — выход всегда.
-        if key.modifiers.contains(KeyModifiers::CONTROL)
-            && matches!(key.code, KeyCode::Char('c'))
-        {
+        if key.modifiers.contains(KeyModifiers::CONTROL) && matches!(key.code, KeyCode::Char('c')) {
             self.should_quit = true;
             return;
         }
@@ -881,7 +882,8 @@ impl App {
         if key.code == KeyCode::Esc {
             self.should_quit = true;
             return;
-        }        match key.code {
+        }
+        match key.code {
             // Прокрутка и вкладки доступны и во время хода модели.
             KeyCode::PageUp => self.scroll_by(self.page()),
             KeyCode::PageDown => self.scroll_back(self.page()),
@@ -891,15 +893,15 @@ impl App {
             KeyCode::F(4) => self.toggle_viewer(),
             // Во время хода ввод НЕ блокируется: Enter — сообщение в очередь
             // (FIFO), Alt+Enter — срочно в начало (выполнится следующим).
-            KeyCode::Enter
-                if self.thinking && key.modifiers.contains(KeyModifiers::ALT) =>
-            {
+            KeyCode::Enter if self.thinking && key.modifiers.contains(KeyModifiers::ALT) => {
                 self.enqueue_typed(true);
             }
             // Перевод строки в поле ввода: Shift+Enter (kitty-протокол),
             // Alt+Enter (вне хода) или Ctrl+J (работает в любом терминале).
             KeyCode::Enter
-                if key.modifiers.intersects(KeyModifiers::SHIFT | KeyModifiers::ALT) =>
+                if key
+                    .modifiers
+                    .intersects(KeyModifiers::SHIFT | KeyModifiers::ALT) =>
             {
                 self.input.insert_newline();
             }
@@ -1022,10 +1024,7 @@ impl App {
         if options.is_empty() {
             return;
         }
-        let selected = options
-            .iter()
-            .position(|o| o.label == current)
-            .unwrap_or(0);
+        let selected = options.iter().position(|o| o.label == current).unwrap_or(0);
         self.ask = Some(AskState {
             question: format!("Модель для этой сессии (сейчас: {current}):"),
             options,
@@ -1349,9 +1348,9 @@ impl App {
                             self.push_block(ChatBlock::Assistant(text));
                         }
                     }
-                    Err(e) => self.push_block(ChatBlock::Error(format!(
-                        "ход завершился ошибкой: {e}"
-                    ))),
+                    Err(e) => {
+                        self.push_block(ChatBlock::Error(format!("ход завершился ошибкой: {e}")))
+                    }
                 }
                 // Очередь: следующее набранное во время хода сообщение.
                 self.maybe_start_queued();
@@ -1389,13 +1388,10 @@ impl App {
                     }
                     Ok(slash::SlashOutcome::NotSlash) => {
                         self.push_block(ChatBlock::Error(
-                            "внутренняя ошибка: NotSlash дошёл до обработчика слэш-команд"
-                                .into(),
+                            "внутренняя ошибка: NotSlash дошёл до обработчика слэш-команд".into(),
                         ));
                     }
-                    Err(e) => self.push_block(ChatBlock::Error(format!(
-                        "команда не удалась: {e}"
-                    ))),
+                    Err(e) => self.push_block(ChatBlock::Error(format!("команда не удалась: {e}"))),
                 }
                 // Очередь: следующее набранное, пока шла команда.
                 self.maybe_start_queued();
@@ -1664,8 +1660,8 @@ pub(crate) mod testing {
     /// указывает в настоящий ~/.arch-harness, тесты не должны туда писать.
     pub(crate) fn stub_session(cfg: &Arc<Config>) -> AgentSession {
         let mut test_cfg = cfg.as_ref().clone();
-        test_cfg.paths.sessions_dir = std::env::temp_dir()
-            .join(format!("arch-test-sessions-{}", std::process::id()));
+        test_cfg.paths.sessions_dir =
+            std::env::temp_dir().join(format!("arch-test-sessions-{}", std::process::id()));
         let cfg = Arc::new(test_cfg);
         let ctx = ToolContext::new(PathBuf::from("/tmp"), cfg.clone());
         AgentSession::new(
@@ -1718,8 +1714,16 @@ mod tests {
             .iter()
             .find(|o| o.label == "deepseek")
             .expect("deepseek в списке");
-        assert!(ds.description.contains("deepseek-v4-flash"), "id модели: {}", ds.description);
-        assert!(ds.description.contains("/think"), "метка ризонинга: {}", ds.description);
+        assert!(
+            ds.description.contains("deepseek-v4-flash"),
+            "id модели: {}",
+            ds.description
+        );
+        assert!(
+            ds.description.contains("/think"),
+            "метка ризонинга: {}",
+            ds.description
+        );
         assert!(ask.options.iter().any(|o| o.label == "deepseek-pro"));
         assert!(ask.reply.is_none(), "пикер без канала инструмента");
     }
@@ -1781,7 +1785,10 @@ mod tests {
         input.set_text("/me".into());
         assert!(input.complete_tab());
         assert_eq!(input.text(), "/mermaid");
-        assert!(input.complete_tab(), "Tab на полной команде остаётся в цикле");
+        assert!(
+            input.complete_tab(),
+            "Tab на полной команде остаётся в цикле"
+        );
         assert_eq!(input.text(), "/mermaid");
     }
 
@@ -2012,7 +2019,11 @@ mod tests {
     fn context_usage_event_updates_gauge_mid_turn() {
         let mut app = test_app();
         app.handle_message(AppMessage::AgentEvent(AgentEvent::ContextUsage(12_345)));
-        assert_eq!(app.history_tokens(), 12_345, "индикатор обновился по ходу хода");
+        assert_eq!(
+            app.history_tokens(),
+            12_345,
+            "индикатор обновился по ходу хода"
+        );
         app.handle_message(AppMessage::AgentEvent(AgentEvent::ContextUsage(20_000)));
         assert_eq!(app.history_tokens(), 20_000);
     }
@@ -2025,7 +2036,11 @@ mod tests {
         for c in "добавь NFR".chars() {
             app.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
         }
-        assert_eq!(app.input.text(), "добавь NFR", "ввод во время хода работает");
+        assert_eq!(
+            app.input.text(),
+            "добавь NFR",
+            "ввод во время хода работает"
+        );
         app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
         assert_eq!(app.queue.len(), 1, "сообщение в очереди");
         assert_eq!(app.queue[0], "добавь NFR");
@@ -2133,7 +2148,11 @@ mod tests {
     }
 
     /// Событие мыши без модификаторов.
-    fn mouse(kind: crossterm::event::MouseEventKind, x: u16, y: u16) -> crossterm::event::MouseEvent {
+    fn mouse(
+        kind: crossterm::event::MouseEventKind,
+        x: u16,
+        y: u16,
+    ) -> crossterm::event::MouseEvent {
         crossterm::event::MouseEvent {
             kind,
             column: x,
@@ -2249,7 +2268,10 @@ mod tests {
         let dir = tmp.path().join("sessions");
         std::fs::create_dir_all(&dir).expect("mkdir");
         for (name, first) in [
-            ("session-20260815-100000-111.jsonl", "первый вопрос старой сессии"),
+            (
+                "session-20260815-100000-111.jsonl",
+                "первый вопрос старой сессии",
+            ),
             ("session-20260815-110000-111.jsonl", "второй вопрос"),
         ] {
             std::fs::write(
@@ -2358,7 +2380,10 @@ mod tests {
         app.scroll_by(5);
         assert!(!app.stick);
         app.push_block(ChatBlock::User("x".into()));
-        assert_eq!(app.scroll, 5, "без прилипания новые блоки скролл не сбрасывают");
+        assert_eq!(
+            app.scroll, 5,
+            "без прилипания новые блоки скролл не сбрасывают"
+        );
         app.scroll_back(100);
         assert_eq!(app.scroll, 0);
         assert!(app.stick, "на дне снова прилипаем");
@@ -2426,7 +2451,11 @@ mod tests {
         assert!(app.ask.is_some(), "модалка открыта");
         assert_eq!(app.ask.as_ref().map(|a| a.selected), Some(0));
         app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
-        assert_eq!(app.ask.as_ref().map(|a| a.selected), Some(1), "↓ двигает курсор");
+        assert_eq!(
+            app.ask.as_ref().map(|a| a.selected),
+            Some(1),
+            "↓ двигает курсор"
+        );
         app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
         assert!(app.ask.is_none(), "после Enter модалка закрыта");
         let chosen = rx.try_recv().expect("ответ ушёл инструменту");
@@ -2453,16 +2482,30 @@ mod tests {
         app.handle_message(AppMessage::AskUser(AskRequest {
             question: "q".into(),
             options: vec![
-                crate::tool::AskOption { label: "A".into(), description: String::new() },
-                crate::tool::AskOption { label: "B".into(), description: String::new() },
+                crate::tool::AskOption {
+                    label: "A".into(),
+                    description: String::new(),
+                },
+                crate::tool::AskOption {
+                    label: "B".into(),
+                    description: String::new(),
+                },
             ],
             recommended: Some("B".into()),
             reply: reply_tx,
         }));
-        assert_eq!(app.ask.as_ref().map(|a| a.selected), Some(1), "курсор на рекомендации");
+        assert_eq!(
+            app.ask.as_ref().map(|a| a.selected),
+            Some(1),
+            "курсор на рекомендации"
+        );
         app.handle_key(KeyEvent::new(KeyCode::Char('1'), KeyModifiers::NONE));
         assert!(app.ask.is_none());
-        assert_eq!(rx.try_recv().expect("ответ"), "A", "цифра выбирает мгновенно");
+        assert_eq!(
+            rx.try_recv().expect("ответ"),
+            "A",
+            "цифра выбирает мгновенно"
+        );
     }
 
     #[test]
@@ -2471,7 +2514,10 @@ mod tests {
         app.screen = Screen::Chat;
         let _rx = open_test_ask(&mut app);
         app.handle_key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE));
-        assert!(app.input.text().is_empty(), "обычный ввод заблокирован модалкой");
+        assert!(
+            app.input.text().is_empty(),
+            "обычный ввод заблокирован модалкой"
+        );
         assert!(app.ask.is_some(), "нецифровая клавиша модалку не закрывает");
     }
 
@@ -2491,7 +2537,11 @@ mod tests {
         // Смена вкладки внутри просмотрщика сбрасывает скролл.
         app.handle_key(KeyEvent::new(KeyCode::F(2), KeyModifiers::NONE));
         let v = app.viewer.expect("открыт");
-        assert_eq!((v.scroll_x, v.scroll_y), (0, 0), "скролл сброшен на новой вкладке");
+        assert_eq!(
+            (v.scroll_x, v.scroll_y),
+            (0, 0),
+            "скролл сброшен на новой вкладке"
+        );
         assert!(matches!(app.right_tab(), RightTab::Rubric));
         app.handle_key(KeyEvent::new(KeyCode::F(4), KeyModifiers::NONE));
         assert!(app.viewer.is_none(), "F4 закрывает");

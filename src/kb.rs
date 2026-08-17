@@ -54,7 +54,12 @@ pub struct KbHit {
 ///
 /// # Errors
 /// Фоновой обход прерван (`JoinError`).
-pub async fn search(dirs: &[PathBuf], exts: &[String], query: &str, limit: usize) -> Result<Vec<KbHit>> {
+pub async fn search(
+    dirs: &[PathBuf],
+    exts: &[String],
+    query: &str,
+    limit: usize,
+) -> Result<Vec<KbHit>> {
     let dirs = dirs.to_vec();
     let exts = exts.to_vec();
     let query = query.to_string();
@@ -128,7 +133,12 @@ fn has_allowed_extension(path: &Path, exts: &[String]) -> bool {
 }
 
 /// Скоринг одного файла (имя + содержимое); хиты добавляются в `hits`.
-fn collect_file_hits(path: &Path, terms: &[String], matcher: &SkimMatcherV2, hits: &mut Vec<KbHit>) {
+fn collect_file_hits(
+    path: &Path,
+    terms: &[String],
+    matcher: &SkimMatcherV2,
+    hits: &mut Vec<KbHit>,
+) {
     let Some(file_name) = path.file_name().and_then(|n| n.to_str()) else {
         return;
     };
@@ -162,7 +172,10 @@ fn collect_file_hits(path: &Path, terms: &[String], matcher: &SkimMatcherV2, hit
     if let Some(text) = &content {
         let lower = text.to_lowercase();
         for term in terms {
-            let occ = lower.matches(term.as_str()).count().min(MAX_TERM_OCCURRENCES);
+            let occ = lower
+                .matches(term.as_str())
+                .count()
+                .min(MAX_TERM_OCCURRENCES);
             score += (occ * 10) as u64;
         }
         for (idx, line) in text.lines().enumerate() {
@@ -191,8 +204,8 @@ fn collect_file_hits(path: &Path, terms: &[String], matcher: &SkimMatcherV2, hit
     // Соседние совпадения (зазор не больше двух контекстов) сливаются в один хит.
     let mut group_start = 0usize;
     for i in 1..=match_lines.len() {
-        let same_group = i < match_lines.len()
-            && match_lines[i] - match_lines[i - 1] <= 2 * CONTEXT_LINES + 1;
+        let same_group =
+            i < match_lines.len() && match_lines[i] - match_lines[i - 1] <= 2 * CONTEXT_LINES + 1;
         if same_group {
             continue;
         }
@@ -210,7 +223,11 @@ fn collect_file_hits(path: &Path, terms: &[String], matcher: &SkimMatcherV2, hit
 /// Хит по группе соседних совпадений: лучшая строка + сниппет с контекстом.
 fn make_hit(path: &Path, lines: &[&str], group: &[usize], terms: &[String], score: u64) -> KbHit {
     let best = best_line(lines, group, terms);
-    let start = group.first().copied().unwrap_or(best).saturating_sub(CONTEXT_LINES);
+    let start = group
+        .first()
+        .copied()
+        .unwrap_or(best)
+        .saturating_sub(CONTEXT_LINES);
     let end = group
         .last()
         .copied()
@@ -221,7 +238,11 @@ fn make_hit(path: &Path, lines: &[&str], group: &[usize], terms: &[String], scor
 
     let mut snippet = String::new();
     for (idx, line) in lines.iter().enumerate().take(end + 1).skip(start) {
-        let marker = if group_set.contains(&idx) { ">>> " } else { "    " };
+        let marker = if group_set.contains(&idx) {
+            ">>> "
+        } else {
+            "    "
+        };
         // записи в String инфаллибильны
         let _ = writeln!(snippet, "{marker}{}", truncate_line(line.trim_end()));
     }
@@ -406,7 +427,10 @@ mod tests {
             hits.iter()
                 .all(|h| h.path.extension().and_then(|e| e.to_str()) == Some("md"))
         );
-        assert!(hits.iter().all(|h| !h.path.to_string_lossy().contains(".hidden")));
+        assert!(
+            hits.iter()
+                .all(|h| !h.path.to_string_lossy().contains(".hidden"))
+        );
     }
 
     #[tokio::test]

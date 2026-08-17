@@ -72,7 +72,10 @@ pub fn rows_of(blocks: &[ChatBlock]) -> Vec<ExportRow> {
         }
         if first {
             // Пустой блок — строка с одной ролью.
-            rows.push(ExportRow { role, text: String::new() });
+            rows.push(ExportRow {
+                role,
+                text: String::new(),
+            });
         }
     };
     for block in blocks {
@@ -117,9 +120,8 @@ fn xml_escape(text: &str) -> String {
 /// Линия — часть ASCII-арта (box-линии/геометрия)? Копия эвристики рендера:
 /// арт в Word печатается моноширинным, чтобы не развалиться.
 fn is_art(text: &str) -> bool {
-    text.chars().any(|c| {
-        ('\u{2500}'..='\u{257f}').contains(&c) || ('\u{25a0}'..='\u{25ff}').contains(&c)
-    })
+    text.chars()
+        .any(|c| ('\u{2500}'..='\u{257f}').contains(&c) || ('\u{25a0}'..='\u{25ff}').contains(&c))
 }
 
 /// Человекочитаемая ошибка харнесса (zip-упаковка экспорта и т.п.).
@@ -362,7 +364,10 @@ mod tests {
 
     #[test]
     fn xml_escape_covers_specials() {
-        assert_eq!(xml_escape("a<b>&\"'\""), "a&lt;b&gt;&amp;&quot;&apos;&quot;");
+        assert_eq!(
+            xml_escape("a<b>&\"'\""),
+            "a&lt;b&gt;&amp;&quot;&apos;&quot;"
+        );
     }
 
     /// Читает запись из готового ZIP-пакета.

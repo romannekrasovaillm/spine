@@ -54,9 +54,8 @@ fn u16_sat(v: usize) -> u16 {
 /// Текст похож на ASCII-арт (box-линии/геометрические фигуры)?
 /// Гуттеры чата (▎ U+258E) и галки (✓ U+2713) вне диапазонов — не арт.
 fn is_art(text: &str) -> bool {
-    text.chars().any(|c| {
-        ('\u{2500}'..='\u{257f}').contains(&c) || ('\u{25a0}'..='\u{25ff}').contains(&c)
-    })
+    text.chars()
+        .any(|c| ('\u{2500}'..='\u{257f}').contains(&c) || ('\u{25a0}'..='\u{25ff}').contains(&c))
 }
 
 /// Строка (со спанами) — часть диаграммы?
@@ -143,7 +142,11 @@ fn draw_splash(f: &mut Frame, area: Rect, theme: &Theme) {
     );
 
     let version = Line::from(Span::styled(
-        concat!("v", env!("CARGO_PKG_VERSION"), " · DeepSeek / Kimi / GLM · Tokyo Night"),
+        concat!(
+            "v",
+            env!("CARGO_PKG_VERSION"),
+            " · DeepSeek / Kimi / GLM · Tokyo Night"
+        ),
         theme.muted(),
     ));
     f.render_widget(
@@ -229,8 +232,8 @@ fn draw_chat(f: &mut Frame, app: &mut App) {
     ])
     .split(f.area());
     let right_w = right_panel_width(app, f.area().width);
-    let cols = Layout::horizontal([Constraint::Min(24), Constraint::Length(right_w)])
-        .split(rows[0]);
+    let cols =
+        Layout::horizontal([Constraint::Min(24), Constraint::Length(right_w)]).split(rows[0]);
 
     draw_dialog(f, cols[0], app, &theme);
     // Очередь сообщений — плавающей карточкой внизу окна логов (над вводом).
@@ -299,7 +302,13 @@ fn draw_viewer(f: &mut Frame, area: Rect, app: &mut App, theme: &Theme) {
         .into_iter()
         .skip(v.scroll_y)
         .take(view_h)
-        .map(|l| if v.scroll_x == 0 { l } else { hclip_line(&l, v.scroll_x) })
+        .map(|l| {
+            if v.scroll_x == 0 {
+                l
+            } else {
+                hclip_line(&l, v.scroll_x)
+            }
+        })
         .collect();
 
     let icon = match tab {
@@ -432,7 +441,13 @@ fn draw_ask(f: &mut Frame, area: Rect, app: &App, theme: &Theme) {
         let current = i == ask.selected;
         let recommended = ask.recommended.as_deref() == Some(opt.label.as_str());
         let (mark, num_style) = if current {
-            ("❯ ", Style::default().fg(theme.cyan).bg(theme.bg).add_modifier(Modifier::BOLD))
+            (
+                "❯ ",
+                Style::default()
+                    .fg(theme.cyan)
+                    .bg(theme.bg)
+                    .add_modifier(Modifier::BOLD),
+            )
         } else {
             ("  ", theme.muted())
         };
@@ -445,7 +460,10 @@ fn draw_ask(f: &mut Frame, area: Rect, app: &App, theme: &Theme) {
         ]));
         if !opt.description.is_empty() {
             for extra in wrap_line(
-                &Line::from(Span::styled(format!("    {}", opt.description), theme.muted())),
+                &Line::from(Span::styled(
+                    format!("    {}", opt.description),
+                    theme.muted(),
+                )),
                 inner_w,
             ) {
                 lines.push(extra);
@@ -607,10 +625,7 @@ fn block_lines(block: &ChatBlock, theme: &Theme) -> Vec<Line<'static>> {
         }
         ChatBlock::Assistant(text) => {
             let mut out = vec![Line::from(vec![
-                Span::styled(
-                    "◆ ",
-                    theme.purple().add_modifier(Modifier::BOLD),
-                ),
+                Span::styled("◆ ", theme.purple().add_modifier(Modifier::BOLD)),
                 Span::styled("арх", theme.purple().add_modifier(Modifier::BOLD)),
             ])];
             out.extend(markdown_lines(text, theme));
@@ -647,10 +662,7 @@ fn block_lines(block: &ChatBlock, theme: &Theme) -> Vec<Line<'static>> {
         ChatBlock::System { command, text } => {
             let mut out = vec![Line::from(vec![
                 Span::styled("» ", theme.purple()),
-                Span::styled(
-                    command.clone(),
-                    theme.purple().add_modifier(Modifier::BOLD),
-                ),
+                Span::styled(command.clone(), theme.purple().add_modifier(Modifier::BOLD)),
             ])];
             for l in text.lines() {
                 out.push(Line::from(Span::styled(l.to_string(), theme.base())));
@@ -886,7 +898,10 @@ fn draw_input(f: &mut Frame, area: Rect, app: &App, theme: &Theme) {
     // Ввод активен и во время хода (очередь) — курсор нужен всегда.
     let x = area.x.saturating_add(1).saturating_add(u16_sat(cur_x));
     let max_x = area.x.saturating_add(area.width.saturating_sub(2));
-    let y = area.y.saturating_add(1).saturating_add(u16_sat(cur_row - skip));
+    let y = area
+        .y
+        .saturating_add(1)
+        .saturating_add(u16_sat(cur_row - skip));
     let max_y = area.y.saturating_add(area.height.saturating_sub(2));
     f.set_cursor_position((x.min(max_x), y.min(max_y)));
 }
@@ -903,10 +918,7 @@ fn draw_status(f: &mut Frame, area: Rect, app: &App, theme: &Theme) {
     let hint_w = u16_sat(UnicodeWidthStr::width(hint) + 1);
     let cols = Layout::horizontal([Constraint::Min(0), Constraint::Length(hint_w)]).split(area);
 
-    let mut spans = vec![Span::styled(
-        format!(" {} ", app.model_name),
-        theme.badge(),
-    )];
+    let mut spans = vec![Span::styled(format!(" {} ", app.model_name), theme.badge())];
     // Индикатор заполнения контекста — сразу после бейджа модели.
     spans.extend(context_spans(app, theme));
     spans.push(Span::styled(
@@ -929,8 +941,7 @@ fn draw_status(f: &mut Frame, area: Rect, app: &App, theme: &Theme) {
     }
     f.render_widget(Paragraph::new(Line::from(spans)), cols[0]);
     f.render_widget(
-        Paragraph::new(Line::from(Span::styled(hint, theme.muted())))
-            .alignment(Alignment::Right),
+        Paragraph::new(Line::from(Span::styled(hint, theme.muted()))).alignment(Alignment::Right),
         cols[1],
     );
 }
@@ -942,10 +953,7 @@ fn context_spans(app: &App, theme: &Theme) -> Vec<Span<'static>> {
     let used = app.history_tokens();
     let budget = app.context_budget();
     if budget == 0 {
-        return vec![Span::styled(
-            format!(" ◈ ~{} ток.", used),
-            theme.muted(),
-        )];
+        return vec![Span::styled(format!(" ◈ ~{} ток.", used), theme.muted())];
     }
     let pct = used.saturating_mul(100) / budget;
     let agent_cfg = &app.tool_ctx.config.agent;
@@ -1059,7 +1067,10 @@ mod tests {
             assert!(text.contains(needle), "не найдено «{needle}»:\n{text}");
         }
         // Левая колонка с каталогом команд убрана: заголовка быть не должно.
-        assert!(!text.contains("Команды"), "панель команд не скрыта:\n{text}");
+        assert!(
+            !text.contains("Команды"),
+            "панель команд не скрыта:\n{text}"
+        );
     }
 
     #[test]
@@ -1123,7 +1134,10 @@ mod tests {
             text.contains(&wide),
             "широкая схема показана целиком (панель расширилась):\n{text}"
         );
-        assert!(!text.contains("F4 — вся схема"), "клипа нет — хинт не нужен");
+        assert!(
+            !text.contains("F4 — вся схема"),
+            "клипа нет — хинт не нужен"
+        );
     }
 
     #[test]
@@ -1219,7 +1233,10 @@ mod tests {
         let mut terminal = Terminal::new(TestBackend::new(110, 24)).expect("terminal");
         terminal.draw(|f| app.render(f)).expect("draw");
         let text = buffer_text(&terminal);
-        assert!(text.contains("субагенты: 1"), "индикатор в статус-баре:\n{text}");
+        assert!(
+            text.contains("субагенты: 1"),
+            "индикатор в статус-баре:\n{text}"
+        );
         assert!(app.needs_tick(), "тики идут, пока крутятся субагенты");
     }
 
@@ -1315,14 +1332,20 @@ mod tests {
         // Карточка очереди — В окне логов: выше поля ввода (строки с «❯»).
         let q_row = text.lines().position(|l| l.contains("▶ 1.")).expect("▶");
         let i_row = text.lines().position(|l| l.contains('❯')).expect("❯");
-        assert!(q_row < i_row, "очередь ({q_row}) над вводом ({i_row}):\n{text}");
+        assert!(
+            q_row < i_row,
+            "очередь ({q_row}) над вводом ({i_row}):\n{text}"
+        );
         // В поле ввода строк очереди больше нет — оно однострочное по дефолту.
         let input_rows = text
             .lines()
             .skip(i_row)
             .take_while(|l| !l.contains("F1"))
             .count();
-        assert!(input_rows <= 4, "поле ввода не раздувается очередью:\n{text}");
+        assert!(
+            input_rows <= 4,
+            "поле ввода не раздувается очередью:\n{text}"
+        );
     }
 
     #[test]
@@ -1355,8 +1378,14 @@ mod tests {
         assert!(text.contains("первая строка"), "первая:\n{text}");
         assert!(text.contains("вторая строка"), "вторая:\n{text}");
         // Обе строки — внутри поля ввода: над статус-баром не более 4 строк.
-        let first = text.lines().position(|l| l.contains("первая строка")).unwrap();
-        let second = text.lines().position(|l| l.contains("вторая строка")).unwrap();
+        let first = text
+            .lines()
+            .position(|l| l.contains("первая строка"))
+            .unwrap();
+        let second = text
+            .lines()
+            .position(|l| l.contains("вторая строка"))
+            .unwrap();
         assert_eq!(second, first + 1, "строки ввода идут подряд:\n{text}");
     }
 
@@ -1375,7 +1404,11 @@ mod tests {
         terminal.draw(|f| app.render(f)).expect("draw");
         let buf = terminal.backend().buffer();
         let sel_bg = ratatui::style::Color::Rgb(0x28, 0x34, 0x57);
-        assert_eq!(buf[(inner.x + 2, row)].bg, sel_bg, "первая ячейка подсвечена");
+        assert_eq!(
+            buf[(inner.x + 2, row)].bg,
+            sel_bg,
+            "первая ячейка подсвечена"
+        );
         assert_eq!(buf[(inner.x + 6, row)].bg, sel_bg, "пятая подсвечена");
         assert_ne!(
             buf[(inner.x + 7, row)].bg,
@@ -1444,7 +1477,8 @@ mod tests {
     }
 
     #[test]
-    fn ask_modal_shows_question_options_and_hints() {        let mut app = test_app();
+    fn ask_modal_shows_question_options_and_hints() {
+        let mut app = test_app();
         app.screen = Screen::Chat;
         app.ask = Some(crate::tui::app::AskState {
             question: "Какой брокер сообщений выбрать?".into(),
@@ -1496,7 +1530,10 @@ mod tests {
         });
         terminal.draw(|f| app.render(f)).expect("draw");
         let text = buffer_text(&terminal);
-        assert!(text.contains("на весь экран"), "заголовок просмотрщика:\n{text}");
+        assert!(
+            text.contains("на весь экран"),
+            "заголовок просмотрщика:\n{text}"
+        );
         assert!(text.contains("LEFT"), "левый край при scroll_x=0:\n{text}");
         assert!(!text.contains("RIGHT"), "правый край клипнут:\n{text}");
 
@@ -1509,7 +1546,10 @@ mod tests {
         terminal.draw(|f| app.render(f)).expect("draw");
         let text = buffer_text(&terminal);
         assert!(!text.contains("LEFT"), "левый край за окном:\n{text}");
-        assert!(text.contains("RIGHT"), "правый край показан панорамой:\n{text}");
+        assert!(
+            text.contains("RIGHT"),
+            "правый край показан панорамой:\n{text}"
+        );
         assert!(text.contains("→"), "индикатор позиции:\n{text}");
     }
 

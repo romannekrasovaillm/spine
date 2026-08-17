@@ -85,15 +85,9 @@ impl Theme {
     /// Градиент cyan→purple по `t ∈ [0,1]` (баннер сплэш-экрана).
     pub(crate) fn gradient(&self, t: f32) -> Color {
         let t = t.clamp(0.0, 1.0);
-        let lerp = |a: u8, b: u8| {
-            (f32::from(a) + (f32::from(b) - f32::from(a)) * t).round() as u8
-        };
+        let lerp = |a: u8, b: u8| (f32::from(a) + (f32::from(b) - f32::from(a)) * t).round() as u8;
         // Токены палитры: cyan (#7dcfff) → purple (#bb9af7).
-        Color::Rgb(
-            lerp(0x7d, 0xbb),
-            lerp(0xcf, 0x9a),
-            lerp(0xff, 0xf7),
-        )
+        Color::Rgb(lerp(0x7d, 0xbb), lerp(0xcf, 0x9a), lerp(0xff, 0xf7))
     }
 
     /// Бейдж (инверсия на акценте): имя модели в статус-баре.

@@ -109,9 +109,12 @@ pub fn scan_repo(repo: &Path) -> Result<RepoFacts> {
         } else {
             "npm"
         };
-        for (label, key) in [("Сборка", "build"), ("Тесты", "test"), ("Линт", "lint")] {
+        for (label, key) in [("Сборка", "build"), ("Тесты", "test"), ("Линт", "lint")]
+        {
             if scripts.contains_key(key) {
-                facts.commands.push((label.into(), format!("{pm} run {key}")));
+                facts
+                    .commands
+                    .push((label.into(), format!("{pm} run {key}")));
             }
         }
     }
@@ -140,7 +143,9 @@ pub fn scan_repo(repo: &Path) -> Result<RepoFacts> {
             for line in text.lines() {
                 if let Some(target) = line.strip_suffix(':') {
                     if matches!(target, "build" | "test" | "lint" | "check") {
-                        facts.commands.push((format!("make {target}"), format!("make {target}")));
+                        facts
+                            .commands
+                            .push((format!("make {target}"), format!("make {target}")));
                     }
                 }
             }
@@ -275,7 +280,10 @@ fn inputs_hash(repo: &Path, facts: &RepoFacts) -> Result<u64> {
     if let Some(c) = &facts.constraints {
         buf.push_str(&std::fs::read_to_string(c).map_err(|e| HarnessError::io(c, e))?);
     }
-    buf.push_str(&format!("{:?}|{:?}|{:?}", facts.commands, facts.top_dirs, facts.stack));
+    buf.push_str(&format!(
+        "{:?}|{:?}|{:?}",
+        facts.commands, facts.top_dirs, facts.stack
+    ));
     let _ = repo;
     Ok(fnv1a(&buf))
 }
@@ -285,7 +293,9 @@ pub fn render_generated(repo: &Path, facts: &RepoFacts) -> Result<String> {
     let hash = inputs_hash(repo, facts)?;
     let ts = chrono::Local::now().format("%Y-%m-%d %H:%M").to_string();
     let mut out = String::new();
-    out.push_str(&format!("{BEGIN_MARKER} hash={hash:016x} ts=\"{ts}\" -->\n"));
+    out.push_str(&format!(
+        "{BEGIN_MARKER} hash={hash:016x} ts=\"{ts}\" -->\n"
+    ));
     out.push_str("> Сгенерировано харнессом `arch` (`arch agents-md refresh`). Не редактируйте\n> внутри маркеров — правьте источники (spine, CONSTRAINTS.yaml) или зону снаружи.\n\n");
 
     out.push_str("## Команды\n\n");
@@ -317,7 +327,9 @@ pub fn render_generated(repo: &Path, facts: &RepoFacts) -> Result<String> {
             }
             out.push_str(&format!("\nПолный текст: `{}`\n", rel(repo, spine)));
         }
-        None => out.push_str("- spine не обнаружен; для Standard/Critical маршрутов он обязателен\n"),
+        None => {
+            out.push_str("- spine не обнаружен; для Standard/Critical маршрутов он обязателен\n")
+        }
     }
     out.push('\n');
 
@@ -325,34 +337,51 @@ pub fn render_generated(repo: &Path, facts: &RepoFacts) -> Result<String> {
     match &facts.constraints {
         Some(c) => {
             let text = std::fs::read_to_string(c).map_err(|e| HarnessError::io(c, e))?;
-            let doc: ConstraintsDoc = serde_yaml::from_str(&text)
-                .map_err(|e| HarnessError::Yaml(e))?;
+            let doc: ConstraintsDoc =
+                serde_yaml::from_str(&text).map_err(|e| HarnessError::Yaml(e))?;
             for r in &doc.rules {
                 let sev = r.severity.as_deref().unwrap_or("error");
                 out.push_str(&format!("- `{}` ({}, {}) \n", r.name, r.kind, sev));
             }
-            out.push_str(&format!("\nПроверка: `arch control check .` — источник `{}`\n", rel(repo, c)));
+            out.push_str(&format!(
+                "\nПроверка: `arch control check .` — источник `{}`\n",
+                rel(repo, c)
+            ));
         }
         None => out.push_str("- CONSTRAINTS.yaml не найден (`arch handoff` создаёт стартовый)\n"),
     }
     out.push('\n');
 
     out.push_str("## Карта репозитория\n\n");
-    out.push_str(&format!("- Стек: {}\n", if facts.stack.is_empty() { "не определён".into() } else { facts.stack.join(", ") }));
+    out.push_str(&format!(
+        "- Стек: {}\n",
+        if facts.stack.is_empty() {
+            "не определён".into()
+        } else {
+            facts.stack.join(", ")
+        }
+    ));
     if !facts.top_dirs.is_empty() {
         out.push_str(&format!("- Каталоги: {}\n", facts.top_dirs.join(", ")));
     }
     if let Some((adr, n)) = &facts.adr {
-        out.push_str(&format!("- ADR: `{}` ({n} шт.) — решения читаем ДО изменения затронутых мест\n", rel(repo, adr)));
+        out.push_str(&format!(
+            "- ADR: `{}` ({n} шт.) — решения читаем ДО изменения затронутых мест\n",
+            rel(repo, adr)
+        ));
     }
     out.push('\n');
 
     out.push_str("## Стоп-условия: когда остановиться и эскалировать архитектору\n\n");
-    out.push_str("Прекратите работу и запросите решение архитектора (A3), если изменение затрагивает:\n");
+    out.push_str(
+        "Прекратите работу и запросите решение архитектора (A3), если изменение затрагивает:\n",
+    );
     out.push_str("- API/data-контракт, схему данных, security boundary / trust zone;\n");
     out.push_str("- новый компонент/хранилище/вендора, cross-domain интеграцию;\n");
     out.push_str("- необратимую миграцию, RTO/RPO, финансово значимые потоки.\n");
-    out.push_str("Маршрут значимости: `arch control score --trigger …` (Fast/Standard/Critical).\n");
+    out.push_str(
+        "Маршрут значимости: `arch control score --trigger …` (Fast/Standard/Critical).\n",
+    );
     out.push_str(END_MARKER);
     out.push('\n');
     Ok(out)
@@ -442,7 +471,9 @@ fn embedded_hash(existing: &str) -> Option<u64> {
     let begin = existing.find(BEGIN_MARKER)?;
     let line_end = existing[begin..].find("-->")? + begin;
     let header = &existing[begin..line_end];
-    let hash_str = header.split_whitespace().find_map(|t| t.strip_prefix("hash="))?;
+    let hash_str = header
+        .split_whitespace()
+        .find_map(|t| t.strip_prefix("hash="))?;
     u64::from_str_radix(hash_str, 16).ok()
 }
 
@@ -455,19 +486,26 @@ pub fn lint(repo: &Path) -> Result<Vec<LintIssue>> {
     let path = repo.join("AGENTS.md");
     let text = std::fs::read_to_string(&path).map_err(|e| HarnessError::io(&path, e))?;
     let mut issues = Vec::new();
-    let push = |issues: &mut Vec<LintIssue>, line: usize, rule: &str, message: String, severity: &str| {
-        issues.push(LintIssue {
-            file: path.clone(),
-            line,
-            rule: rule.into(),
-            message,
-            severity: severity.into(),
-        });
-    };
+    let push =
+        |issues: &mut Vec<LintIssue>, line: usize, rule: &str, message: String, severity: &str| {
+            issues.push(LintIssue {
+                file: path.clone(),
+                line,
+                rule: rule.into(),
+                message,
+                severity: severity.into(),
+            });
+        };
 
     if !text.contains(BEGIN_MARKER) {
-        push(&mut issues, 0, "no_generated_zone",
-             "нет сгенерированной зоны — `arch agents-md refresh` добавит её, рукописное сохранится".into(), "warn");
+        push(
+            &mut issues,
+            0,
+            "no_generated_zone",
+            "нет сгенерированной зоны — `arch agents-md refresh` добавит её, рукописное сохранится"
+                .into(),
+            "warn",
+        );
         return Ok(issues);
     }
 
@@ -476,9 +514,21 @@ pub fn lint(repo: &Path) -> Result<Vec<LintIssue>> {
     let current = inputs_hash(repo, &facts)?;
     match embedded_hash(&text) {
         Some(h) if h == current => {}
-        Some(_) => push(&mut issues, 0, "stale",
-            "источники изменились с последней генерации — запустите `arch agents-md refresh`".into(), "error"),
-        None => push(&mut issues, 0, "no_hash", "нет хэша в маркере — refresh".into(), "warn"),
+        Some(_) => push(
+            &mut issues,
+            0,
+            "stale",
+            "источники изменились с последней генерации — запустите `arch agents-md refresh`"
+                .into(),
+            "error",
+        ),
+        None => push(
+            &mut issues,
+            0,
+            "no_hash",
+            "нет хэша в маркере — refresh".into(),
+            "warn",
+        ),
     }
 
     // Ссылки на артефакты существуют.
@@ -488,13 +538,25 @@ pub fn lint(repo: &Path) -> Result<Vec<LintIssue>> {
         }
     }
     if text.contains("docs/ARCHITECTURE-SPINE.md") && facts.spine.is_none() {
-        push(&mut issues, 0, "broken_link", "ссылка на spine, но файл не найден".into(), "error");
+        push(
+            &mut issues,
+            0,
+            "broken_link",
+            "ссылка на spine, но файл не найден".into(),
+            "error",
+        );
     }
 
     // Заглушки.
     for (n, line) in text.lines().enumerate() {
         if line.contains("TODO") || line.contains("TBD") || line.contains("FIXME") {
-            push(&mut issues, n + 1, "stub_marker", format!("заглушка: {}", line.trim()), "warn");
+            push(
+                &mut issues,
+                n + 1,
+                "stub_marker",
+                format!("заглушка: {}", line.trim()),
+                "warn",
+            );
         }
     }
     Ok(issues)
@@ -505,8 +567,8 @@ pub fn lint(repo: &Path) -> Result<Vec<LintIssue>> {
 /// # Errors
 /// Реестр не читается.
 pub fn lint_registry(registry_file: &Path) -> Result<Vec<(PathBuf, Vec<LintIssue>)>> {
-    let text = std::fs::read_to_string(registry_file)
-        .map_err(|e| HarnessError::io(registry_file, e))?;
+    let text =
+        std::fs::read_to_string(registry_file).map_err(|e| HarnessError::io(registry_file, e))?;
     let mut out = Vec::new();
     for line in text.lines() {
         let line = line.trim();
@@ -516,13 +578,16 @@ pub fn lint_registry(registry_file: &Path) -> Result<Vec<(PathBuf, Vec<LintIssue
         let repo = PathBuf::from(line);
         match lint(&repo) {
             Ok(issues) => out.push((repo, issues)),
-            Err(e) => out.push((repo.clone(), vec![LintIssue {
-                file: repo,
-                line: 0,
-                rule: "lint_error".into(),
-                message: e.to_string(),
-                severity: "error".into(),
-            }])),
+            Err(e) => out.push((
+                repo.clone(),
+                vec![LintIssue {
+                    file: repo,
+                    line: 0,
+                    rule: "lint_error".into(),
+                    message: e.to_string(),
+                    severity: "error".into(),
+                }],
+            )),
         }
     }
     Ok(out)
@@ -531,10 +596,7 @@ pub fn lint_registry(registry_file: &Path) -> Result<Vec<(PathBuf, Vec<LintIssue
 /// Инструменты домена: `agentsmd_generate`, `agentsmd_lint`.
 pub fn tools(cfg: &Config) -> Vec<Arc<dyn Tool>> {
     let _ = cfg;
-    vec![
-        Arc::new(AgentsMdGenerateTool),
-        Arc::new(AgentsMdLintTool),
-    ]
+    vec![Arc::new(AgentsMdGenerateTool), Arc::new(AgentsMdLintTool)]
 }
 
 /// Инструмент `agentsmd_generate`.
@@ -545,9 +607,10 @@ impl Tool for AgentsMdGenerateTool {
     fn spec(&self) -> crate::llm::ToolSpec {
         crate::llm::ToolSpec {
             name: "agentsmd_generate".into(),
-            description: "Сгенерировать/обновить AGENTS.md репозитория из архитектурных артефактов \
+            description:
+                "Сгенерировать/обновить AGENTS.md репозитория из архитектурных артефактов \
                           (spine, CONSTRAINTS, манифесты). Рукописная зона сохраняется."
-                .into(),
+                    .into(),
             parameters: serde_json::json!({
                 "type": "object",
                 "properties": {"repo": {"type": "string", "description": "путь к репозиторию"}},
@@ -556,7 +619,11 @@ impl Tool for AgentsMdGenerateTool {
         }
     }
 
-    async fn call(&self, args: serde_json::Value, ctx: &crate::tool::ToolContext) -> Result<crate::tool::ToolOutput> {
+    async fn call(
+        &self,
+        args: serde_json::Value,
+        ctx: &crate::tool::ToolContext,
+    ) -> Result<crate::tool::ToolOutput> {
         let repo = args.get("repo").and_then(|r| r.as_str()).unwrap_or(".");
         let report = generate(&ctx.resolve(repo))?;
         Ok(crate::tool::ToolOutput::ok(format!(
@@ -564,7 +631,11 @@ impl Tool for AgentsMdGenerateTool {
             report.path.display(),
             report.action,
             report.invariants,
-            if report.has_constraints { "да" } else { "нет" }
+            if report.has_constraints {
+                "да"
+            } else {
+                "нет"
+            }
         )))
     }
 }
@@ -577,7 +648,9 @@ impl Tool for AgentsMdLintTool {
     fn spec(&self) -> crate::llm::ToolSpec {
         crate::llm::ToolSpec {
             name: "agentsmd_lint".into(),
-            description: "Проверить AGENTS.md репозитория: свежесть (дрейф источников), ссылки, заглушки".into(),
+            description:
+                "Проверить AGENTS.md репозитория: свежесть (дрейф источников), ссылки, заглушки"
+                    .into(),
             parameters: serde_json::json!({
                 "type": "object",
                 "properties": {"repo": {"type": "string", "description": "путь к репозиторию"}},
@@ -586,11 +659,17 @@ impl Tool for AgentsMdLintTool {
         }
     }
 
-    async fn call(&self, args: serde_json::Value, ctx: &crate::tool::ToolContext) -> Result<crate::tool::ToolOutput> {
+    async fn call(
+        &self,
+        args: serde_json::Value,
+        ctx: &crate::tool::ToolContext,
+    ) -> Result<crate::tool::ToolOutput> {
         let repo = args.get("repo").and_then(|r| r.as_str()).unwrap_or(".");
         let issues = lint(&ctx.resolve(repo))?;
         if issues.is_empty() {
-            return Ok(crate::tool::ToolOutput::ok("AGENTS.md свежий, нарушений нет"));
+            return Ok(crate::tool::ToolOutput::ok(
+                "AGENTS.md свежий, нарушений нет",
+            ));
         }
         let mut out = String::new();
         for i in &issues {
@@ -631,7 +710,12 @@ mod tests {
         let facts = scan_repo(&repo).expect("scan");
         assert_eq!(facts.name, "payments-core");
         assert!(facts.stack.contains(&"rust".to_string()));
-        assert!(facts.commands.iter().any(|(l, c)| l == "Сборка" && c == "cargo build"));
+        assert!(
+            facts
+                .commands
+                .iter()
+                .any(|(l, c)| l == "Сборка" && c == "cargo build")
+        );
         assert!(facts.spine.is_some());
         assert_eq!(facts.adr.as_ref().map(|(_, n)| *n), Some(1));
         assert!(facts.constraints.is_some());
@@ -661,7 +745,10 @@ mod tests {
         assert_eq!(r2.action, "refreshed");
         assert_eq!(r2.invariants, 2);
         let text = std::fs::read_to_string(&path).expect("read2");
-        assert!(text.contains("коммиты на русском"), "рукописная зона затёрта");
+        assert!(
+            text.contains("коммиты на русском"),
+            "рукописная зона затёрта"
+        );
         assert!(text.contains("AD-2"), "новый инвариант не попал");
         assert_eq!(text.matches(BEGIN_MARKER).count(), 1, "двойная зона");
     }
@@ -671,7 +758,10 @@ mod tests {
         let tmp = tempfile::tempdir().expect("tmp");
         let repo = fixture_repo(tmp.path());
         generate(&repo).expect("gen");
-        assert!(lint(&repo).expect("lint fresh").is_empty(), "свежий файл чист");
+        assert!(
+            lint(&repo).expect("lint fresh").is_empty(),
+            "свежий файл чист"
+        );
 
         // Дрейф: источник изменился.
         std::fs::write(
@@ -680,7 +770,12 @@ mod tests {
         )
         .expect("spine3");
         let issues = lint(&repo).expect("lint stale");
-        assert!(issues.iter().any(|i| i.rule == "stale" && i.severity == "error"), "{issues:?}");
+        assert!(
+            issues
+                .iter()
+                .any(|i| i.rule == "stale" && i.severity == "error"),
+            "{issues:?}"
+        );
 
         // Свежесть восстанавливается refresh'ем.
         generate(&repo).expect("regen");
@@ -690,12 +785,18 @@ mod tests {
         std::fs::write(&path, text).expect("write");
         let issues = lint(&repo).expect("lint stub");
         assert!(issues.iter().any(|i| i.rule == "stub_marker"));
-        assert!(!issues.iter().any(|i| i.rule == "stale"), "после refresh дрейфа нет");
+        assert!(
+            !issues.iter().any(|i| i.rule == "stale"),
+            "после refresh дрейфа нет"
+        );
     }
 
     #[test]
     fn splice_appends_zone_when_no_markers() {
-        let (out, action) = splice("# Рукописный файл\n\nТекст команды.\n", "<!-- ARCH:GENERATED hash=1 -->\nтело\n<!-- ARCH:END -->\n");
+        let (out, action) = splice(
+            "# Рукописный файл\n\nТекст команды.\n",
+            "<!-- ARCH:GENERATED hash=1 -->\nтело\n<!-- ARCH:END -->\n",
+        );
         assert_eq!(action, "appended");
         assert!(out.contains("Текст команды."));
         assert!(out.contains("ARCH:GENERATED"));

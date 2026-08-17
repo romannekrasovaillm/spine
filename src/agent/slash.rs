@@ -139,8 +139,14 @@ pub fn catalog() -> Vec<(&'static str, &'static str)> {
         ("/fetch <url>", "загрузить страницу текстом"),
         ("/sites", "кураторские сайты архитектора"),
         ("/handoff <harness> <repo>", "сформировать handoff-пакет"),
-        ("/control <repo>", "архитектурный контроль (fitness functions)"),
-        ("/score", "Architecture Significance Score → маршрут Fast/Standard/Critical"),
+        (
+            "/control <repo>",
+            "архитектурный контроль (fitness functions)",
+        ),
+        (
+            "/score",
+            "Architecture Significance Score → маршрут Fast/Standard/Critical",
+        ),
         ("/mcp list", "MCP-серверы и инструменты"),
         ("/doctor", "диагностика окружения"),
         ("/export <word|excel> [путь]", "экран диалога в .docx/.xlsx"),
@@ -149,12 +155,21 @@ pub fn catalog() -> Vec<(&'static str, &'static str)> {
         ("/plugins", "плагины: скиллы + MCP"),
         ("/agents", "субагенты: спеки из плагинов + фоновые задачи"),
         ("/worktree", "изолированные git worktree агентов (список)"),
-        ("/distill <name> [plugin]", "дистиллировать контекст сессии в скилл"),
+        (
+            "/distill <name> [plugin]",
+            "дистиллировать контекст сессии в скилл",
+        ),
         ("/save <file>", "сохранить транскрипт"),
         ("/load <file>", "включить файл в контекст"),
-        ("/agentsmd <repo>", "сгенерировать/проверить AGENTS.md репозитория"),
+        (
+            "/agentsmd <repo>",
+            "сгенерировать/проверить AGENTS.md репозитория",
+        ),
         ("/sessions", "журналы прошлых сессий"),
-        ("/resume [file|last]", "восстановить сессию; без аргумента — пикер"),
+        (
+            "/resume [file|last]",
+            "восстановить сессию; без аргумента — пикер",
+        ),
     ]
 }
 
@@ -256,13 +271,17 @@ fn cmd_think(rest: &str, session: &mut AgentSession, ctx: &ToolContext) -> Resul
     };
     match rest {
         "" => {
-            let support = match (mc.and_then(|m| m.thinking_on.as_ref()), mc.and_then(|m| m.thinking_off.as_ref())) {
+            let support = match (
+                mc.and_then(|m| m.thinking_on.as_ref()),
+                mc.and_then(|m| m.thinking_off.as_ref()),
+            ) {
                 (Some(on), Some(off)) => format!(
                     "карты: on → {}, off → {}",
                     serde_json::to_string(on).unwrap_or_default(),
                     serde_json::to_string(off).unwrap_or_default()
                 ),
-                _ => "карты thinking_on/thinking_off не настроены — переключение недоступно".to_string(),
+                _ => "карты thinking_on/thinking_off не настроены — переключение недоступно"
+                    .to_string(),
             };
             Ok(SlashOutcome::Handled(format!(
                 "Ризонинг: {state} · модель {name} · {support}"
@@ -287,7 +306,9 @@ fn cmd_think(rest: &str, session: &mut AgentSession, ctx: &ToolContext) -> Resul
                 "ризонинг: auto ({name}) — параметры thinking не шлются, дефолт провайдера"
             )))
         }
-        _ => Ok(SlashOutcome::Handled("использование: /think [on|off|auto]".into())),
+        _ => Ok(SlashOutcome::Handled(
+            "использование: /think [on|off|auto]".into(),
+        )),
     }
 }
 
@@ -436,7 +457,13 @@ async fn cmd_bench(rest: &str, ctx: &ToolContext) -> Result<SlashOutcome> {
             }
             let mut out = format!("Бенчмарки ({}):\n", dir.display());
             for b in &items {
-                let _ = writeln!(out, "  {:<24} [{}] {}", b.name, b.tags.join(", "), b.description);
+                let _ = writeln!(
+                    out,
+                    "  {:<24} [{}] {}",
+                    b.name,
+                    b.tags.join(", "),
+                    b.description
+                );
             }
             Ok(SlashOutcome::Handled(out))
         }
@@ -483,7 +510,13 @@ async fn cmd_kb(rest: &str, ctx: &ToolContext) -> Result<SlashOutcome> {
     }
     let mut out = String::new();
     for h in &hits {
-        let _ = writeln!(out, "{}:{} (score {:.1})", h.path.display(), h.line, h.score);
+        let _ = writeln!(
+            out,
+            "{}:{} (score {:.1})",
+            h.path.display(),
+            h.line,
+            h.score
+        );
         let _ = writeln!(out, "{}", h.snippet);
     }
     Ok(SlashOutcome::Handled(out))
@@ -566,12 +599,18 @@ fn cmd_handoff(rest: &str, ctx: &ToolContext) -> Result<SlashOutcome> {
 /// `/control <repo>`: fitness functions из `.arch-handoff/CONSTRAINTS.yaml`.
 fn cmd_control(rest: &str, ctx: &ToolContext) -> Result<SlashOutcome> {
     if rest.is_empty() {
-        return Ok(SlashOutcome::Handled("использование: /control <repo>".into()));
+        return Ok(SlashOutcome::Handled(
+            "использование: /control <repo>".into(),
+        ));
     }
     let repo = ctx.resolve(rest);
     let report = crate::control::check(&repo, &repo.join(".arch-handoff/CONSTRAINTS.yaml"))?;
     let verdict = if report.passed { "PASS" } else { "FAIL" };
-    let mut out = format!("контроль {}: {verdict}\n{}\n", repo.display(), report.summary);
+    let mut out = format!(
+        "контроль {}: {verdict}\n{}\n",
+        repo.display(),
+        report.summary
+    );
     for i in &report.issues {
         let _ = writeln!(
             out,
@@ -613,7 +652,11 @@ fn score_text(rest: &str) -> String {
     } else {
         let _ = writeln!(out, "использование: /score <триггер>=true ...\n");
     }
-    let _ = writeln!(out, "Триггеры значимости ({}):", crate::control::SIGNIFICANCE_TRIGGERS.len());
+    let _ = writeln!(
+        out,
+        "Триггеры значимости ({}):",
+        crate::control::SIGNIFICANCE_TRIGGERS.len()
+    );
     for t in crate::control::SIGNIFICANCE_TRIGGERS {
         let _ = writeln!(out, "  {t}");
     }
@@ -722,7 +765,6 @@ fn truncate_chars(text: &str, max: usize) -> String {
     }
 }
 
-
 /// `/skills [query]`: поиск по библиотеке скиллов (без query — список).
 fn cmd_skills(rest: &str, ctx: &ToolContext) -> Result<SlashOutcome> {
     let plugins = crate::plugin::discover(&ctx.config.plugins.dirs);
@@ -732,7 +774,13 @@ fn cmd_skills(rest: &str, ctx: &ToolContext) -> Result<SlashOutcome> {
         for p in &plugins {
             for s in &p.skills {
                 let desc = s.description.lines().next().unwrap_or("");
-                let _ = writeln!(out, "  {:<28} {:<14} {}", s.name, p.manifest.name, desc.chars().take(70).collect::<String>());
+                let _ = writeln!(
+                    out,
+                    "  {:<28} {:<14} {}",
+                    s.name,
+                    p.manifest.name,
+                    desc.chars().take(70).collect::<String>()
+                );
             }
         }
         return Ok(SlashOutcome::Handled(out));
@@ -745,8 +793,23 @@ fn cmd_skills(rest: &str, ctx: &ToolContext) -> Result<SlashOutcome> {
     }
     let mut out = String::new();
     for h in &hits {
-        let _ = writeln!(out, "{} [{}] (score {:.1})", h.meta.name, h.meta.plugin, h.score);
-        let _ = writeln!(out, "  {}", h.meta.description.lines().next().unwrap_or("").chars().take(100).collect::<String>());
+        let _ = writeln!(
+            out,
+            "{} [{}] (score {:.1})",
+            h.meta.name, h.meta.plugin, h.score
+        );
+        let _ = writeln!(
+            out,
+            "  {}",
+            h.meta
+                .description
+                .lines()
+                .next()
+                .unwrap_or("")
+                .chars()
+                .take(100)
+                .collect::<String>()
+        );
         if !h.snippet.is_empty() {
             let _ = writeln!(out, "{}", h.snippet);
         }
@@ -791,7 +854,18 @@ fn cmd_plugins(rest: &str, ctx: &ToolContext) -> Result<SlashOutcome> {
             p.skills.len()
         );
         for s in &p.skills {
-            let _ = writeln!(out, "  {:<28} {}", s.name, s.description.lines().next().unwrap_or("").chars().take(70).collect::<String>());
+            let _ = writeln!(
+                out,
+                "  {:<28} {}",
+                s.name,
+                s.description
+                    .lines()
+                    .next()
+                    .unwrap_or("")
+                    .chars()
+                    .take(70)
+                    .collect::<String>()
+            );
         }
         let servers = crate::plugin::mcp_servers(std::slice::from_ref(p));
         if !servers.is_empty() {
@@ -809,12 +883,18 @@ fn cmd_plugins(rest: &str, ctx: &ToolContext) -> Result<SlashOutcome> {
             "  {:<24} скиллов: {:<3} {}",
             p.manifest.name,
             p.skills.len(),
-            p.manifest.description.lines().next().unwrap_or("").chars().take(50).collect::<String>()
+            p.manifest
+                .description
+                .lines()
+                .next()
+                .unwrap_or("")
+                .chars()
+                .take(50)
+                .collect::<String>()
         );
     }
     Ok(SlashOutcome::Handled(out))
 }
-
 
 /// `/agents`: спецификации субагентов из плагинов + статусы фоновых задач.
 fn cmd_agents(ctx: &ToolContext) -> String {
@@ -835,7 +915,13 @@ fn cmd_agents(ctx: &ToolContext) -> String {
                 "  {:<28} {:<22} {}",
                 s.name,
                 s.plugin,
-                s.description.lines().next().unwrap_or("").chars().take(60).collect::<String>()
+                s.description
+                    .lines()
+                    .next()
+                    .unwrap_or("")
+                    .chars()
+                    .take(60)
+                    .collect::<String>()
             );
             let _ = writeln!(out, "    tools: {tools}");
         }
@@ -859,7 +945,11 @@ fn cmd_agents(ctx: &ToolContext) -> String {
 
 /// `/distill <name> [plugin]`: дистиллирует транскрипт текущей сессии
 /// в SKILL.md библиотеки скиллов (моделью, активной в чате).
-async fn cmd_distill(rest: &str, session: &AgentSession, ctx: &ToolContext) -> Result<SlashOutcome> {
+async fn cmd_distill(
+    rest: &str,
+    session: &AgentSession,
+    ctx: &ToolContext,
+) -> Result<SlashOutcome> {
     let mut parts = rest.split_whitespace();
     let Some(name) = parts.next() else {
         return Ok(SlashOutcome::Handled(
@@ -905,10 +995,11 @@ async fn cmd_distill(rest: &str, session: &AgentSession, ctx: &ToolContext) -> R
             outcome.skill_name,
             outcome.skill_name
         ))),
-        Err(e) => Ok(SlashOutcome::Handled(format!("дистилляция не удалась: {e}"))),
+        Err(e) => Ok(SlashOutcome::Handled(format!(
+            "дистилляция не удалась: {e}"
+        ))),
     }
 }
-
 
 /// `/sessions`: список журналов прошлых сессий (новые первыми).
 fn cmd_sessions(ctx: &ToolContext) -> Result<SlashOutcome> {
@@ -920,7 +1011,11 @@ fn cmd_sessions(ctx: &ToolContext) -> Result<SlashOutcome> {
     }
     let mut out = String::from("Сессии (новые первыми); /resume <имя|last> — восстановить:\n");
     for (i, l) in logs.iter().take(15).enumerate() {
-        let name = l.path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        let name = l
+            .path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
         let _ = writeln!(
             out,
             "  {:<2} {:<26} {:<19} сообщений: {:<3} {}",
@@ -972,7 +1067,6 @@ fn cmd_resume(rest: &str, session: &mut AgentSession, ctx: &ToolContext) -> Resu
         info.first_user_line
     )))
 }
-
 
 /// `/worktree`: список изолированных worktree текущего репозитория.
 async fn cmd_worktree_list(ctx: &ToolContext) -> Result<SlashOutcome> {
@@ -1079,7 +1173,10 @@ mod tests {
     async fn new_starts_fresh_session_and_rotates_journal() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let (mut s, ctx) = make_fixture(tmp.path());
-        let old_log = s.log_path().map(|p| p.to_path_buf()).expect("журнал открыт");
+        let old_log = s
+            .log_path()
+            .map(|p| p.to_path_buf())
+            .expect("журнал открыт");
         // Немного истории, чтобы было что очищать.
         s.send("привет", None).await.expect("ход заглушки");
         assert!(!s.messages().is_empty());
@@ -1093,13 +1190,22 @@ mod tests {
         assert_ne!(old_log, new_log, "журнал ротирован");
         assert!(old_log.is_file(), "старый журнал остаётся для /sessions");
         let old = std::fs::read_to_string(&old_log).expect("чтение старого журнала");
-        assert!(old.contains("session_end"), "финальная отметка старого: {old}");
+        assert!(
+            old.contains("session_end"),
+            "финальная отметка старого: {old}"
+        );
         let new = std::fs::read_to_string(&new_log).expect("чтение нового журнала");
-        assert!(new.contains("\"system\""), "новый начат с системного: {new}");
+        assert!(
+            new.contains("\"system\""),
+            "новый начат с системного: {new}"
+        );
 
         // Два /new подряд (та же секунда) — разные файлы, без перемешивания.
         execute("/new", &mut s, &ctx).await.expect("ok");
-        let third = s.log_path().map(|p| p.to_path_buf()).expect("третий журнал");
+        let third = s
+            .log_path()
+            .map(|p| p.to_path_buf())
+            .expect("третий журнал");
         assert_ne!(new_log, third, "суффикс разводит коллизию одной секунды");
         assert!(third.is_file());
     }
@@ -1197,7 +1303,10 @@ mod tests {
         match execute("/think", &mut s, &ctx).await.expect("ok") {
             SlashOutcome::Handled(text) => {
                 assert!(text.contains("auto"), "статус: {text}");
-                assert!(text.contains("enabled") && text.contains("disabled"), "карты: {text}");
+                assert!(
+                    text.contains("enabled") && text.contains("disabled"),
+                    "карты: {text}"
+                );
             }
             other => panic!("ожидался Handled, получено {other:?}"),
         }
@@ -1378,7 +1487,10 @@ mod tests {
         let (mut s, ctx) = make_fixture(tmp.path());
         s.inject_context("spec.md", "текст спецификации");
 
-        match execute("/save transcript.md", &mut s, &ctx).await.expect("ok") {
+        match execute("/save transcript.md", &mut s, &ctx)
+            .await
+            .expect("ok")
+        {
             SlashOutcome::Handled(text) => assert!(text.contains("1 сообщений")),
             other => panic!("ожидался Handled, получено {other:?}"),
         }
@@ -1387,7 +1499,10 @@ mod tests {
         assert!(saved.contains("текст спецификации"));
 
         let before = s.messages().len();
-        match execute("/load transcript.md", &mut s, &ctx).await.expect("ok") {
+        match execute("/load transcript.md", &mut s, &ctx)
+            .await
+            .expect("ok")
+        {
             SlashOutcome::Handled(text) => assert!(text.contains("включено:")),
             other => panic!("ожидался Handled, получено {other:?}"),
         }

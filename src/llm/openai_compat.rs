@@ -21,7 +21,9 @@ use tokio::sync::mpsc;
 
 use crate::config::ModelConfig;
 use crate::error::{HarnessError, Result};
-use crate::llm::{ChatMessage, ChatRequest, LlmEvent, LlmProvider, Role, ToolCall, ToolSpec, Usage};
+use crate::llm::{
+    ChatMessage, ChatRequest, LlmEvent, LlmProvider, Role, ToolCall, ToolSpec, Usage,
+};
 
 /// Таймаут установки TCP/TLS-соединения, секунды.
 const CONNECT_TIMEOUT_SECS: u64 = 30;
@@ -110,7 +112,9 @@ impl OpenAiCompat {
             )));
         }
         if cfg.model.trim().is_empty() {
-            return Err(HarnessError::Llm(format!("провайдер '{name}': пустой model")));
+            return Err(HarnessError::Llm(format!(
+                "провайдер '{name}': пустой model"
+            )));
         }
         let api_key_env = cfg.api_key_env.clone();
         let api_key_file = cfg.api_key_file.clone();
@@ -176,7 +180,11 @@ impl OpenAiCompat {
     /// Значения из запроса переопределяют дефолты конфига. При заданном
     /// переключателе ризонинга (`req.thinking`) в тело сливается карта
     /// `thinking_on`/`thinking_off` из конфига модели.
-    fn build_body<'a>(&'a self, req: &'a ChatRequest, mode: RequestMode) -> ChatCompletionsBody<'a> {
+    fn build_body<'a>(
+        &'a self,
+        req: &'a ChatRequest,
+        mode: RequestMode,
+    ) -> ChatCompletionsBody<'a> {
         let extra = match req.thinking {
             Some(true) => self.thinking_on.clone(),
             Some(false) => self.thinking_off.clone(),
@@ -190,7 +198,9 @@ impl OpenAiCompat {
             max_tokens: req.max_tokens.or(self.default_max_tokens),
             stream: matches!(mode, RequestMode::Stream),
             stream_options: match mode {
-                RequestMode::Stream => Some(StreamOptions { include_usage: true }),
+                RequestMode::Stream => Some(StreamOptions {
+                    include_usage: true,
+                }),
                 RequestMode::Complete => None,
             },
             extra,
@@ -246,7 +256,11 @@ impl OpenAiCompat {
         }
     }
 
-    async fn post_once(&self, url: &str, body: &ChatCompletionsBody<'_>) -> Result<reqwest::Response> {
+    async fn post_once(
+        &self,
+        url: &str,
+        body: &ChatCompletionsBody<'_>,
+    ) -> Result<reqwest::Response> {
         // send() резолвится на получении заголовков: бюджет тишины покрывает
         // фазу «запрос ушёл, сервер думает». Дальше страж — read_timeout.
         let send = self
@@ -765,7 +779,8 @@ impl StreamAcc {
             }
             for call in &choice.delta.tool_calls {
                 if self.tool_calls.len() <= call.index {
-                    self.tool_calls.resize_with(call.index + 1, ToolCallAcc::default);
+                    self.tool_calls
+                        .resize_with(call.index + 1, ToolCallAcc::default);
                 }
                 // Слот гарантированно существует после resize_with выше.
                 let slot = &mut self.tool_calls[call.index];
@@ -980,7 +995,10 @@ fn error_text(err: &HarnessError) -> String {
 fn send_phase_error(provider: &str, err: &HarnessError) -> HarnessError {
     let chain = error_text(err);
     let lower = chain.to_lowercase();
-    let reason = if lower.contains("timed out") || lower.contains("timeout") || lower.contains("таймаут") {
+    let reason = if lower.contains("timed out")
+        || lower.contains("timeout")
+        || lower.contains("таймаут")
+    {
         "таймаут соединения (сервер недоступен или сеть/DPI режет запрос)"
     } else if lower.contains("connection refused") {
         "соединение отклонено (сервер down или порт закрыт)"
@@ -1116,8 +1134,8 @@ mod tests {
     fn stream_body_skips_none_fields_and_adds_stream_options() {
         let provider = test_provider();
         let req = ChatRequest::chat(vec![ChatMessage::user("hi")]);
-        let body = serde_json::to_value(provider.build_body(&req, RequestMode::Stream))
-            .expect("to_value");
+        let body =
+            serde_json::to_value(provider.build_body(&req, RequestMode::Stream)).expect("to_value");
         let want = serde_json::json!({
             "model": "test-model",
             "messages": [{"role": "user", "content": "hi"}],
@@ -1271,8 +1289,14 @@ data: [DONE]
         let mut acc = StreamAcc::default();
         // Граница порции режет строку (и, возможно, многобайтовый UTF-8) — декодер обязан склеить.
         let mid = raw.len() / 2;
-        let mut events = decoder.feed(&raw.as_bytes()[..mid], &mut acc).expect("feed 1");
-        events.extend(decoder.feed(&raw.as_bytes()[mid..], &mut acc).expect("feed 2"));
+        let mut events = decoder
+            .feed(&raw.as_bytes()[..mid], &mut acc)
+            .expect("feed 1");
+        events.extend(
+            decoder
+                .feed(&raw.as_bytes()[mid..], &mut acc)
+                .expect("feed 2"),
+        );
         assert!(
             events.iter().any(|e| matches!(e, LlmEvent::Done(_))),
             "events: {events:?}"
@@ -1335,7 +1359,11 @@ data: [DONE]
             other => panic!("ожидался Llm, получено: {other:?}"),
         };
         assert!(msg.contains("401"), "нет кода статуса: {msg}");
-        assert!(msg.len() < 400, "тело не обрезано до 300 символов: {}", msg.len());
+        assert!(
+            msg.len() < 400,
+            "тело не обрезано до 300 символов: {}",
+            msg.len()
+        );
     }
 
     #[test]
@@ -1393,7 +1421,9 @@ data: [DONE]
 
     /// Одноразовый HTTP-сервер на loopback: читает заголовки запроса, отдаёт готовый ответ.
     async fn serve_once(response: String) -> (u16, tokio::task::JoinHandle<()>) {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
         let port = listener.local_addr().expect("local_addr").port();
         let handle = tokio::spawn(async move {
             let (mut socket, _) = listener.accept().await.expect("accept");
@@ -1441,7 +1471,10 @@ data: [DONE]
             other => panic!("ожидался Llm, получено: {other:?}"),
         };
         assert!(msg.contains("401"), "нет кода статуса: {msg}");
-        assert!(msg.contains("invalid authentication"), "нет выдержки тела: {msg}");
+        assert!(
+            msg.contains("invalid authentication"),
+            "нет выдержки тела: {msg}"
+        );
     }
 
     #[tokio::test]
@@ -1472,13 +1505,17 @@ data: [DONE]\n\n";
         assert_eq!(events.len(), 3, "events: {events:?}");
         assert!(matches!(&events[0], LlmEvent::Delta(t) if t == "При"));
         assert!(matches!(&events[1], LlmEvent::Delta(t) if t == "вет"));
-        assert!(matches!(&events[2], LlmEvent::Done(u) if *u == Usage { prompt_tokens: 7, completion_tokens: 3 }));
+        assert!(
+            matches!(&events[2], LlmEvent::Done(u) if *u == Usage { prompt_tokens: 7, completion_tokens: 3 })
+        );
     }
 
     /// Сервер, обслуживающий несколько соединений подряд своими ответами
     /// (для тестов ретраев: первый ответ битый, второй — полноценный).
     async fn serve_sequence(responses: Vec<String>) -> (u16, tokio::task::JoinHandle<()>) {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
         let port = listener.local_addr().expect("local_addr").port();
         let handle = tokio::spawn(async move {
             for response in responses {
@@ -1515,11 +1552,8 @@ data: [DONE]\n\n";
         // Первое соединение: заголовки обещают тело, но соединение закрывается
         // ни с чем — классический «error decoding response body».
         let full = "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ок\"}}]}\n\ndata: [DONE]\n\n";
-        let (port, server) = serve_sequence(vec![
-            sse_response("", 4096),
-            sse_response(full, full.len()),
-        ])
-        .await;
+        let (port, server) =
+            serve_sequence(vec![sse_response("", 4096), sse_response(full, full.len())]).await;
         let provider = loopback_provider(port);
         let (tx, _rx) = mpsc::channel(16);
         let msg = provider
@@ -1587,8 +1621,14 @@ data: [DONE]\n\n";
         server.await.expect("join");
         let msg = err.to_string();
         assert!(msg.contains("оборвался"), "человеческая причина: {msg}");
-        assert!(msg.contains("НЕПОЛНЫЙ"), "предупреждение о неполноте: {msg}");
-        assert!(msg.contains("ретраи исчерпаны"), "исчерпание ретраев: {msg}");
+        assert!(
+            msg.contains("НЕПОЛНЫЙ"),
+            "предупреждение о неполноте: {msg}"
+        );
+        assert!(
+            msg.contains("ретраи исчерпаны"),
+            "исчерпание ретраев: {msg}"
+        );
         assert!(msg.contains("Повторите ход"), "подсказка действия: {msg}");
         // 4 повтора → 4 заметки (после попыток 1–4).
         let mut notes = 0;

@@ -219,9 +219,7 @@ impl AgentSession {
                             Ok(_) => {
                                 let request = self.build_request();
                                 match (&events, self.config.agent.stream) {
-                                    (Some(tx), true) => {
-                                        self.stream_request(request, tx).await?
-                                    }
+                                    (Some(tx), true) => self.stream_request(request, tx).await?,
                                     _ => self.provider.complete(request).await?,
                                 }
                             }
@@ -298,8 +296,13 @@ impl AgentSession {
                 }
                 // Хук PreToolUse (exit 2) отменяет вызов — до детекторов:
                 // заблокированный вызов не должен копить doom-окно.
-                let hook_ctx = serde_json::json!({ "tool": call.name, "args": call.arguments }).to_string();
-                let pre = self.fire_hook(crate::hooks::HookEvent::PreToolUse, Some(&call.name), &hook_ctx);
+                let hook_ctx =
+                    serde_json::json!({ "tool": call.name, "args": call.arguments }).to_string();
+                let pre = self.fire_hook(
+                    crate::hooks::HookEvent::PreToolUse,
+                    Some(&call.name),
+                    &hook_ctx,
+                );
                 // Битые аргументы (усечённый ответ модели) отклоняем раньше
                 // хуков и детекторов: исполнять обрезок нельзя.
                 let hook_verdict = broken_arguments_verdict(&reply, call).or_else(|| {
@@ -342,10 +345,7 @@ impl AgentSession {
                         .await
                         {
                             Ok(out) => out,
-                            Err(_) => ToolOutput::err(format!(
-                                "{}: таймаут {}с",
-                                call.name, wait
-                            )),
+                            Err(_) => ToolOutput::err(format!("{}: таймаут {}с", call.name, wait)),
                         }
                     }
                 };
@@ -361,7 +361,8 @@ impl AgentSession {
                 // Аудит интерактивных выборов: метрика «approval theater»
                 // (обзоры _24_августа: >90–95% авто-согласий = театр) в arch metrics.
                 if call.name == crate::tools::ask::PROPOSE_OPTIONS {
-                    if let Some((choice, declined)) = crate::tools::ask::classify_answer(&out.content)
+                    if let Some((choice, declined)) =
+                        crate::tools::ask::classify_answer(&out.content)
                     {
                         let recommended = call
                             .arguments
@@ -397,8 +398,11 @@ impl AgentSession {
                     "output_head": redacted.chars().take(500).collect::<String>(),
                 })
                 .to_string();
-                let post =
-                    self.fire_hook(crate::hooks::HookEvent::PostToolUse, Some(&call.name), &post_ctx);
+                let post = self.fire_hook(
+                    crate::hooks::HookEvent::PostToolUse,
+                    Some(&call.name),
+                    &post_ctx,
+                );
                 let hook_extra: String = post
                     .iter()
                     .map(|o| o.stdout.trim())
@@ -406,7 +410,11 @@ impl AgentSession {
                     .collect::<Vec<_>>()
                     .join("\n");
                 if !hook_extra.is_empty() {
-                    let _ = write!(redacted, "\n[hook] {}", hook_extra.chars().take(1000).collect::<String>());
+                    let _ = write!(
+                        redacted,
+                        "\n[hook] {}",
+                        hook_extra.chars().take(1000).collect::<String>()
+                    );
                 }
                 let content = truncate_chars(&redacted, TOOL_RESULT_MAX_CHARS);
                 if let Some(tx) = &events {
@@ -571,7 +579,10 @@ impl AgentSession {
 
     /// Эмит служебной заметки: событие в канал (если есть) + запись в журнал.
     fn emit_note(&mut self, events: &Option<mpsc::Sender<AgentEvent>>, text: String) {
-        self.log_event("event", serde_json::json!({ "event": "note", "text": text }));
+        self.log_event(
+            "event",
+            serde_json::json!({ "event": "note", "text": text }),
+        );
         if let Some(tx) = events {
             let _ = tx.try_send(AgentEvent::Note(text));
         }
@@ -665,7 +676,8 @@ impl AgentSession {
                 }
                 "assistant" if !content.is_empty() => {
                     // tool_calls прошлой сессии намеренно не переносим.
-                    self.history.push(ChatMessage::assistant(content, Vec::new()));
+                    self.history
+                        .push(ChatMessage::assistant(content, Vec::new()));
                     restored += 1;
                 }
                 _ => {}
@@ -847,8 +859,7 @@ impl AgentSession {
             match self.l3_summarize().await {
                 Ok(from) if from > 0 => {
                     l3_folded = from;
-                    let after: usize =
-                        self.history.iter().map(ChatMessage::rough_tokens).sum();
+                    let after: usize = self.history.iter().map(ChatMessage::rough_tokens).sum();
                     self.emit_note(
                         events,
                         format!("⚠ L3-компактификация: {from} сообщений → саммари (~{after} ток.)"),
@@ -959,7 +970,9 @@ impl AgentSession {
 impl Drop for AgentSession {
     fn drop(&mut self) {
         if !self.hooks.is_empty() {
-            let outcomes = self.hooks.fire(crate::hooks::HookEvent::SessionEnd, None, "{}");
+            let outcomes = self
+                .hooks
+                .fire(crate::hooks::HookEvent::SessionEnd, None, "{}");
             if !outcomes.is_empty() {
                 self.log_event(
                     "event",
@@ -1302,10 +1315,7 @@ mod tests {
             vec![Role::User, Role::Assistant, Role::Tool, Role::Assistant]
         );
         assert_eq!(s.messages()[1].tool_calls.len(), 1);
-        assert_eq!(
-            s.messages()[2].tool_call_id.as_deref(),
-            Some("call-1")
-        );
+        assert_eq!(s.messages()[2].tool_call_id.as_deref(), Some("call-1"));
         assert!(s.messages()[2].content.contains("echo: привет"));
         assert_eq!(s.model_name(), "fake-1");
     }
@@ -1334,7 +1344,9 @@ mod tests {
                         id: "call-broken".into(),
                         name: "counting".into(),
                         // Усечённый на середине JSON — как от потолка max_tokens.
-                        arguments: Value::String("{\"command\":\"cat > /tmp/x.py << 'EOF'...".into()),
+                        arguments: Value::String(
+                            "{\"command\":\"cat > /tmp/x.py << 'EOF'...".into(),
+                        ),
                     }],
                 );
                 msg.finish_reason = Some("length".into());
@@ -1377,7 +1389,13 @@ mod tests {
             calls: AtomicUsize::new(0),
         });
         let probe = tool.clone();
-        let mut s = make_session(tmp.path(), Arc::new(BrokenArgsLlm { calls: AtomicUsize::new(0) }), |_| {});
+        let mut s = make_session(
+            tmp.path(),
+            Arc::new(BrokenArgsLlm {
+                calls: AtomicUsize::new(0),
+            }),
+            |_| {},
+        );
         // Подменяем реестр на считающий инструмент.
         s.tools = ToolRegistry::new().with(tool);
         let reply = s.send("сгенерируй отчёт", None).await.expect("send");
@@ -1389,9 +1407,21 @@ mod tests {
         );
         let tool_msg = &s.messages()[2];
         assert_eq!(tool_msg.role, Role::Tool);
-        assert!(tool_msg.content.contains("отклонён без исполнения"), "{}", tool_msg.content);
-        assert!(tool_msg.content.contains("max_tokens"), "причина: {}", tool_msg.content);
-        assert!(tool_msg.content.contains("append"), "стратегия: {}", tool_msg.content);
+        assert!(
+            tool_msg.content.contains("отклонён без исполнения"),
+            "{}",
+            tool_msg.content
+        );
+        assert!(
+            tool_msg.content.contains("max_tokens"),
+            "причина: {}",
+            tool_msg.content
+        );
+        assert!(
+            tool_msg.content.contains("append"),
+            "стратегия: {}",
+            tool_msg.content
+        );
     }
 
     #[tokio::test]
@@ -1418,7 +1448,8 @@ mod tests {
             .collect();
         assert_eq!(kinds, ["system", "user", "assistant", "tool", "assistant"]);
 
-        let first: Value = serde_json::from_str(text.lines().next().expect("строка")).expect("json");
+        let first: Value =
+            serde_json::from_str(text.lines().next().expect("строка")).expect("json");
         assert_eq!(first["content"], "системный промпт");
     }
 
@@ -1455,7 +1486,10 @@ mod tests {
             matches!(key[2], AgentEvent::Delta(t) if t == "финальный ответ"),
             "третьим — Delta"
         );
-        assert!(matches!(key[3], AgentEvent::TurnDone), "последним — TurnDone");
+        assert!(
+            matches!(key[3], AgentEvent::TurnDone),
+            "последним — TurnDone"
+        );
     }
 
     #[tokio::test]
@@ -1476,7 +1510,9 @@ mod tests {
             "системный промпт".into(),
         );
         let (tx, mut rx) = mpsc::channel(16);
-        s.send("рендер большой схемы", Some(tx)).await.expect("send");
+        s.send("рендер большой схемы", Some(tx))
+            .await
+            .expect("send");
 
         let mut full = None;
         while let Ok(ev) = rx.try_recv() {
@@ -1562,7 +1598,10 @@ mod tests {
         let mut s = make_session(tmp.path(), Arc::new(LoopThenAnswerLlm), |cfg| {
             cfg.agent.max_tool_turns = 3;
         });
-        let reply = s.send("зациклись", None).await.expect("ход завершается ответом");
+        let reply = s
+            .send("зациклись", None)
+            .await
+            .expect("ход завершается ответом");
         assert_eq!(reply, "финал по собранному");
         // user + 3 витка по (assistant + tool) + финальный assistant.
         assert_eq!(s.messages().len(), 8);
@@ -1698,7 +1737,10 @@ mod tests {
             "sum-1"
         }
         async fn complete(&self, _req: ChatRequest) -> Result<ChatMessage> {
-            Ok(ChatMessage::assistant("САММАРИ: цель, решения, шаги", Vec::new()))
+            Ok(ChatMessage::assistant(
+                "САММАРИ: цель, решения, шаги",
+                Vec::new(),
+            ))
         }
     }
 
@@ -1745,7 +1787,8 @@ mod tests {
         // ~1000 токенов history (грубо): 5 tool-сообщений по ~800 символов.
         s.history.push(ChatMessage::user("старт"));
         for _ in 0..5 {
-            s.history.push(ChatMessage::tool_result("c", "x".repeat(800)));
+            s.history
+                .push(ChatMessage::tool_result("c", "x".repeat(800)));
         }
         s.history.push(ChatMessage::user("хвост"));
         s.compact_history(&None).await;
@@ -1810,8 +1853,10 @@ mod tests {
         });
         // История, которую L3 может свернуть (граница — новый user ниже).
         s.history.push(ChatMessage::user("старая задача"));
-        s.history
-            .push(ChatMessage::assistant("длинный ответ".repeat(100), Vec::new()));
+        s.history.push(ChatMessage::assistant(
+            "длинный ответ".repeat(100),
+            Vec::new(),
+        ));
 
         let reply = s.send("новая задача", None).await.expect("resubmit");
         assert_eq!(reply, "ответ после повтора");
@@ -1843,7 +1888,10 @@ mod tests {
             }
         }
         let mut s = make_session(tmp.path(), Arc::new(AlwaysOverflow), |_| {});
-        let err = s.send("первое сообщение", None).await.expect_err("413 наверх");
+        let err = s
+            .send("первое сообщение", None)
+            .await
+            .expect_err("413 наверх");
         assert!(err.to_string().contains("413"));
     }
 
@@ -1951,7 +1999,11 @@ mod tests {
         let roles: Vec<_> = s.messages().iter().map(|m| m.role).collect();
         assert_eq!(
             roles,
-            vec![crate::llm::Role::User, crate::llm::Role::Assistant, crate::llm::Role::User]
+            vec![
+                crate::llm::Role::User,
+                crate::llm::Role::Assistant,
+                crate::llm::Role::User
+            ]
         );
         // tool_calls не переносятся.
         assert!(s.messages()[1].tool_calls.is_empty());
@@ -1967,4 +2019,3 @@ mod tests {
         assert!(s.restore_from_log(&bad).is_err());
     }
 }
-

@@ -60,10 +60,9 @@ pub struct SearchResult {
 pub async fn search(query: &str, cfg: &WebConfig) -> Result<Vec<SearchResult>> {
     let client = build_client(cfg)?;
     let resp = http_get(&client, &cfg.search_base, &[("q", query)]).await?;
-    let html = resp
-        .text()
-        .await
-        .map_err(|e| HarnessError::Web(format!("{}: чтение ответа поиска: {e}", cfg.search_base)))?;
+    let html = resp.text().await.map_err(|e| {
+        HarnessError::Web(format!("{}: чтение ответа поиска: {e}", cfg.search_base))
+    })?;
     parse_search_results(&html, SEARCH_LIMIT)
 }
 
@@ -396,7 +395,14 @@ impl Tool for WebSearchTool {
         let mut buf = String::new();
         for (i, r) in results.iter().enumerate() {
             // записи в String инфаллибильны
-            let _ = writeln!(buf, "{}. {}\n   {}\n   {}", i + 1, r.title, r.url, r.snippet);
+            let _ = writeln!(
+                buf,
+                "{}. {}\n   {}\n   {}",
+                i + 1,
+                r.title,
+                r.url,
+                r.snippet
+            );
         }
         Ok(ToolOutput::ok(buf))
     }
@@ -545,7 +551,14 @@ mod tests {
         assert!(text.contains("Сервис payments обрабатывает транзакции."));
         assert!(text.contains("Идемпотентность"));
         assert!(text.contains("POST /payments"));
-        for noise in ["Меню сайта", "Навигация", "Подвал", "Реклама", "track()", "color:red"] {
+        for noise in [
+            "Меню сайта",
+            "Навигация",
+            "Подвал",
+            "Реклама",
+            "track()",
+            "color:red",
+        ] {
             assert!(!text.contains(noise), "шум не вырезан: {noise}");
         }
     }
@@ -595,7 +608,9 @@ mod tests {
     #[ignore = "требует сети: html.duckduckgo.com"]
     async fn live_search_returns_results() {
         let cfg = WebConfig::default();
-        let results = search("event sourcing pattern", &cfg).await.expect("search");
+        let results = search("event sourcing pattern", &cfg)
+            .await
+            .expect("search");
         assert!(!results.is_empty());
     }
 

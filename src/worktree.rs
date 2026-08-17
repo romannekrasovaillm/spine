@@ -101,7 +101,12 @@ fn worktrees_root(cfg: &crate::config::Config, repo: &Path) -> PathBuf {
 ///
 /// # Errors
 /// Невалидное имя, не git-репозиторий, ветка/каталог уже существуют.
-pub async fn create(cfg: &crate::config::Config, repo: &Path, name: &str, base: Option<&str>) -> Result<PathBuf> {
+pub async fn create(
+    cfg: &crate::config::Config,
+    repo: &Path,
+    name: &str,
+    base: Option<&str>,
+) -> Result<PathBuf> {
     validate_name(name)?;
     git(repo, &["rev-parse", "--git-dir"]).await.map_err(|_| {
         HarnessError::Tool(format!("worktree: {} не git-репозиторий", repo.display()))
@@ -158,11 +163,14 @@ pub async fn list(repo: &Path) -> Result<Vec<WorktreeInfo>> {
             .await
             .map(|s| !s.trim().is_empty())
             .unwrap_or(false);
-        let ahead = git(&path, &["rev-list", "--count", &format!("{head}..{branch}")])
-            .await
-            .ok()
-            .and_then(|s| s.trim().parse().ok())
-            .unwrap_or(0);
+        let ahead = git(
+            &path,
+            &["rev-list", "--count", &format!("{head}..{branch}")],
+        )
+        .await
+        .ok()
+        .and_then(|s| s.trim().parse().ok())
+        .unwrap_or(0);
         out_infos.push(WorktreeInfo {
             name,
             path,
@@ -203,8 +211,17 @@ pub async fn accept(cfg: &crate::config::Config, repo: &Path, name: &str) -> Res
             )));
         }
     }
-    git(repo, &["merge", "--no-ff", "-m", &format!("arch: accept worktree {name}"), &branch])
-        .await?;
+    git(
+        repo,
+        &[
+            "merge",
+            "--no-ff",
+            "-m",
+            &format!("arch: accept worktree {name}"),
+            &branch,
+        ],
+    )
+    .await?;
     if path.exists() {
         git(repo, &["worktree", "remove", &path.to_string_lossy()]).await?;
     }
@@ -248,8 +265,16 @@ pub fn render_list(infos: &[WorktreeInfo]) -> String {
             i.name,
             i.path.display(),
             i.ahead,
-            if i.dirty { "ГРЯЗНЫЙ" } else { "чистый" },
-            if i.dirty { " (accept/drop заблокированы)" } else { "" }
+            if i.dirty {
+                "ГРЯЗНЫЙ"
+            } else {
+                "чистый"
+            },
+            if i.dirty {
+                " (accept/drop заблокированы)"
+            } else {
+                ""
+            }
         ));
     }
     out
@@ -289,15 +314,27 @@ impl crate::tool::Tool for WorktreeNewTool {
         }
     }
 
-    async fn call(&self, args: Value, ctx: &crate::tool::ToolContext) -> Result<crate::tool::ToolOutput> {
-        let name = args.get("name").and_then(Value::as_str).unwrap_or("").trim();
+    async fn call(
+        &self,
+        args: Value,
+        ctx: &crate::tool::ToolContext,
+    ) -> Result<crate::tool::ToolOutput> {
+        let name = args
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim();
         let repo = args
             .get("repo")
             .and_then(Value::as_str)
             .map(str::trim)
             .filter(|s| !s.is_empty())
             .map_or_else(|| ctx.cwd.clone(), |r| ctx.resolve(r));
-        let base = args.get("base").and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty());
+        let base = args
+            .get("base")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
         match create(&ctx.config, &repo, name, base).await {
             Ok(path) => Ok(crate::tool::ToolOutput::ok(format!(
                 "worktree создан: {} (ветка arch/{name}). Все правки делай ТОЛЬКО там \
@@ -358,7 +395,14 @@ mod tests {
         for ok in ["pilot", "saga-2", "a"] {
             assert!(validate_name(ok).is_ok(), "{ok}");
         }
-        for bad in ["", "Caps", "с пробелом", "слэш/внутри", "точка.com", &"x".repeat(49)] {
+        for bad in [
+            "",
+            "Caps",
+            "с пробелом",
+            "слэш/внутри",
+            "точка.com",
+            &"x".repeat(49),
+        ] {
             assert!(validate_name(bad).is_err(), "{bad}");
         }
         assert!(render_list(&[]).contains("нет"), "пусто — подсказка");
@@ -370,7 +414,10 @@ mod tests {
             ahead: 3,
         }];
         let text = render_list(&infos);
-        assert!(text.contains("pilot") && text.contains("ГРЯЗНЫЙ") && text.contains("впереди: 3"), "{text}");
+        assert!(
+            text.contains("pilot") && text.contains("ГРЯЗНЫЙ") && text.contains("впереди: 3"),
+            "{text}"
+        );
     }
 
     #[tokio::test]
@@ -397,7 +444,10 @@ mod tests {
         let msg = accept(&cfg, &repo, "pilot-x").await.expect("accept");
         assert!(msg.contains("принят"), "{msg}");
         assert!(repo.join("feature.md").is_file(), "merge перенёс файл");
-        assert!(list(&repo).await.expect("list2").is_empty(), "ветка и каталог убраны");
+        assert!(
+            list(&repo).await.expect("list2").is_empty(),
+            "ветка и каталог убраны"
+        );
     }
 
     #[tokio::test]

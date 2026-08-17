@@ -84,8 +84,11 @@ mod tests {
     fn load_reads_md_with_description() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let dir = tmp.path();
-        std::fs::write(dir.join("architect.md"), "# Архитектор\n\nТело {{subject}}.\n")
-            .expect("write");
+        std::fs::write(
+            dir.join("architect.md"),
+            "# Архитектор\n\nТело {{subject}}.\n",
+        )
+        .expect("write");
         std::fs::write(dir.join("plain.md"), "Без заголовка\nпросто текст").expect("write");
         std::fs::write(dir.join("ignore.txt"), "# Не md").expect("write");
         std::fs::create_dir(dir.join("subdir.md")).expect("mkdir");

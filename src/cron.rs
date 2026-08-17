@@ -200,7 +200,9 @@ async fn agent_loop(
         }
         messages.push(ChatMessage::assistant(msg.content, msg.tool_calls.clone()));
         for call in &msg.tool_calls {
-            let out = tools.dispatch(&call.name, call.arguments.clone(), ctx).await;
+            let out = tools
+                .dispatch(&call.name, call.arguments.clone(), ctx)
+                .await;
             let content = if out.is_error {
                 format!("ОШИБКА: {}", out.content)
             } else {
@@ -443,7 +445,10 @@ out = "out/quarter"
 
     #[test]
     fn sanitize_file_name_replaces_unsafe_chars() {
-        assert_eq!(sanitize_file_name("обзор компонента/v2"), "обзор-компонента-v2");
+        assert_eq!(
+            sanitize_file_name("обзор компонента/v2"),
+            "обзор-компонента-v2"
+        );
         assert_eq!(sanitize_file_name("a-b_c"), "a-b_c");
     }
 
@@ -505,11 +510,25 @@ out = "out/quarter"
                 },
             ],
         };
-        let reports = run_due(&tab, dt(10, 0), dt(10, 16), &FakeLlm, &ToolRegistry::new(), dir.path())
-            .await
-            .unwrap();
+        let reports = run_due(
+            &tab,
+            dt(10, 0),
+            dt(10, 16),
+            &FakeLlm,
+            &ToolRegistry::new(),
+            dir.path(),
+        )
+        .await
+        .unwrap();
         assert_eq!(reports.len(), 1);
         assert!(reports[0].is_file());
-        assert!(reports[0].file_name().unwrap().to_str().unwrap().starts_with("due-"));
+        assert!(
+            reports[0]
+                .file_name()
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .starts_with("due-")
+        );
     }
 }

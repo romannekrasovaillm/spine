@@ -102,7 +102,10 @@ fn check_default_model(cfg: &Config) -> Check {
         name: "default_model",
         verdict: if ok { Verdict::Ok } else { Verdict::Fail },
         text: if ok {
-            format!("«{}» → {}", cfg.default_model, cfg.models[&cfg.default_model].model)
+            format!(
+                "«{}» → {}",
+                cfg.default_model, cfg.models[&cfg.default_model].model
+            )
         } else {
             format!(
                 "«{}» не найдена в [models] (есть: {})",
@@ -127,7 +130,9 @@ fn check_api_keys(cfg: &Config) -> Check {
                     .unwrap_or_else(|| PathBuf::from(path)),
                 None => PathBuf::from(path),
             };
-            std::fs::metadata(&expanded).map(|m| m.len() > 0).unwrap_or(false)
+            std::fs::metadata(&expanded)
+                .map(|m| m.len() > 0)
+                .unwrap_or(false)
         })
     };
     let mut missing = Vec::new();
@@ -141,16 +146,25 @@ fn check_api_keys(cfg: &Config) -> Check {
         .get(&cfg.default_model)
         .is_some_and(|mc| !key_available(mc));
     let (verdict, text) = if missing.is_empty() {
-        (Verdict::Ok, format!("все {} ключей на месте", cfg.models.len()))
+        (
+            Verdict::Ok,
+            format!("все {} ключей на месте", cfg.models.len()),
+        )
     } else if default_missing {
         (
             Verdict::Fail,
-            format!("нет ключа модели по умолчанию; отсутствуют: {}", missing.join(", ")),
+            format!(
+                "нет ключа модели по умолчанию; отсутствуют: {}",
+                missing.join(", ")
+            ),
         )
     } else {
         (
             Verdict::Warn,
-            format!("нет части ключей (нужны только при выборе модели): {}", missing.join(", ")),
+            format!(
+                "нет части ключей (нужны только при выборе модели): {}",
+                missing.join(", ")
+            ),
         )
     };
     Check {
@@ -169,7 +183,11 @@ fn check_sessions_dir(cfg: &Config) -> Check {
         .and_then(|()| std::fs::remove_file(&probe));
     Check {
         name: "sessions",
-        verdict: if result.is_ok() { Verdict::Ok } else { Verdict::Fail },
+        verdict: if result.is_ok() {
+            Verdict::Ok
+        } else {
+            Verdict::Fail
+        },
         text: match result {
             Ok(()) => format!("{} — запись возможна", dir.display()),
             Err(e) => format!("{} — нет записи: {e}", dir.display()),
@@ -197,7 +215,13 @@ fn check_plugins(cfg: &Config) -> Check {
             }
         }
     }
-    let verdict = if plugins == 0 { Verdict::Fail } else if missing.is_empty() { Verdict::Ok } else { Verdict::Warn };
+    let verdict = if plugins == 0 {
+        Verdict::Fail
+    } else if missing.is_empty() {
+        Verdict::Ok
+    } else {
+        Verdict::Warn
+    };
     let mut text = format!("{plugins} плагинов, {skills} скиллов");
     if !missing.is_empty() {
         let _ = write!(text, "; нет каталогов: {}", missing.join(", "));
@@ -259,7 +283,11 @@ fn check_harnesses(cfg: &Config) -> Check {
             missing.push(format!("{name} ({})", hc.binary));
         }
     }
-    let verdict = if missing.is_empty() { Verdict::Ok } else { Verdict::Warn };
+    let verdict = if missing.is_empty() {
+        Verdict::Ok
+    } else {
+        Verdict::Warn
+    };
     Check {
         name: "harnesses",
         verdict,
@@ -267,7 +295,11 @@ fn check_harnesses(cfg: &Config) -> Check {
             "в PATH: {} ({}); отсутствуют: {}",
             found.len(),
             found.join(", "),
-            if missing.is_empty() { "—".into() } else { missing.join(", ") }
+            if missing.is_empty() {
+                "—".into()
+            } else {
+                missing.join(", ")
+            }
         ),
     }
 }
@@ -305,7 +337,11 @@ fn check_mcp(cfg: &Config) -> Check {
             }
         }
     }
-    let verdict = if missing_cmds.is_empty() { Verdict::Ok } else { Verdict::Warn };
+    let verdict = if missing_cmds.is_empty() {
+        Verdict::Ok
+    } else {
+        Verdict::Warn
+    };
     let mut text = format!("{servers} серверов в {}", file.display());
     if !missing_cmds.is_empty() {
         let _ = write!(text, "; нет бинарей: {}", missing_cmds.join(", "));
@@ -348,7 +384,11 @@ fn check_git() -> Check {
     Check {
         name: "git",
         verdict: if ok { Verdict::Ok } else { Verdict::Warn },
-        text: if ok { "в PATH".into() } else { "не найден в PATH".into() },
+        text: if ok {
+            "в PATH".into()
+        } else {
+            "не найден в PATH".into()
+        },
     }
 }
 
@@ -397,7 +437,11 @@ mod tests {
         assert!(by("plugins").text.contains("1 скиллов"));
         assert_eq!(by("knowledge").verdict, Verdict::Ok);
         assert_eq!(by("cron").verdict, Verdict::Ok);
-        assert_eq!(by("mcp").verdict, Verdict::Warn, "mcp.json не создан — warn");
+        assert_eq!(
+            by("mcp").verdict,
+            Verdict::Warn,
+            "mcp.json не создан — warn"
+        );
         assert!(render(&checks).contains("arch doctor"));
     }
 

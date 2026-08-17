@@ -25,7 +25,7 @@ use std::time::SystemTime;
 
 use async_trait::async_trait;
 use regex::Regex;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use walkdir::WalkDir;
 
 use crate::error::{HarnessError, Result};
@@ -349,7 +349,11 @@ impl Tool for WriteFileTool {
         }
         Ok(ToolOutput::ok(format!(
             "{} {} байт в {}",
-            if append { "дописано" } else { "записано" },
+            if append {
+                "дописано"
+            } else {
+                "записано"
+            },
             content.len(),
             path.display()
         )))
@@ -421,16 +425,16 @@ impl Tool for EditFileTool {
         // Каскад матчеров: точное совпадение → нечёткие уровни (дрейф
         // пробелов/отступов у модели — обычное дело); контракт уникальности
         // прежний: без replace_all вхождение обязано быть единственным.
-        let (replaced, level, done) = match crate::matchers::cascade_replace(&text, old, new, replace_all)
-        {
-            Ok(ok) => ok,
-            Err(hint) => {
-                return Ok(ToolOutput::err(format!(
-                    "edit_file: `old_string` в {}: {hint}",
-                    path.display()
-                )));
-            }
-        };
+        let (replaced, level, done) =
+            match crate::matchers::cascade_replace(&text, old, new, replace_all) {
+                Ok(ok) => ok,
+                Err(hint) => {
+                    return Ok(ToolOutput::err(format!(
+                        "edit_file: `old_string` в {}: {hint}",
+                        path.display()
+                    )));
+                }
+            };
         if let Err(e) = tokio::fs::write(&path, &replaced).await {
             return Ok(ToolOutput::err(format!(
                 "edit_file: не удалось записать {}: {e}",
@@ -660,10 +664,7 @@ fn grep_run(root: &Path, re: &Regex, name_filter: Option<&str>, context: usize) 
         }
         files.sort();
     } else {
-        return ToolOutput::err(format!(
-            "grep: путь не существует: {}",
-            root.display()
-        ));
+        return ToolOutput::err(format!("grep: путь не существует: {}", root.display()));
     }
 
     let mut out = String::new();
@@ -714,10 +715,7 @@ fn grep_run(root: &Path, re: &Regex, name_filter: Option<&str>, context: usize) 
         }
     }
     if matches == 0 {
-        return ToolOutput::ok(format!(
-            "grep: совпадений не найдено в {}",
-            root.display()
-        ));
+        return ToolOutput::ok(format!("grep: совпадений не найдено в {}", root.display()));
     }
     if over_limit {
         let _ = writeln!(
@@ -742,10 +740,7 @@ mod tests {
     }
 
     fn abs(dir: &TempDir, rel: &str) -> String {
-        dir.path()
-            .join(rel)
-            .to_string_lossy()
-            .into_owned()
+        dir.path().join(rel).to_string_lossy().into_owned()
     }
 
     #[tokio::test]
@@ -753,7 +748,10 @@ mod tests {
         let dir = tempfile::tempdir()?;
         let ctx = test_ctx(&dir);
         let w = WriteFileTool
-            .call(json!({"path": "sub/note.txt", "content": "привет\nмир\n"}), &ctx)
+            .call(
+                json!({"path": "sub/note.txt", "content": "привет\nмир\n"}),
+                &ctx,
+            )
             .await?;
         assert!(!w.is_error, "output: {}", w.content);
         assert!(w.content.contains("записано"), "output: {}", w.content);
@@ -862,7 +860,10 @@ mod tests {
         std::fs::write(dir.path().join("d.txt"), "dup x dup\n")?;
 
         let e = EditFileTool
-            .call(json!({"path": "d.txt", "old_string": "dup", "new_string": "D"}), &ctx)
+            .call(
+                json!({"path": "d.txt", "old_string": "dup", "new_string": "D"}),
+                &ctx,
+            )
             .await?;
         assert!(e.is_error, "output: {}", e.content);
         assert!(e.content.contains("2 раз"), "output: {}", e.content);
@@ -874,7 +875,11 @@ mod tests {
             )
             .await?;
         assert!(!all.is_error, "output: {}", all.content);
-        assert!(all.content.contains("заменено 2"), "output: {}", all.content);
+        assert!(
+            all.content.contains("заменено 2"),
+            "output: {}",
+            all.content
+        );
         let after = std::fs::read_to_string(dir.path().join("d.txt"))?;
         assert_eq!(after, "D x D\n");
         Ok(())
@@ -998,7 +1003,11 @@ mod tests {
             .call(json!({"path": target, "content": "# doc\n"}), &ctx)
             .await?;
         assert!(!w.is_error, "output: {}", w.content);
-        assert!(w.content.contains("записано 6 байт"), "output: {}", w.content);
+        assert!(
+            w.content.contains("записано 6 байт"),
+            "output: {}",
+            w.content
+        );
         Ok(())
     }
 }

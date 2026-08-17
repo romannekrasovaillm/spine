@@ -28,7 +28,10 @@ pub(crate) fn markdown_lines(text: &str, theme: &Theme) -> Vec<Line<'static>> {
         let trimmed = line.trim_start();
         let indent = &line[..line.len() - trimmed.len()];
         if let Some(heading) = strip_heading(trimmed) {
-            out.push(Line::from(Span::styled(heading.to_string(), theme.heading())));
+            out.push(Line::from(Span::styled(
+                heading.to_string(),
+                theme.heading(),
+            )));
         } else if let Some(rest) = trimmed
             .strip_prefix("- ")
             .or_else(|| trimmed.strip_prefix("* "))
@@ -72,9 +75,7 @@ pub(crate) fn markdown_lines(text: &str, theme: &Theme) -> Vec<Line<'static>> {
 
 /// Строка-разделитель markdown-таблицы (`|---|---|`, `|:-|:-:|`)?
 fn is_table_separator(line: &str) -> bool {
-    line.chars()
-        .all(|c| matches!(c, '|' | '-' | ':' | ' '))
-        && line.contains('-')
+    line.chars().all(|c| matches!(c, '|' | '-' | ':' | ' ')) && line.contains('-')
 }
 
 /// Срезает маркер заголовка `# `…`#### `, возвращает текст заголовка.

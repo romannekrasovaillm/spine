@@ -40,7 +40,12 @@ pub enum ErrorKind {
 /// Маркеры rate-limit в теле/тексте ошибки (нижний регистр).
 const RATE_LIMIT_MARKERS: &[&str] = &["rate limit", "rate_limit", "too many requests", "429"];
 /// Маркеры серверных ошибок.
-const SERVER_MARKERS: &[&str] = &["internal server error", "bad gateway", "service unavailable", "gateway timeout"];
+const SERVER_MARKERS: &[&str] = &[
+    "internal server error",
+    "bad gateway",
+    "service unavailable",
+    "gateway timeout",
+];
 /// Маркеры транспортных сбоев.
 const NETWORK_MARKERS: &[&str] = &[
     "timeout",
@@ -65,7 +70,12 @@ const CONTEXT_MARKERS: &[&str] = &[
     "context window",
 ];
 /// Маркеры ошибок аутентификации.
-const AUTH_MARKERS: &[&str] = &["unauthorized", "forbidden", "invalid api key", "authentication"];
+const AUTH_MARKERS: &[&str] = &[
+    "unauthorized",
+    "forbidden",
+    "invalid api key",
+    "authentication",
+];
 
 /// Классифицирует отказ по HTTP-статусу и тексту ошибки.
 ///

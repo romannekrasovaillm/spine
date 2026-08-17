@@ -281,7 +281,10 @@ impl SubagentRegistry {
             let result = session.send(&user, None).await;
             let (status, report) = match result {
                 Ok(text) => (TaskStatus::Done, text),
-                Err(e) => (TaskStatus::Failed, format!("субагент завершился ошибкой: {e}")),
+                Err(e) => (
+                    TaskStatus::Failed,
+                    format!("субагент завершился ошибкой: {e}"),
+                ),
             };
             let report: String = report.chars().take(REPORT_MAX_CHARS).collect();
             let finished = now_iso();
@@ -306,8 +309,8 @@ impl SubagentRegistry {
                     status.as_str(),
                     report
                 );
-                if let Err(e) = std::fs::create_dir_all(&dir)
-                    .and_then(|()| std::fs::write(&path, body))
+                if let Err(e) =
+                    std::fs::create_dir_all(&dir).and_then(|()| std::fs::write(&path, body))
                 {
                     tracing::warn!("отчёт субагента не записан {}: {e}", path.display());
                 }
@@ -446,12 +449,13 @@ impl Tool for SubagentRunTool {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
             name: "subagent_run".into(),
-            description: "Запустить фонового субагента со свежим контекстом: он выполнит поручение \
+            description:
+                "Запустить фонового субагента со свежим контекстом: он выполнит поручение \
                 своими инструментами и вернёт плотный отчёт (забирается через subagent_result). \
                 Зови для параллельных линз: аудит устойчивости, разведка репозитория, ревью \
                 спецификации, веб-ресёрч — пока продолжаешь основную работу. Специализации — \
                 из плагинов (список: subagent_list); без agent — универсальный 'general'."
-                .into(),
+                    .into(),
             parameters: json!({
                 "type": "object",
                 "properties": {
@@ -542,7 +546,8 @@ impl Tool for SubagentListTool {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
             name: "subagent_list".into(),
-            description: "Статусы фоновых субагентов (running/done/failed) и их отчёты-заголовки".into(),
+            description: "Статусы фоновых субагентов (running/done/failed) и их отчёты-заголовки"
+                .into(),
             parameters: json!({"type": "object", "properties": {}}),
         }
     }
@@ -563,7 +568,8 @@ impl Tool for SubagentResultTool {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
             name: "subagent_result".into(),
-            description: "Полный отчёт фонового субагента по id (после subagent_run/subagent_list)".into(),
+            description: "Полный отчёт фонового субагента по id (после subagent_run/subagent_list)"
+                .into(),
             parameters: json!({
                 "type": "object",
                 "properties": {
@@ -575,11 +581,7 @@ impl Tool for SubagentResultTool {
     }
 
     async fn call(&self, args: Value, ctx: &ToolContext) -> Result<ToolOutput> {
-        let id = args
-            .get("id")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .trim();
+        let id = args.get("id").and_then(Value::as_str).unwrap_or("").trim();
         let Some(registry) = &ctx.subagents else {
             return Ok(ToolOutput::err("субагенты недоступны: реестр не подключён"));
         };
@@ -594,10 +596,9 @@ impl Tool for SubagentResultTool {
                 task.started_at,
                 task.task.chars().take(80).collect::<String>()
             )),
-            TaskStatus::Done => ToolOutput::ok(format!(
-                "Отчёт {id} ({}):\n{}",
-                task.agent, task.report
-            )),
+            TaskStatus::Done => {
+                ToolOutput::ok(format!("Отчёт {id} ({}):\n{}", task.agent, task.report))
+            }
             TaskStatus::Failed => ToolOutput::err(format!("{id} failed: {}", task.report)),
         })
     }
@@ -617,12 +618,22 @@ pub fn render_tasks(tasks: &[SubagentTask]) -> String {
             t.agent,
             t.status.as_str(),
             t.started_at,
-            if t.task.chars().count() > 60 { "…" } else { "" }
+            if t.task.chars().count() > 60 {
+                "…"
+            } else {
+                ""
+            }
         ));
         if t.status == TaskStatus::Done && !t.report.is_empty() {
             out.push_str(&format!(
                 "   {}\n",
-                t.report.lines().next().unwrap_or("").chars().take(100).collect::<String>()
+                t.report
+                    .lines()
+                    .next()
+                    .unwrap_or("")
+                    .chars()
+                    .take(100)
+                    .collect::<String>()
             ));
         }
     }
@@ -653,7 +664,10 @@ mod tests {
             "fake-1"
         }
         async fn complete(&self, _req: ChatRequest) -> Result<ChatMessage> {
-            Ok(ChatMessage::assistant("ОТЧЁТ: всё проверено, замечаний нет", Vec::new()))
+            Ok(ChatMessage::assistant(
+                "ОТЧЁТ: всё проверено, замечаний нет",
+                Vec::new(),
+            ))
         }
     }
 
@@ -704,7 +718,11 @@ mod tests {
     #[test]
     fn subset_and_excluding_shape_subagent_tools() {
         let reg = crate::tools::core_registry();
-        let sub = reg.subset(&["read_file".to_string(), "grep".to_string(), "unknown".to_string()]);
+        let sub = reg.subset(&[
+            "read_file".to_string(),
+            "grep".to_string(),
+            "unknown".to_string(),
+        ]);
         let mut names = sub.names();
         names.sort();
         assert_eq!(names, ["grep", "read_file"]);
@@ -755,7 +773,13 @@ mod tests {
         let ctx = test_ctx(tmp.path()).with_subagents(registry.clone());
         for _ in 0..4 {
             registry
-                .launch(&general_spec(), "долгая работа", None, Arc::new(SlowLlm), ctx.clone())
+                .launch(
+                    &general_spec(),
+                    "долгая работа",
+                    None,
+                    Arc::new(SlowLlm),
+                    ctx.clone(),
+                )
                 .expect("слот есть");
         }
         let err = registry

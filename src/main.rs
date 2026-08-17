@@ -500,7 +500,12 @@ async fn main() -> Result<()> {
             )
             .await?;
             for hit in &hits {
-                println!("── {}:{} (score {:.1})", hit.path.display(), hit.line, hit.score);
+                println!(
+                    "── {}:{} (score {:.1})",
+                    hit.path.display(),
+                    hit.line,
+                    hit.score
+                );
                 println!("{}", hit.snippet);
             }
             if hits.is_empty() {
@@ -523,11 +528,16 @@ async fn main() -> Result<()> {
                     arch_harness::harness::known()
                 );
             }
-            let route: arch_harness::control::Route = route
-                .parse()
-                .map_err(|e: String| anyhow::anyhow!(e))?;
-            let packet =
-                arch_harness::harness::generate_handoff(&repo, &task, &spec, &cfg, rollback.as_deref(), route)?;
+            let route: arch_harness::control::Route =
+                route.parse().map_err(|e: String| anyhow::anyhow!(e))?;
+            let packet = arch_harness::harness::generate_handoff(
+                &repo,
+                &task,
+                &spec,
+                &cfg,
+                rollback.as_deref(),
+                route,
+            )?;
             println!("Handoff-пакет: {}", packet.dir.display());
             for f in &packet.files {
                 println!("  {}", f.display());
@@ -536,7 +546,11 @@ async fn main() -> Result<()> {
             match &packet.baseline {
                 Some(h) => println!(
                     "git: {}baseline {h} (якорь отката)",
-                    if packet.git_initialized { "инициализирован, " } else { "" }
+                    if packet.git_initialized {
+                        "инициализирован, "
+                    } else {
+                        ""
+                    }
                 ),
                 None => println!("⚠ git недоступен — якоря отката нет"),
             }
@@ -569,7 +583,8 @@ async fn main() -> Result<()> {
                 // Пакет несёт рекомендацию по маршруту значимости (Fast/Standard/Critical).
                 hcfg_owned.timeout_secs = t.clamp(600, 7200);
             }
-            let run = arch_harness::harness::run_harness(&harness, &hcfg_owned, &repo, &task_text).await?;
+            let run = arch_harness::harness::run_harness(&harness, &hcfg_owned, &repo, &task_text)
+                .await?;
             use arch_harness::harness::Termination;
             if let Some(ac) = &run.auto_commit {
                 println!(
@@ -606,7 +621,10 @@ async fn main() -> Result<()> {
                     }
                 );
             }
-            println!("── stdout (exit {:?}, {:.1}s) ──", run.exit_code, run.duration_secs);
+            println!(
+                "── stdout (exit {:?}, {:.1}s) ──",
+                run.exit_code, run.duration_secs
+            );
             println!("{}", run.stdout);
             if !run.stderr.is_empty() {
                 eprintln!("── stderr ──\n{}", run.stderr);
@@ -631,7 +649,12 @@ async fn main() -> Result<()> {
                     Some(h) => format!("{} ({:?})", h.binary, h.prompt_mode),
                     None => "не настроен".into(),
                 };
-                let installed = which(&cfg.harnesses.get(name).map(|h| h.binary.as_str()).unwrap_or(name));
+                let installed = which(
+                    &cfg.harnesses
+                        .get(name)
+                        .map(|h| h.binary.as_str())
+                        .unwrap_or(name),
+                );
                 println!("  {name:<14} {status:<40} {installed}");
             }
         }
@@ -641,7 +664,8 @@ async fn main() -> Result<()> {
         Some(Cmd::Policy { check }) => cmd_policy(&cfg, check)?,
         Some(Cmd::Evidence { cmd }) => cmd_evidence(cmd)?,
         Some(Cmd::Metrics) => {
-            let mut m = arch_harness::metrics::collect(&cfg.paths.sessions_dir, &cfg.paths.reports_dir)?;
+            let mut m =
+                arch_harness::metrics::collect(&cfg.paths.sessions_dir, &cfg.paths.reports_dir)?;
             // Architecture drift по реестру AGENTS.md (repos.txt), если он ведётся.
             let registry = arch_harness::config::Config::home_dir().join("repos.txt");
             if registry.is_file() {
@@ -650,9 +674,9 @@ async fn main() -> Result<()> {
                     m.agentsmd_stale = report
                         .iter()
                         .filter(|(_, issues)| {
-                            issues.iter().any(|i| {
-                                i.rule.contains("stale") || i.severity == "error"
-                            })
+                            issues
+                                .iter()
+                                .any(|i| i.rule.contains("stale") || i.severity == "error")
                         })
                         .count();
                 }
@@ -693,22 +717,34 @@ async fn cmd_worktree(cfg: &Arc<Config>, cmd: WorktreeCmd) -> Result<()> {
     let repo_of = |repo: Option<PathBuf>| repo.unwrap_or_else(|| cwd.clone());
     match cmd {
         WorktreeCmd::New { name, repo, base } => {
-            let path = arch_harness::worktree::create(cfg, &repo_of(repo), &name, base.as_deref()).await?;
+            let path =
+                arch_harness::worktree::create(cfg, &repo_of(repo), &name, base.as_deref()).await?;
             println!("worktree создан: {}", path.display());
-            println!("review: arch worktree diff {name} · accept: arch worktree accept {name} · drop: arch worktree drop {name}");
+            println!(
+                "review: arch worktree diff {name} · accept: arch worktree accept {name} · drop: arch worktree drop {name}"
+            );
         }
         WorktreeCmd::List { repo } => {
             let infos = arch_harness::worktree::list(&repo_of(repo)).await?;
             print!("{}", arch_harness::worktree::render_list(&infos));
         }
         WorktreeCmd::Diff { name, repo } => {
-            println!("{}", arch_harness::worktree::diff(&repo_of(repo), &name).await?);
+            println!(
+                "{}",
+                arch_harness::worktree::diff(&repo_of(repo), &name).await?
+            );
         }
         WorktreeCmd::Accept { name, repo } => {
-            println!("{}", arch_harness::worktree::accept(cfg, &repo_of(repo), &name).await?);
+            println!(
+                "{}",
+                arch_harness::worktree::accept(cfg, &repo_of(repo), &name).await?
+            );
         }
         WorktreeCmd::Drop { name, repo } => {
-            println!("{}", arch_harness::worktree::drop(cfg, &repo_of(repo), &name).await?);
+            println!(
+                "{}",
+                arch_harness::worktree::drop(cfg, &repo_of(repo), &name).await?
+            );
         }
     }
     Ok(())
@@ -745,7 +781,9 @@ async fn cmd_run(
     let input = match prompt.as_deref() {
         Some("-") | None if !std::io::stdin().is_terminal() => {
             let mut buf = String::new();
-            std::io::stdin().read_to_string(&mut buf).context("чтение stdin")?;
+            std::io::stdin()
+                .read_to_string(&mut buf)
+                .context("чтение stdin")?;
             buf
         }
         Some(p) => p.to_string(),
@@ -846,7 +884,10 @@ fn cmd_prompts(cfg: &Config, name: Option<String>) -> Result<()> {
     let lib = arch_harness::agent::prompts::load_library(&cfg.paths.prompts_dir())?;
     match name {
         None => {
-            println!("Библиотека промптов ({}):", cfg.paths.prompts_dir().display());
+            println!(
+                "Библиотека промптов ({}):",
+                cfg.paths.prompts_dir().display()
+            );
             for tpl in &lib {
                 println!("  {:<24} {}", tpl.name, tpl.description);
             }
@@ -867,7 +908,10 @@ async fn cmd_rubric(cfg: &Arc<Config>, cmd: RubricCmd) -> Result<()> {
         RubricCmd::List => {
             let list = arch_harness::rubric::list(&cfg.paths.rubrics_dir())?;
             for r in &list {
-                println!("  {:<32} {} ({} критериев)", r.name, r.description, r.criteria_count);
+                println!(
+                    "  {:<32} {} ({} критериев)",
+                    r.name, r.description, r.criteria_count
+                );
             }
         }
         RubricCmd::Run {
@@ -887,8 +931,12 @@ async fn cmd_rubric(cfg: &Arc<Config>, cmd: RubricCmd) -> Result<()> {
                 Some(subject) => {
                     let anchor_path = resolve_asset(&cfg.paths.rubrics_dir(), &rubric, "yaml");
                     let anchor = arch_harness::rubric::load(&anchor_path).ok();
-                    arch_harness::rubric::generate_dynamic(&subject, anchor.as_ref(), judge.as_ref())
-                        .await?
+                    arch_harness::rubric::generate_dynamic(
+                        &subject,
+                        anchor.as_ref(),
+                        judge.as_ref(),
+                    )
+                    .await?
                 }
                 None => {
                     let path = resolve_asset(&cfg.paths.rubrics_dir(), &rubric, "yaml");
@@ -926,9 +974,13 @@ async fn cmd_bench(cfg: &Arc<Config>, cmd: BenchCmd) -> Result<()> {
                 Some(m) => registry.get(m)?,
                 None => registry.default(),
             };
-            let report =
-                arch_harness::bench::run(&bench, provider.as_ref(), &cfg.paths.rubrics_dir(), &cfg.paths.reports_dir)
-                    .await?;
+            let report = arch_harness::bench::run(
+                &bench,
+                provider.as_ref(),
+                &cfg.paths.rubrics_dir(),
+                &cfg.paths.reports_dir,
+            )
+            .await?;
             println!(
                 "Бенчмарк '{}': {:.2} (порог {:.2}) — {}",
                 report.bench_name,
@@ -978,7 +1030,8 @@ async fn cmd_mcp(cfg: &Config, cmd: McpCmd) -> Result<()> {
         let plugins = arch_harness::plugin::discover(&cfg.plugins.dirs);
         servers.extend(arch_harness::plugin::mcp_servers(&plugins));
     }
-    let manager = Arc::new(arch_harness::mcp::McpManager::connect(&servers, cfg.mcp.timeout_secs).await?);
+    let manager =
+        Arc::new(arch_harness::mcp::McpManager::connect(&servers, cfg.mcp.timeout_secs).await?);
     match cmd {
         McpCmd::List => {
             println!("Серверы: {}", manager.server_names().join(", "));
@@ -987,7 +1040,8 @@ async fn cmd_mcp(cfg: &Config, cmd: McpCmd) -> Result<()> {
             }
         }
         McpCmd::Call { name, args } => {
-            let args: serde_json::Value = serde_json::from_str(&args).context("невалидный JSON аргументов")?;
+            let args: serde_json::Value =
+                serde_json::from_str(&args).context("невалидный JSON аргументов")?;
             let out = manager.call(&name, args).await?;
             println!("{}", out.content);
         }
@@ -1003,7 +1057,14 @@ fn cmd_control(cmd: ControlCmd) -> Result<()> {
             let report = arch_harness::control::check(&repo, &c)?;
             println!("{}", report.summary);
             for i in &report.issues {
-                println!("  [{}] {}:{} {} — {}", i.severity, i.file.display(), i.line, i.rule, i.message);
+                println!(
+                    "  [{}] {}:{} {} — {}",
+                    i.severity,
+                    i.file.display(),
+                    i.line,
+                    i.rule,
+                    i.message
+                );
             }
             println!("Итог: {}", if report.passed { "PASS" } else { "FAIL" });
             if !report.passed {
@@ -1016,7 +1077,14 @@ fn cmd_control(cmd: ControlCmd) -> Result<()> {
                 println!("spine: нарушений нет");
             }
             for i in &issues {
-                println!("[{}] {}:{} {} — {}", i.severity, i.file.display(), i.line, i.rule, i.message);
+                println!(
+                    "[{}] {}:{} {} — {}",
+                    i.severity,
+                    i.file.display(),
+                    i.line,
+                    i.rule,
+                    i.message
+                );
             }
         }
         ControlCmd::Sensors { dir } => {
@@ -1064,17 +1132,28 @@ fn cmd_skills(cfg: &Config, cmd: SkillsCmd) -> Result<()> {
             println!("Скиллов: {total} в {} плагинах", plugins.len());
             for p in &plugins {
                 for s in &p.skills {
-                    println!("  {:<28} {:<14} {}", s.name, p.manifest.name, first_line(&s.description, 80));
+                    println!(
+                        "  {:<28} {:<14} {}",
+                        s.name,
+                        p.manifest.name,
+                        first_line(&s.description, 80)
+                    );
                 }
             }
         }
         SkillsCmd::Search { query, limit } => {
             let hits = arch_harness::plugin::search(&plugins, &query, limit);
             if hits.is_empty() {
-                println!("Ничего не найдено (скиллов в индексе: {}).", plugins.iter().map(|p| p.skills.len()).sum::<usize>());
+                println!(
+                    "Ничего не найдено (скиллов в индексе: {}).",
+                    plugins.iter().map(|p| p.skills.len()).sum::<usize>()
+                );
             }
             for h in &hits {
-                println!("── {} [{}] (score {:.1})", h.meta.name, h.meta.plugin, h.score);
+                println!(
+                    "── {} [{}] (score {:.1})",
+                    h.meta.name, h.meta.plugin, h.score
+                );
                 println!("   {}", first_line(&h.meta.description, 100));
                 if !h.snippet.is_empty() {
                     println!("{}", h.snippet);
@@ -1117,7 +1196,10 @@ fn cmd_plugins(cfg: &Config, cmd: PluginsCmd) -> Result<()> {
                 .iter()
                 .find(|p| p.manifest.name == name)
                 .with_context(|| format!("плагин '{name}' не найден"))?;
-            println!("{} v{} — {}", p.manifest.name, p.manifest.version, p.manifest.description);
+            println!(
+                "{} v{} — {}",
+                p.manifest.name, p.manifest.version, p.manifest.description
+            );
             println!("Каталог: {}", p.dir.display());
             if !p.manifest.keywords.is_empty() {
                 println!("Ключевые слова: {}", p.manifest.keywords.join(", "));
@@ -1154,8 +1236,13 @@ fn cmd_policy(cfg: &Config, check: Option<String>) -> Result<()> {
     let policy = arch_harness::policy::Policy::parse(&cfg.policy.autonomy)?;
     match check {
         None => {
-            println!("Уровень автономии: R{} (из config [policy] autonomy)", policy.level);
-            println!("  R0 — только чтения авто; R2 — + изменения (дефолт); R4 — деструктив с подтверждением; R5 — полная (красный флаг аудита)");
+            println!(
+                "Уровень автономии: R{} (из config [policy] autonomy)",
+                policy.level
+            );
+            println!(
+                "  R0 — только чтения авто; R2 — + изменения (дефолт); R4 — деструктив с подтверждением; R5 — полная (красный флаг аудита)"
+            );
         }
         Some(cmd) => {
             use arch_harness::policy::{PolicyDecision, classify_bash};
@@ -1166,9 +1253,14 @@ fn cmd_policy(cfg: &Config, check: Option<String>) -> Result<()> {
                 PolicyDecision::RequireConfirm(_) => "REQUIRE-CONFIRM",
                 PolicyDecision::Deny(_) => "DENY",
             };
-            println!("команда: {cmd}\nкласс риска: {class:?}\nрешение (R{}): {verdict}", policy.level);
+            println!(
+                "команда: {cmd}\nкласс риска: {class:?}\nрешение (R{}): {verdict}",
+                policy.level
+            );
             match &decision {
-                PolicyDecision::RequireConfirm(m) | PolicyDecision::Deny(m) => println!("причина: {m}"),
+                PolicyDecision::RequireConfirm(m) | PolicyDecision::Deny(m) => {
+                    println!("причина: {m}")
+                }
                 _ => {}
             }
         }
@@ -1207,7 +1299,14 @@ fn cmd_evidence(cmd: EvidenceCmd) -> Result<()> {
             for t in &v.tampered {
                 println!("  ✗ ИЗМЕНЁН: {t}");
             }
-            println!("Итог: {}", if v.passed { "PASS — выпуск разрешён" } else { "FAIL — выпуск заблокирован" });
+            println!(
+                "Итог: {}",
+                if v.passed {
+                    "PASS — выпуск разрешён"
+                } else {
+                    "FAIL — выпуск заблокирован"
+                }
+            );
             if !v.passed {
                 std::process::exit(1);
             }
@@ -1240,7 +1339,14 @@ fn cmd_delta(cmd: DeltaCmd) -> Result<()> {
             }
             let mut failed = false;
             for i in &issues {
-                println!("[{}] {}:{} {} — {}", i.severity, i.file.display(), i.line, i.rule, i.message);
+                println!(
+                    "[{}] {}:{} {} — {}",
+                    i.severity,
+                    i.file.display(),
+                    i.line,
+                    i.rule,
+                    i.message
+                );
                 failed |= i.severity == "error";
             }
             if failed {
@@ -1265,7 +1371,11 @@ fn cmd_agents_md(cfg: &Config, cmd: AgentsMdCmd) -> Result<()> {
                 report.path.display(),
                 report.action,
                 report.invariants,
-                if report.has_constraints { "да" } else { "нет" }
+                if report.has_constraints {
+                    "да"
+                } else {
+                    "нет"
+                }
             );
         }
         AgentsMdCmd::Lint { repo } => {
@@ -1275,7 +1385,14 @@ fn cmd_agents_md(cfg: &Config, cmd: AgentsMdCmd) -> Result<()> {
             }
             let mut failed = false;
             for i in &issues {
-                println!("[{}] {}:{} {} — {}", i.severity, i.file.display(), i.line, i.rule, i.message);
+                println!(
+                    "[{}] {}:{} {} — {}",
+                    i.severity,
+                    i.file.display(),
+                    i.line,
+                    i.rule,
+                    i.message
+                );
                 failed |= i.severity == "error";
             }
             if failed {
@@ -1310,7 +1427,12 @@ async fn cmd_cron(cfg: &Arc<Config>, cmd: CronCmd) -> Result<()> {
     match cmd {
         CronCmd::List => {
             for j in &tab.jobs {
-                println!("  {:<24} {:<16} {}", j.name, j.schedule, j.task_md.display());
+                println!(
+                    "  {:<24} {:<16} {}",
+                    j.name,
+                    j.schedule,
+                    j.task_md.display()
+                );
             }
         }
         CronCmd::Run { name } => {
@@ -1329,7 +1451,8 @@ async fn cmd_cron(cfg: &Arc<Config>, cmd: CronCmd) -> Result<()> {
                 .out
                 .clone()
                 .unwrap_or_else(|| cfg.paths.reports_dir.join("cron"));
-            let path = arch_harness::cron::run_job(job, provider.as_ref(), &tools, &out_dir).await?;
+            let path =
+                arch_harness::cron::run_job(job, provider.as_ref(), &tools, &out_dir).await?;
             println!("Отчёт: {}", path.display());
         }
         CronCmd::Tick => {
@@ -1377,7 +1500,9 @@ async fn cmd_cron(cfg: &Arc<Config>, cmd: CronCmd) -> Result<()> {
 fn read_file_or_stdin(file: &str) -> Result<String> {
     if file == "-" {
         let mut buf = String::new();
-        std::io::stdin().read_to_string(&mut buf).context("чтение stdin")?;
+        std::io::stdin()
+            .read_to_string(&mut buf)
+            .context("чтение stdin")?;
         Ok(buf)
     } else {
         std::fs::read_to_string(file).with_context(|| format!("чтение {file}"))

@@ -24,7 +24,7 @@ use std::time::{Duration, Instant};
 use async_trait::async_trait;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 
@@ -78,7 +78,8 @@ fn default_constraints(repo: &Path) -> String {
         "generic"
     };
     let rules = match stack {
-        "Rust" => "\
+        "Rust" => {
+            "\
   - name: no-unwrap-in-src
     type: must_not_contain
     glob: \"src/**\"
@@ -98,8 +99,10 @@ fn default_constraints(repo: &Path) -> String {
     command: 'cargo check'
     timeout_secs: 120
     severity: error
-",
-        "Python" => "\
+"
+        }
+        "Python" => {
+            "\
   - name: no-print-in-py
     type: must_not_contain
     glob: \"**/*.py\"
@@ -114,8 +117,10 @@ fn default_constraints(repo: &Path) -> String {
     command: 'pytest -q'
     timeout_secs: 180
     severity: error
-",
-        "Go" => "\
+"
+        }
+        "Go" => {
+            "\
   - name: go-build-passes
     type: command_succeeds
     command: 'go build ./...'
@@ -130,8 +135,10 @@ fn default_constraints(repo: &Path) -> String {
     type: file_exists
     path: README.md
     severity: warn
-",
-        "Node" => "\
+"
+        }
+        "Node" => {
+            "\
   - name: readme-exists
     type: file_exists
     path: README.md
@@ -141,13 +148,16 @@ fn default_constraints(repo: &Path) -> String {
     command: 'npm test'
     timeout_secs: 300
     severity: warn
-",
-        _ => "\
+"
+        }
+        _ => {
+            "\
   - name: readme-exists
     type: file_exists
     path: README.md
     severity: warn
-",
+"
+        }
     };
     format!(
         "# Fitness-правила для `arch control check` (схема control::check).\n\
@@ -300,7 +310,9 @@ pub fn generate_handoff(
     let mut adr_copies = Vec::new();
     for spec in spec_files {
         if is_adr_file(spec) {
-            let Some(name) = spec.file_name() else { continue };
+            let Some(name) = spec.file_name() else {
+                continue;
+            };
             let dest = adr_dir.join(name);
             if !dest.exists() {
                 std::fs::copy(spec, &dest).map_err(|e| HarnessError::io(&dest, e))?;
@@ -314,10 +326,7 @@ pub fn generate_handoff(
         created_at: Utc::now().to_rfc3339(),
         task,
         model: &cfg.default_model,
-        sources: spec_files
-            .iter()
-            .map(|p| p.display().to_string())
-            .collect(),
+        sources: spec_files.iter().map(|p| p.display().to_string()).collect(),
         epic_context_chars: epic_chars,
         epic_context_tokens: epic_tokens,
         route: route.to_string(),
@@ -360,7 +369,9 @@ fn render_task_md(task: &str, rollback: &str) -> String {
     s.push_str("\n## Финализация (обязательно)\n\n");
     s.push_str("Результат забирается из git, поэтому перед финальным ответом зафиксируй работу коммитом:\n\n");
     s.push_str("```bash\ngit add -A -- . ':!.arch-handoff'\ngit commit -m \"<кратко: что реализовано>\"\ngit status --short   # пусто, кроме .arch-handoff/\n```\n\n");
-    s.push_str("- Коммитится код и тесты; служебный каталог `.arch-handoff/` в коммит не входит.\n");
+    s.push_str(
+        "- Коммитится код и тесты; служебный каталог `.arch-handoff/` в коммит не входит.\n",
+    );
     s.push_str("- Работа без коммита считается невыполненной: оркестратор увидит её только через git log.\n");
     s.push_str("\n## Контракт результата\n\n");
     s.push_str("Финальный ответ обязан завершаться JSON-объектом (после него — ни символа):\n\n");
@@ -606,7 +617,10 @@ fn first_paragraphs(text: &str, n: usize) -> String {
 
 /// Признак ADR-файла: md, чьё имя содержит `ADR` или путь содержит `/adr/`.
 fn is_adr_file(path: &Path) -> bool {
-    if !path.extension().is_some_and(|e| e.eq_ignore_ascii_case("md")) {
+    if !path
+        .extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("md"))
+    {
         return false;
     }
     let name_hit = path
@@ -687,7 +701,10 @@ fn build_argv(cfg: &CodingHarnessConfig, task: &str) -> (Vec<String>, Option<Str
         PromptMode::Flag => {
             if cfg.args.iter().any(|a| a.contains("{prompt}")) {
                 (
-                    cfg.args.iter().map(|a| a.replace("{prompt}", task)).collect(),
+                    cfg.args
+                        .iter()
+                        .map(|a| a.replace("{prompt}", task))
+                        .collect(),
                     None,
                 )
             } else {
@@ -823,7 +840,8 @@ pub async fn run_harness(
     };
 
     let abs_limit = Duration::from_secs(cfg.timeout_secs.max(1));
-    let idle_limit = (cfg.idle_timeout_secs > 0).then(|| Duration::from_secs(cfg.idle_timeout_secs));
+    let idle_limit =
+        (cfg.idle_timeout_secs > 0).then(|| Duration::from_secs(cfg.idle_timeout_secs));
     // Файловый heartbeat: скан не чаще раза в 15 с (и не реже четверти
     // idle-окна, чтобы мелкие окна тоже ловили активность); базовая отсечка —
     // старт прогона (старые файлы репо активностью не считаются).
@@ -1008,7 +1026,14 @@ async fn kill_process_group(pid: u32, child: &mut tokio::process::Child) {
 /// 8000 записей, глубина 8 (дорогое сканирование не нужно: свежие файлы
 /// почти всегда наверху).
 fn repo_changed_since(repo: &Path, since: std::time::SystemTime) -> bool {
-    const SKIP: [&str; 6] = [".git", "target", "node_modules", "dist", "__pycache__", ".next"];
+    const SKIP: [&str; 6] = [
+        ".git",
+        "target",
+        "node_modules",
+        "dist",
+        "__pycache__",
+        ".next",
+    ];
     let mut seen = 0usize;
     for entry in walkdir::WalkDir::new(repo)
         .max_depth(8)
@@ -1569,11 +1594,7 @@ impl Tool for HarnessRunTool {
                 }
                 let is_error =
                     run.exit_code != Some(0) || run.termination != Termination::Completed;
-                Ok(ToolOutput {
-                    content,
-                    is_error,
-                }
-                .truncated(HARNESS_RUN_MAX_CHARS))
+                Ok(ToolOutput { content, is_error }.truncated(HARNESS_RUN_MAX_CHARS))
             }
             Err(e) => Ok(ToolOutput::err(format!("harness_run: {e}"))),
         }
@@ -1661,7 +1682,10 @@ mod tests {
             "план отката с якорем:\n{task_md}"
         );
         assert!(task_md.contains("Владелец решения об откате"));
-        assert!(packet.git_initialized, "не-git каталог — предгейт делает init");
+        assert!(
+            packet.git_initialized,
+            "не-git каталог — предгейт делает init"
+        );
         assert!(task_md.contains("## Контракт результата"));
         assert!(task_md.contains("\"complete|partial|blocked\""));
 
@@ -1711,10 +1735,7 @@ mod tests {
         let manifest: Value = serde_json::from_str(&manifest_text).expect("manifest json");
         assert_eq!(manifest["task"], "сделать фичу X");
         assert!(manifest["created_at"].is_string());
-        assert_eq!(
-            manifest["sources"].as_array().expect("sources").len(),
-            3
-        );
+        assert_eq!(manifest["sources"].as_array().expect("sources").len(), 3);
         let chars = manifest["epic_context_chars"].as_u64().expect("chars") as usize;
         assert_eq!(chars, arch.chars().count());
         let tokens = manifest["epic_context_tokens"].as_u64().expect("tokens") as usize;
@@ -1764,14 +1785,14 @@ mod tests {
         std::fs::create_dir_all(&repo).expect("mkdir repo");
         let cfg = cfg_in(tmp.path());
 
-        let p1 = generate_handoff(&repo, "задача", &[], &cfg, None, Route::Fast)
-            .expect("handoff 1");
+        let p1 =
+            generate_handoff(&repo, "задача", &[], &cfg, None, Route::Fast).expect("handoff 1");
         assert!(p1.git_initialized);
         let b1 = p1.baseline.clone().expect("baseline 1");
         assert_eq!(recommended_timeout_secs(&repo), Some(1800), "fast → 1800");
 
-        let p2 = generate_handoff(&repo, "задача 2", &[], &cfg, None, Route::Fast)
-            .expect("handoff 2");
+        let p2 =
+            generate_handoff(&repo, "задача 2", &[], &cfg, None, Route::Fast).expect("handoff 2");
         assert!(!p2.git_initialized, "повторный init не нужен");
         assert_eq!(p2.baseline.as_deref(), Some(b1.as_str()), "якорь стабилен");
         // Baseline — пустой коммит, содержимое каталога не подмётено.
@@ -1858,8 +1879,8 @@ mod tests {
         let p3_repo = tmp.path().join("repo3");
         git_repo_with_baseline(&p3_repo);
         std::fs::write(p3_repo.join("new-file.py"), "x = 1\n").expect("untracked");
-        let p3 = generate_handoff(&p3_repo, "задача", &[], &cfg, None, Route::Fast)
-            .expect("handoff 3");
+        let p3 =
+            generate_handoff(&p3_repo, "задача", &[], &cfg, None, Route::Fast).expect("handoff 3");
         assert!(!p3.git_dirty_tracked, "untracked — не грязь");
     }
 
@@ -1878,8 +1899,8 @@ mod tests {
         }
         write_file(&big, &text);
 
-        let packet =
-            generate_handoff(&repo, "задача", &[big], &cfg, None, Route::Standard).expect("handoff");
+        let packet = generate_handoff(&repo, "задача", &[big], &cfg, None, Route::Standard)
+            .expect("handoff");
         let arch = std::fs::read_to_string(packet.dir.join("ARCHITECTURE.md")).expect("arch");
         assert!(
             arch.chars().count() <= EPIC_CONTEXT_MAX_CHARS,
@@ -1934,10 +1955,13 @@ mod tests {
             &spec,
             "# Спека\n\n## Детали\n\nпервый\n\nвторой\n\nтретий\n\nчетвёртый\n\nпятый\n",
         );
-        let packet =
-            generate_handoff(&repo, "задача", &[spec], &cfg, None, Route::Standard).expect("handoff");
+        let packet = generate_handoff(&repo, "задача", &[spec], &cfg, None, Route::Standard)
+            .expect("handoff");
         let arch = std::fs::read_to_string(packet.dir.join("ARCHITECTURE.md")).expect("arch");
-        assert!(arch.contains("пятый"), "глубокий рендер дотянул хвост:\n{arch}");
+        assert!(
+            arch.contains("пятый"),
+            "глубокий рендер дотянул хвост:\n{arch}"
+        );
     }
 
     #[tokio::test]
@@ -1954,7 +1978,11 @@ mod tests {
             .await
             .expect("call");
         assert!(out.content.contains("ниже окна рубрики"), "{}", out.content);
-        assert!(out.content.contains("стековая заготовка"), "{}", out.content);
+        assert!(
+            out.content.contains("стековая заготовка"),
+            "{}",
+            out.content
+        );
     }
 
     #[test]
@@ -2092,7 +2120,12 @@ mod tests {
         let run = run_harness("writer", &cfg, &repo, "задача")
             .await
             .expect("run");
-        assert_eq!(run.termination, Termination::Completed, "stderr: {}", run.stderr);
+        assert_eq!(
+            run.termination,
+            Termination::Completed,
+            "stderr: {}",
+            run.stderr
+        );
         assert!(run.stdout.contains("done"), "stdout: {}", run.stdout);
         assert!(repo.join("f9").is_file());
     }
@@ -2178,7 +2211,7 @@ mod tests {
                  echo junk > __pycache__/x.pyc; \
                  echo meta > .arch-handoff/TASK.md; \
                  echo '{\"status\": \"complete\"}'"
-                .into(),
+                    .into(),
             ],
             prompt_mode: PromptMode::Stdin,
             timeout_secs: 30,
@@ -2203,7 +2236,10 @@ mod tests {
         assert_eq!(run.termination, Termination::Completed);
         let ac = run.auto_commit.expect("харнесс обязан до-коммитить хвост");
         assert_eq!(ac.files, 1, "только код, без мусора: {ac:?}");
-        assert!(ac.message.starts_with("harness(dirty): реализовать модуль amount"));
+        assert!(
+            ac.message
+                .starts_with("harness(dirty): реализовать модуль amount")
+        );
         assert!(!ac.hash.is_empty());
         // В истории — baseline + авто-коммит с кодом; физически в дереве
         // остаются лишь некоммитимые служебные/мусорные каталоги.
@@ -2216,8 +2252,8 @@ mod tests {
         }
         let log = git_out(&repo, &["log", "--oneline"]).expect("log");
         assert_eq!(log.lines().count(), 2, "{log}");
-        let committed = git_out(&repo, &["show", "--name-only", "--pretty=%s", "HEAD"])
-            .expect("show");
+        let committed =
+            git_out(&repo, &["show", "--name-only", "--pretty=%s", "HEAD"]).expect("show");
         assert!(committed.contains("spinecalc/amount.py"), "{committed}");
         assert!(!committed.contains("__pycache__"), "{committed}");
         assert!(!committed.contains(".arch-handoff"), "{committed}");
@@ -2260,7 +2296,9 @@ mod tests {
             idle_timeout_secs: 0,
             auto_commit: false,
             env_allow: env_allow.iter().map(|s| (*s).into()).collect(),
-            env: [("EXTRA".to_string(), "yes".to_string())].into_iter().collect(),
+            env: [("EXTRA".to_string(), "yes".to_string())]
+                .into_iter()
+                .collect(),
         };
         // Наследование по умолчанию: HOME и PATH видны, EXTRA из env — тоже.
         let run = run_harness("probe", &probe(vec![]), &repo, "задача")
@@ -2280,7 +2318,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn auto_commit_clean_repo_is_noop() {        // Исполнитель всё закоммитил сам (или ничего не писал) — харнесс
+    async fn auto_commit_clean_repo_is_noop() {
+        // Исполнитель всё закоммитил сам (или ничего не писал) — харнесс
         // не плодит пустых коммитов.
         let tmp = tempfile::tempdir().expect("tempdir");
         let repo = tmp.path().join("repo");
@@ -2416,7 +2455,11 @@ mod tests {
         let ctx = ToolContext::new(tmp.path().to_path_buf(), Arc::new(cfg));
 
         let out = tool.call(json!({"repo": "."}), &ctx).await.expect("call");
-        assert!(out.is_error && out.content.contains("'harness'"), "{}", out.content);
+        assert!(
+            out.is_error && out.content.contains("'harness'"),
+            "{}",
+            out.content
+        );
 
         let out = tool
             .call(json!({"harness": "nope", "repo": "."}), &ctx)
@@ -2424,7 +2467,11 @@ mod tests {
             .expect("call");
         assert!(out.is_error, "{}", out.content);
         assert!(out.content.contains("не настроен"), "{}", out.content);
-        assert!(out.content.contains("claude-code"), "список известных: {}", out.content);
+        assert!(
+            out.content.contains("claude-code"),
+            "список известных: {}",
+            out.content
+        );
 
         // Нет task и нет TASK.md — понятная ошибка с подсказкой.
         let out = tool
@@ -2525,16 +2572,24 @@ mod tests {
         let ctx = ToolContext::new(tmp.path().to_path_buf(), Arc::new(Config::default()));
         // echo не читает stdin, печатает строку без контракта, код 0.
         let out = tool
-            .call(json!({"harness": "fake", "repo": ".", "task": "задача"}), &ctx)
+            .call(
+                json!({"harness": "fake", "repo": ".", "task": "задача"}),
+                &ctx,
+            )
             .await
             .expect("call");
         assert!(!out.is_error, "{}", out.content);
-        assert!(out.content.contains("контракт результата"), "{}", out.content);
+        assert!(
+            out.content.contains("контракт результата"),
+            "{}",
+            out.content
+        );
         assert!(out.content.contains("не найден"), "{}", out.content);
     }
 
     #[tokio::test]
-    async fn harness_run_raises_tiny_timeout_to_floor() {        // Модель оптимистично просит 30 с — поднимаем до 600 и честно
+    async fn harness_run_raises_tiny_timeout_to_floor() {
+        // Модель оптимистично просит 30 с — поднимаем до 600 и честно
         // сообщаем об этом в сводке (ранний обрыв оставлял репо полусобранным).
         let tmp = tempfile::tempdir().expect("tempdir");
         let cfg = cfg_with_fake_harness(tmp.path());
@@ -2548,11 +2603,7 @@ mod tests {
             .await
             .expect("call");
         assert!(!out.is_error, "{}", out.content);
-        assert!(
-            out.content.contains("поднят до 600"),
-            "{}",
-            out.content
-        );
+        assert!(out.content.contains("поднят до 600"), "{}", out.content);
         // Явный разумный таймаут не трогаем.
         let out = tool
             .call(
@@ -2569,7 +2620,9 @@ mod tests {
         // Регрессия 11-24: агентный цикл обрывал вызов на жёстких 300 с
         // (TOOL_TIMEOUT_SECS), пока адаптер ждал 1800. Таймаут инструмента
         // обязан покрывать потолок аргумента (7200) плюс запас.
-        let tool = HarnessRunTool { cfg: Config::default() };
+        let tool = HarnessRunTool {
+            cfg: Config::default(),
+        };
         assert!(tool.timeout_secs() >= 7200 + 120, "{}", tool.timeout_secs());
         let mut cfg = Config::default();
         cfg.harnesses.insert(

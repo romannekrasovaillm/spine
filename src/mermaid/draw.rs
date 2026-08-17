@@ -64,7 +64,9 @@ struct Canvas {
 
 impl Canvas {
     fn new() -> Self {
-        Self { cells: HashMap::new() }
+        Self {
+            cells: HashMap::new(),
+        }
     }
 
     /// Рисует линию: сливается с другими линиями, уступает тексту/рамкам/стрелкам.
@@ -171,7 +173,9 @@ fn slot_on_row_rev(cv: &Canvas, y: i32, x1: i32, x2: i32, w: i32) -> Option<i32>
     if w <= 0 || x2 - x1 + 1 < w {
         return None;
     }
-    (x1..=(x2 - w + 1)).rev().find(|&sx| (0..w).all(|i| cv.slot_cell(sx + i, y)))
+    (x1..=(x2 - w + 1))
+        .rev()
+        .find(|&sx| (0..w).all(|i| cv.slot_cell(sx + i, y)))
 }
 
 /// Ширина узла на сетке (с рамкой и отступами).
@@ -276,9 +280,15 @@ fn route_vertical(
         return;
     }
     let (c1, c2) = if forward {
-        (if tcx > fcx { '└' } else { '┘' }, if tcx > fcx { '┐' } else { '┌' })
+        (
+            if tcx > fcx { '└' } else { '┘' },
+            if tcx > fcx { '┐' } else { '┌' },
+        )
     } else {
-        (if tcx > fcx { '┌' } else { '┐' }, if tcx > fcx { '┘' } else { '└' })
+        (
+            if tcx > fcx { '┌' } else { '┐' },
+            if tcx > fcx { '┘' } else { '└' },
+        )
     };
     if forward {
         for r in (from.y + 3)..bus {
@@ -342,9 +352,15 @@ fn route_horizontal(
         }
     } else {
         let (c1, c2) = if forward {
-            (if try_ > fry { '┐' } else { '┘' }, if try_ > fry { '└' } else { '┌' })
+            (
+                if try_ > fry { '┐' } else { '┘' },
+                if try_ > fry { '└' } else { '┌' },
+            )
         } else {
-            (if try_ > fry { '┌' } else { '└' }, if try_ > fry { '┘' } else { '┐' })
+            (
+                if try_ > fry { '┌' } else { '└' },
+                if try_ > fry { '┘' } else { '┐' },
+            )
         };
         if forward {
             for c in (from.x + from.w)..bus {
@@ -419,7 +435,11 @@ pub(crate) fn render_flowchart(ast: &FlowAst) -> String {
         .max()
         .unwrap_or(0);
     // Зазор между слоями: горизонтальному рендеру нужно место под метки рёбер.
-    let layer_gap = if horizontal && max_label > 0 { max_label + 6 } else { 2 };
+    let layer_gap = if horizontal && max_label > 0 {
+        max_label + 6
+    } else {
+        2
+    };
 
     // Координаты узлов: слои равномерно, слой центрируется относительно самого широкого/высокого.
     let mut geoms = vec![Geom { x: 0, y: 0, w: 0 }; n];
@@ -445,8 +465,7 @@ pub(crate) fn render_flowchart(ast: &FlowAst) -> String {
             .layers
             .iter()
             .map(|l| {
-                l.iter().map(|&i| widths[i]).sum::<i32>()
-                    + NODE_GAP * (l.len() as i32 - 1).max(0)
+                l.iter().map(|&i| widths[i]).sum::<i32>() + NODE_GAP * (l.len() as i32 - 1).max(0)
             })
             .collect();
         let total = ws.iter().copied().max().unwrap_or(0);
@@ -466,9 +485,25 @@ pub(crate) fn render_flowchart(ast: &FlowAst) -> String {
     for e in &ast.edges {
         let label = e.label.as_deref();
         if horizontal {
-            route_horizontal(&mut cv, geoms[e.from], geoms[e.to], label, e.plain, forward, layer_gap);
+            route_horizontal(
+                &mut cv,
+                geoms[e.from],
+                geoms[e.to],
+                label,
+                e.plain,
+                forward,
+                layer_gap,
+            );
         } else {
-            route_vertical(&mut cv, geoms[e.from], geoms[e.to], label, e.plain, forward, layer_gap);
+            route_vertical(
+                &mut cv,
+                geoms[e.from],
+                geoms[e.to],
+                label,
+                e.plain,
+                forward,
+                layer_gap,
+            );
         }
     }
     for (i, nd) in ast.nodes.iter().enumerate() {

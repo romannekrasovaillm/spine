@@ -33,9 +33,11 @@ pub const PROMPT_NFR_DESIGN: &str = include_str!("../assets/prompts/nfr_design.m
 pub const PROMPT_SKILL_DISTILLER: &str = include_str!("../assets/prompts/skill_distiller.md");
 
 /// Якорная рубрика: комплексная оценка документа solution-архитектуры (15 критериев).
-pub const RUBRIC_SOLUTION_ARCHITECTURE: &str = include_str!("../assets/rubrics/solution_architecture.yaml");
+pub const RUBRIC_SOLUTION_ARCHITECTURE: &str =
+    include_str!("../assets/rubrics/solution_architecture.yaml");
 /// Якорная рубрика: контрольные точки A0–A5.
-pub const RUBRIC_ARCHITECTURE_GATES: &str = include_str!("../assets/rubrics/architecture_gates.yaml");
+pub const RUBRIC_ARCHITECTURE_GATES: &str =
+    include_str!("../assets/rubrics/architecture_gates.yaml");
 /// Якорная рубрика: 6 измерений таксономии Macedo.
 pub const RUBRIC_MACEDO_DIMENSIONS: &str = include_str!("../assets/rubrics/macedo_dimensions.yaml");
 /// Якорная рубрика: качество ADR.
@@ -44,11 +46,14 @@ pub const RUBRIC_ADR_QUALITY: &str = include_str!("../assets/rubrics/adr_quality
 pub const RUBRIC_HANDOFF_QUALITY: &str = include_str!("../assets/rubrics/handoff_quality.yaml");
 
 /// Бенчмарк: интеграция платёжного шлюза.
-pub const BENCH_PAYMENT_INTEGRATION: &str = include_str!("../assets/benchmarks/payment_integration.yaml");
+pub const BENCH_PAYMENT_INTEGRATION: &str =
+    include_str!("../assets/benchmarks/payment_integration.yaml");
 /// Бенчмарк: brownfield-декомпозиция монолита.
-pub const BENCH_LEGACY_DECOMPOSITION: &str = include_str!("../assets/benchmarks/legacy_decomposition.yaml");
+pub const BENCH_LEGACY_DECOMPOSITION: &str =
+    include_str!("../assets/benchmarks/legacy_decomposition.yaml");
 /// Бенчмарк: event-driven интеграция доменов.
-pub const BENCH_EVENT_DRIVEN_DESIGN: &str = include_str!("../assets/benchmarks/event_driven_design.yaml");
+pub const BENCH_EVENT_DRIVEN_DESIGN: &str =
+    include_str!("../assets/benchmarks/event_driven_design.yaml");
 
 /// Образец MCP-серверов (формат Claude Code `mcp.json`).
 pub const MCP_SERVERS_EXAMPLE: &str = include_str!("../examples/mcp.example.json");
@@ -61,200 +66,297 @@ pub const CRON_TASK_KB_DIGEST: &str = include_str!("../examples/cron/kb_digest.m
 /// Md-инструкция cron-задачи «дрейф-чек спек».
 pub const CRON_TASK_SPEC_DRIFT: &str = include_str!("../examples/cron/spec_drift.md");
 
-
 // ── Плагины (agent-plugins.org): скиллы + MCP + субагенты + хуки ──
 
 /// Встроенный файл плагина `assets/plugins/arch-core/plugin.json`.
-pub const PLUGIN_ARCH_CORE_PLUGIN_JSON: &str = include_str!("../assets/plugins/arch-core/plugin.json");
+pub const PLUGIN_ARCH_CORE_PLUGIN_JSON: &str =
+    include_str!("../assets/plugins/arch-core/plugin.json");
 /// Встроенный файл плагина `assets/plugins/arch-core/agents/adr-reviewer.md`.
-pub const PLUGIN_ARCH_CORE_AGENTS_ADR_REVIEWER_MD: &str = include_str!("../assets/plugins/arch-core/agents/adr-reviewer.md");
+pub const PLUGIN_ARCH_CORE_AGENTS_ADR_REVIEWER_MD: &str =
+    include_str!("../assets/plugins/arch-core/agents/adr-reviewer.md");
 /// Встроенный файл плагина `assets/plugins/arch-core/agents/nfr-auditor.md`.
-pub const PLUGIN_ARCH_CORE_AGENTS_NFR_AUDITOR_MD: &str = include_str!("../assets/plugins/arch-core/agents/nfr-auditor.md");
+pub const PLUGIN_ARCH_CORE_AGENTS_NFR_AUDITOR_MD: &str =
+    include_str!("../assets/plugins/arch-core/agents/nfr-auditor.md");
 /// Встроенный файл плагина `assets/plugins/arch-core/hooks/hooks.json`.
-pub const PLUGIN_ARCH_CORE_HOOKS_HOOKS_JSON: &str = include_str!("../assets/plugins/arch-core/hooks/hooks.json");
+pub const PLUGIN_ARCH_CORE_HOOKS_HOOKS_JSON: &str =
+    include_str!("../assets/plugins/arch-core/hooks/hooks.json");
 /// Встроенный файл плагина `assets/plugins/arch-core/mcp.json`.
 pub const PLUGIN_ARCH_CORE_MCP_JSON: &str = include_str!("../assets/plugins/arch-core/mcp.json");
 /// Встроенный файл плагина `assets/plugins/arch-office/agents/report-proofreader.md`.
-pub const PLUGIN_ARCH_OFFICE_AGENTS_REPORT_PROOFREADER_MD: &str = include_str!("../assets/plugins/arch-office/agents/report-proofreader.md");
+pub const PLUGIN_ARCH_OFFICE_AGENTS_REPORT_PROOFREADER_MD: &str =
+    include_str!("../assets/plugins/arch-office/agents/report-proofreader.md");
 /// Встроенный файл плагина `assets/plugins/arch-office/mcp.json`.
-pub const PLUGIN_ARCH_OFFICE_MCP_JSON: &str = include_str!("../assets/plugins/arch-office/mcp.json");
+pub const PLUGIN_ARCH_OFFICE_MCP_JSON: &str =
+    include_str!("../assets/plugins/arch-office/mcp.json");
 /// Встроенный файл плагина `assets/plugins/arch-core/agents/repo-scout.md`.
-pub const PLUGIN_ARCH_CORE_AGENTS_REPO_SCOUT_MD: &str = include_str!("../assets/plugins/arch-core/agents/repo-scout.md");
+pub const PLUGIN_ARCH_CORE_AGENTS_REPO_SCOUT_MD: &str =
+    include_str!("../assets/plugins/arch-core/agents/repo-scout.md");
 /// Встроенный файл плагина `assets/plugins/arch-core/skills/adr-authoring/SKILL.md`.
-pub const PLUGIN_ARCH_CORE_SKILLS_ADR_AUTHORING_SKILL_MD: &str = include_str!("../assets/plugins/arch-core/skills/adr-authoring/SKILL.md");
+pub const PLUGIN_ARCH_CORE_SKILLS_ADR_AUTHORING_SKILL_MD: &str =
+    include_str!("../assets/plugins/arch-core/skills/adr-authoring/SKILL.md");
 /// Встроенный файл плагина `assets/plugins/arch-core/skills/adr-authoring/references/adr-template.md`.
-pub const PLUGIN_ARCH_CORE_SKILLS_ADR_AUTHORING_REFERENCES_ADR_TEMPLATE_MD: &str = include_str!("../assets/plugins/arch-core/skills/adr-authoring/references/adr-template.md");
+pub const PLUGIN_ARCH_CORE_SKILLS_ADR_AUTHORING_REFERENCES_ADR_TEMPLATE_MD: &str =
+    include_str!("../assets/plugins/arch-core/skills/adr-authoring/references/adr-template.md");
 /// Встроенный файл плагина `assets/plugins/arch-core/skills/adversarial-review/SKILL.md`.
-pub const PLUGIN_ARCH_CORE_SKILLS_ADVERSARIAL_REVIEW_SKILL_MD: &str = include_str!("../assets/plugins/arch-core/skills/adversarial-review/SKILL.md");
+pub const PLUGIN_ARCH_CORE_SKILLS_ADVERSARIAL_REVIEW_SKILL_MD: &str =
+    include_str!("../assets/plugins/arch-core/skills/adversarial-review/SKILL.md");
 /// Встроенный файл плагина `assets/plugins/arch-core/skills/c4-mermaid/SKILL.md`.
-pub const PLUGIN_ARCH_CORE_SKILLS_C4_MERMAID_SKILL_MD: &str = include_str!("../assets/plugins/arch-core/skills/c4-mermaid/SKILL.md");
+pub const PLUGIN_ARCH_CORE_SKILLS_C4_MERMAID_SKILL_MD: &str =
+    include_str!("../assets/plugins/arch-core/skills/c4-mermaid/SKILL.md");
 /// Встроенный файл плагина `assets/plugins/arch-core/skills/delta-spec/SKILL.md`.
-pub const PLUGIN_ARCH_CORE_SKILLS_DELTA_SPEC_SKILL_MD: &str = include_str!("../assets/plugins/arch-core/skills/delta-spec/SKILL.md");
+pub const PLUGIN_ARCH_CORE_SKILLS_DELTA_SPEC_SKILL_MD: &str =
+    include_str!("../assets/plugins/arch-core/skills/delta-spec/SKILL.md");
 /// Встроенный файл плагина `assets/plugins/arch-core/skills/dsh-harness-patterns/SKILL.md`.
-pub const PLUGIN_ARCH_CORE_SKILLS_DSH_HARNESS_PATTERNS_SKILL_MD: &str = include_str!("../assets/plugins/arch-core/skills/dsh-harness-patterns/SKILL.md");
+pub const PLUGIN_ARCH_CORE_SKILLS_DSH_HARNESS_PATTERNS_SKILL_MD: &str =
+    include_str!("../assets/plugins/arch-core/skills/dsh-harness-patterns/SKILL.md");
 /// Встроенный файл плагина `assets/plugins/arch-core/skills/fitness-functions/SKILL.md`.
-pub const PLUGIN_ARCH_CORE_SKILLS_FITNESS_FUNCTIONS_SKILL_MD: &str = include_str!("../assets/plugins/arch-core/skills/fitness-functions/SKILL.md");
+pub const PLUGIN_ARCH_CORE_SKILLS_FITNESS_FUNCTIONS_SKILL_MD: &str =
+    include_str!("../assets/plugins/arch-core/skills/fitness-functions/SKILL.md");
 /// Встроенный файл плагина `assets/plugins/arch-core/skills/handoff-packaging/SKILL.md`.
-pub const PLUGIN_ARCH_CORE_SKILLS_HANDOFF_PACKAGING_SKILL_MD: &str = include_str!("../assets/plugins/arch-core/skills/handoff-packaging/SKILL.md");
+pub const PLUGIN_ARCH_CORE_SKILLS_HANDOFF_PACKAGING_SKILL_MD: &str =
+    include_str!("../assets/plugins/arch-core/skills/handoff-packaging/SKILL.md");
 /// Встроенный файл плагина `assets/plugins/arch-core/skills/nfr-design/SKILL.md`.
-pub const PLUGIN_ARCH_CORE_SKILLS_NFR_DESIGN_SKILL_MD: &str = include_str!("../assets/plugins/arch-core/skills/nfr-design/SKILL.md");
+pub const PLUGIN_ARCH_CORE_SKILLS_NFR_DESIGN_SKILL_MD: &str =
+    include_str!("../assets/plugins/arch-core/skills/nfr-design/SKILL.md");
 /// Встроенный файл плагина `assets/plugins/arch-core/skills/readiness-gate/SKILL.md`.
-pub const PLUGIN_ARCH_CORE_SKILLS_READINESS_GATE_SKILL_MD: &str = include_str!("../assets/plugins/arch-core/skills/readiness-gate/SKILL.md");
+pub const PLUGIN_ARCH_CORE_SKILLS_READINESS_GATE_SKILL_MD: &str =
+    include_str!("../assets/plugins/arch-core/skills/readiness-gate/SKILL.md");
 /// Встроенный файл плагина `assets/plugins/arch-core/skills/reverse-discovery/SKILL.md`.
-pub const PLUGIN_ARCH_CORE_SKILLS_REVERSE_DISCOVERY_SKILL_MD: &str = include_str!("../assets/plugins/arch-core/skills/reverse-discovery/SKILL.md");
+pub const PLUGIN_ARCH_CORE_SKILLS_REVERSE_DISCOVERY_SKILL_MD: &str =
+    include_str!("../assets/plugins/arch-core/skills/reverse-discovery/SKILL.md");
 /// Встроенный файл плагина `assets/plugins/arch-core/skills/rubric-judging/SKILL.md`.
-pub const PLUGIN_ARCH_CORE_SKILLS_RUBRIC_JUDGING_SKILL_MD: &str = include_str!("../assets/plugins/arch-core/skills/rubric-judging/SKILL.md");
+pub const PLUGIN_ARCH_CORE_SKILLS_RUBRIC_JUDGING_SKILL_MD: &str =
+    include_str!("../assets/plugins/arch-core/skills/rubric-judging/SKILL.md");
 /// Встроенный файл плагина `assets/plugins/arch-core/skills/significance-routing/SKILL.md`.
-pub const PLUGIN_ARCH_CORE_SKILLS_SIGNIFICANCE_ROUTING_SKILL_MD: &str = include_str!("../assets/plugins/arch-core/skills/significance-routing/SKILL.md");
+pub const PLUGIN_ARCH_CORE_SKILLS_SIGNIFICANCE_ROUTING_SKILL_MD: &str =
+    include_str!("../assets/plugins/arch-core/skills/significance-routing/SKILL.md");
 /// Встроенный файл плагина `assets/plugins/arch-core/skills/skill-authoring/SKILL.md`.
-pub const PLUGIN_ARCH_CORE_SKILLS_SKILL_AUTHORING_SKILL_MD: &str = include_str!("../assets/plugins/arch-core/skills/skill-authoring/SKILL.md");
+pub const PLUGIN_ARCH_CORE_SKILLS_SKILL_AUTHORING_SKILL_MD: &str =
+    include_str!("../assets/plugins/arch-core/skills/skill-authoring/SKILL.md");
 /// Встроенный файл плагина `assets/plugins/arch-core/skills/spine-invariants/SKILL.md`.
-pub const PLUGIN_ARCH_CORE_SKILLS_SPINE_INVARIANTS_SKILL_MD: &str = include_str!("../assets/plugins/arch-core/skills/spine-invariants/SKILL.md");
+pub const PLUGIN_ARCH_CORE_SKILLS_SPINE_INVARIANTS_SKILL_MD: &str =
+    include_str!("../assets/plugins/arch-core/skills/spine-invariants/SKILL.md");
 /// Встроенный файл плагина `assets/plugins/arch-core/skills/spine-invariants/references/spine-template.md`.
-pub const PLUGIN_ARCH_CORE_SKILLS_SPINE_INVARIANTS_REFERENCES_SPINE_TEMPLATE_MD: &str = include_str!("../assets/plugins/arch-core/skills/spine-invariants/references/spine-template.md");
+pub const PLUGIN_ARCH_CORE_SKILLS_SPINE_INVARIANTS_REFERENCES_SPINE_TEMPLATE_MD: &str = include_str!(
+    "../assets/plugins/arch-core/skills/spine-invariants/references/spine-template.md"
+);
 /// Встроенный файл плагина `assets/plugins/patterns-integration/agents/pattern-selector.md`.
-pub const PLUGIN_PATTERNS_INTEGRATION_AGENTS_PATTERN_SELECTOR_MD: &str = include_str!("../assets/plugins/patterns-integration/agents/pattern-selector.md");
+pub const PLUGIN_PATTERNS_INTEGRATION_AGENTS_PATTERN_SELECTOR_MD: &str =
+    include_str!("../assets/plugins/patterns-integration/agents/pattern-selector.md");
 /// Встроенный файл плагина `assets/plugins/patterns-integration/hooks/hooks.json`.
-pub const PLUGIN_PATTERNS_INTEGRATION_HOOKS_HOOKS_JSON: &str = include_str!("../assets/plugins/patterns-integration/hooks/hooks.json");
+pub const PLUGIN_PATTERNS_INTEGRATION_HOOKS_HOOKS_JSON: &str =
+    include_str!("../assets/plugins/patterns-integration/hooks/hooks.json");
 /// Встроенный файл плагина `assets/plugins/patterns-integration/mcp.json`.
-pub const PLUGIN_PATTERNS_INTEGRATION_MCP_JSON: &str = include_str!("../assets/plugins/patterns-integration/mcp.json");
+pub const PLUGIN_PATTERNS_INTEGRATION_MCP_JSON: &str =
+    include_str!("../assets/plugins/patterns-integration/mcp.json");
 /// Встроенный файл плагина `assets/plugins/patterns-integration/plugin.json`.
-pub const PLUGIN_PATTERNS_INTEGRATION_PLUGIN_JSON: &str = include_str!("../assets/plugins/patterns-integration/plugin.json");
+pub const PLUGIN_PATTERNS_INTEGRATION_PLUGIN_JSON: &str =
+    include_str!("../assets/plugins/patterns-integration/plugin.json");
 /// Встроенный файл плагина `assets/plugins/patterns-integration/skills/cqrs-api-composition/SKILL.md`.
-pub const PLUGIN_PATTERNS_INTEGRATION_SKILLS_CQRS_API_COMPOSITION_SKILL_MD: &str = include_str!("../assets/plugins/patterns-integration/skills/cqrs-api-composition/SKILL.md");
+pub const PLUGIN_PATTERNS_INTEGRATION_SKILLS_CQRS_API_COMPOSITION_SKILL_MD: &str =
+    include_str!("../assets/plugins/patterns-integration/skills/cqrs-api-composition/SKILL.md");
 /// Встроенный файл плагина `assets/plugins/patterns-integration/skills/idempotent-consumer/SKILL.md`.
-pub const PLUGIN_PATTERNS_INTEGRATION_SKILLS_IDEMPOTENT_CONSUMER_SKILL_MD: &str = include_str!("../assets/plugins/patterns-integration/skills/idempotent-consumer/SKILL.md");
+pub const PLUGIN_PATTERNS_INTEGRATION_SKILLS_IDEMPOTENT_CONSUMER_SKILL_MD: &str =
+    include_str!("../assets/plugins/patterns-integration/skills/idempotent-consumer/SKILL.md");
 /// Встроенный файл плагина `assets/plugins/patterns-integration/skills/saga-transactions/SKILL.md`.
-pub const PLUGIN_PATTERNS_INTEGRATION_SKILLS_SAGA_TRANSACTIONS_SKILL_MD: &str = include_str!("../assets/plugins/patterns-integration/skills/saga-transactions/SKILL.md");
+pub const PLUGIN_PATTERNS_INTEGRATION_SKILLS_SAGA_TRANSACTIONS_SKILL_MD: &str =
+    include_str!("../assets/plugins/patterns-integration/skills/saga-transactions/SKILL.md");
 /// Встроенный файл плагина `assets/plugins/patterns-integration/skills/strangler-acl/SKILL.md`.
-pub const PLUGIN_PATTERNS_INTEGRATION_SKILLS_STRANGLER_ACL_SKILL_MD: &str = include_str!("../assets/plugins/patterns-integration/skills/strangler-acl/SKILL.md");
+pub const PLUGIN_PATTERNS_INTEGRATION_SKILLS_STRANGLER_ACL_SKILL_MD: &str =
+    include_str!("../assets/plugins/patterns-integration/skills/strangler-acl/SKILL.md");
 /// Встроенный файл плагина `assets/plugins/patterns-integration/skills/transactional-outbox/SKILL.md`.
-pub const PLUGIN_PATTERNS_INTEGRATION_SKILLS_TRANSACTIONAL_OUTBOX_SKILL_MD: &str = include_str!("../assets/plugins/patterns-integration/skills/transactional-outbox/SKILL.md");
+pub const PLUGIN_PATTERNS_INTEGRATION_SKILLS_TRANSACTIONAL_OUTBOX_SKILL_MD: &str =
+    include_str!("../assets/plugins/patterns-integration/skills/transactional-outbox/SKILL.md");
 /// Встроенный файл плагина `assets/plugins/patterns-resilience/agents/resilience-auditor.md`.
-pub const PLUGIN_PATTERNS_RESILIENCE_AGENTS_RESILIENCE_AUDITOR_MD: &str = include_str!("../assets/plugins/patterns-resilience/agents/resilience-auditor.md");
+pub const PLUGIN_PATTERNS_RESILIENCE_AGENTS_RESILIENCE_AUDITOR_MD: &str =
+    include_str!("../assets/plugins/patterns-resilience/agents/resilience-auditor.md");
 /// Встроенный файл плагина `assets/plugins/patterns-resilience/hooks/hooks.json`.
-pub const PLUGIN_PATTERNS_RESILIENCE_HOOKS_HOOKS_JSON: &str = include_str!("../assets/plugins/patterns-resilience/hooks/hooks.json");
+pub const PLUGIN_PATTERNS_RESILIENCE_HOOKS_HOOKS_JSON: &str =
+    include_str!("../assets/plugins/patterns-resilience/hooks/hooks.json");
 /// Встроенный файл плагина `assets/plugins/patterns-resilience/mcp.json`.
-pub const PLUGIN_PATTERNS_RESILIENCE_MCP_JSON: &str = include_str!("../assets/plugins/patterns-resilience/mcp.json");
+pub const PLUGIN_PATTERNS_RESILIENCE_MCP_JSON: &str =
+    include_str!("../assets/plugins/patterns-resilience/mcp.json");
 /// Встроенный файл плагина `assets/plugins/patterns-resilience/plugin.json`.
-pub const PLUGIN_PATTERNS_RESILIENCE_PLUGIN_JSON: &str = include_str!("../assets/plugins/patterns-resilience/plugin.json");
+pub const PLUGIN_PATTERNS_RESILIENCE_PLUGIN_JSON: &str =
+    include_str!("../assets/plugins/patterns-resilience/plugin.json");
 /// Встроенный файл плагина `assets/plugins/patterns-resilience/skills/bulkhead/SKILL.md`.
-pub const PLUGIN_PATTERNS_RESILIENCE_SKILLS_BULKHEAD_SKILL_MD: &str = include_str!("../assets/plugins/patterns-resilience/skills/bulkhead/SKILL.md");
+pub const PLUGIN_PATTERNS_RESILIENCE_SKILLS_BULKHEAD_SKILL_MD: &str =
+    include_str!("../assets/plugins/patterns-resilience/skills/bulkhead/SKILL.md");
 /// Встроенный файл плагина `assets/plugins/patterns-resilience/skills/cache-aside/SKILL.md`.
-pub const PLUGIN_PATTERNS_RESILIENCE_SKILLS_CACHE_ASIDE_SKILL_MD: &str = include_str!("../assets/plugins/patterns-resilience/skills/cache-aside/SKILL.md");
+pub const PLUGIN_PATTERNS_RESILIENCE_SKILLS_CACHE_ASIDE_SKILL_MD: &str =
+    include_str!("../assets/plugins/patterns-resilience/skills/cache-aside/SKILL.md");
 /// Встроенный файл плагина `assets/plugins/patterns-resilience/skills/circuit-breaker-retry/SKILL.md`.
-pub const PLUGIN_PATTERNS_RESILIENCE_SKILLS_CIRCUIT_BREAKER_RETRY_SKILL_MD: &str = include_str!("../assets/plugins/patterns-resilience/skills/circuit-breaker-retry/SKILL.md");
+pub const PLUGIN_PATTERNS_RESILIENCE_SKILLS_CIRCUIT_BREAKER_RETRY_SKILL_MD: &str =
+    include_str!("../assets/plugins/patterns-resilience/skills/circuit-breaker-retry/SKILL.md");
 /// Встроенный файл плагина `assets/plugins/patterns-resilience/skills/queue-load-leveling/SKILL.md`.
-pub const PLUGIN_PATTERNS_RESILIENCE_SKILLS_QUEUE_LOAD_LEVELING_SKILL_MD: &str = include_str!("../assets/plugins/patterns-resilience/skills/queue-load-leveling/SKILL.md");
+pub const PLUGIN_PATTERNS_RESILIENCE_SKILLS_QUEUE_LOAD_LEVELING_SKILL_MD: &str =
+    include_str!("../assets/plugins/patterns-resilience/skills/queue-load-leveling/SKILL.md");
 /// Встроенный файл плагина `assets/plugins/patterns-resilience/skills/rate-limiting-throttling/SKILL.md`.
-pub const PLUGIN_PATTERNS_RESILIENCE_SKILLS_RATE_LIMITING_THROTTLING_SKILL_MD: &str = include_str!("../assets/plugins/patterns-resilience/skills/rate-limiting-throttling/SKILL.md");
+pub const PLUGIN_PATTERNS_RESILIENCE_SKILLS_RATE_LIMITING_THROTTLING_SKILL_MD: &str =
+    include_str!("../assets/plugins/patterns-resilience/skills/rate-limiting-throttling/SKILL.md");
 
 /// Встроенный файл плагина `assets/plugins/arch-office/plugin.json`.
-pub const PLUGIN_ARCH_OFFICE_PLUGIN_JSON: &str = include_str!("../assets/plugins/arch-office/plugin.json");
+pub const PLUGIN_ARCH_OFFICE_PLUGIN_JSON: &str =
+    include_str!("../assets/plugins/arch-office/plugin.json");
 /// Встроенный файл плагина `assets/plugins/arch-office/skills/docx-architecture-vision/SKILL.md`.
-pub const PLUGIN_ARCH_OFFICE_SKILLS_DOCX_ARCHITECTURE_VISION_SKILL_MD: &str = include_str!("../assets/plugins/arch-office/skills/docx-architecture-vision/SKILL.md");
+pub const PLUGIN_ARCH_OFFICE_SKILLS_DOCX_ARCHITECTURE_VISION_SKILL_MD: &str =
+    include_str!("../assets/plugins/arch-office/skills/docx-architecture-vision/SKILL.md");
 /// Встроенный файл плагина `assets/plugins/arch-office/skills/docx-architecture-vision/references/docx_architecture_vision_gen.py`.
 pub const PLUGIN_ARCH_OFFICE_SKILLS_DOCX_ARCHITECTURE_VISION_REFERENCES_DOCX_ARCHITECTURE_VISION_GEN_PY: &str = include_str!("../assets/plugins/arch-office/skills/docx-architecture-vision/references/docx_architecture_vision_gen.py");
 /// Встроенный файл плагина `assets/plugins/arch-office/skills/docx-current-state-assessment/SKILL.md`.
-pub const PLUGIN_ARCH_OFFICE_SKILLS_DOCX_CURRENT_STATE_ASSESSMENT_SKILL_MD: &str = include_str!("../assets/plugins/arch-office/skills/docx-current-state-assessment/SKILL.md");
+pub const PLUGIN_ARCH_OFFICE_SKILLS_DOCX_CURRENT_STATE_ASSESSMENT_SKILL_MD: &str =
+    include_str!("../assets/plugins/arch-office/skills/docx-current-state-assessment/SKILL.md");
 /// Встроенный файл плагина `assets/plugins/arch-office/skills/docx-current-state-assessment/references/docx_current_state_assessment_gen.py`.
 pub const PLUGIN_ARCH_OFFICE_SKILLS_DOCX_CURRENT_STATE_ASSESSMENT_REFERENCES_DOCX_CURRENT_STATE_ASSESSMENT_GEN_PY: &str = include_str!("../assets/plugins/arch-office/skills/docx-current-state-assessment/references/docx_current_state_assessment_gen.py");
 /// Встроенный файл плагина `assets/plugins/arch-office/skills/docx-integration-spec/SKILL.md`.
-pub const PLUGIN_ARCH_OFFICE_SKILLS_DOCX_INTEGRATION_SPEC_SKILL_MD: &str = include_str!("../assets/plugins/arch-office/skills/docx-integration-spec/SKILL.md");
+pub const PLUGIN_ARCH_OFFICE_SKILLS_DOCX_INTEGRATION_SPEC_SKILL_MD: &str =
+    include_str!("../assets/plugins/arch-office/skills/docx-integration-spec/SKILL.md");
 /// Встроенный файл плагина `assets/plugins/arch-office/skills/docx-integration-spec/references/docx_integration_spec_gen.py`.
 pub const PLUGIN_ARCH_OFFICE_SKILLS_DOCX_INTEGRATION_SPEC_REFERENCES_DOCX_INTEGRATION_SPEC_GEN_PY: &str = include_str!("../assets/plugins/arch-office/skills/docx-integration-spec/references/docx_integration_spec_gen.py");
 /// Встроенный файл плагина `assets/plugins/arch-office/skills/docx-migration-roadmap/SKILL.md`.
-pub const PLUGIN_ARCH_OFFICE_SKILLS_DOCX_MIGRATION_ROADMAP_SKILL_MD: &str = include_str!("../assets/plugins/arch-office/skills/docx-migration-roadmap/SKILL.md");
+pub const PLUGIN_ARCH_OFFICE_SKILLS_DOCX_MIGRATION_ROADMAP_SKILL_MD: &str =
+    include_str!("../assets/plugins/arch-office/skills/docx-migration-roadmap/SKILL.md");
 /// Встроенный файл плагина `assets/plugins/arch-office/skills/docx-migration-roadmap/references/docx_migration_roadmap_gen.py`.
 pub const PLUGIN_ARCH_OFFICE_SKILLS_DOCX_MIGRATION_ROADMAP_REFERENCES_DOCX_MIGRATION_ROADMAP_GEN_PY: &str = include_str!("../assets/plugins/arch-office/skills/docx-migration-roadmap/references/docx_migration_roadmap_gen.py");
 /// Встроенный файл плагина `assets/plugins/arch-office/skills/docx-research-report/SKILL.md`.
-pub const PLUGIN_ARCH_OFFICE_SKILLS_DOCX_RESEARCH_REPORT_SKILL_MD: &str = include_str!("../assets/plugins/arch-office/skills/docx-research-report/SKILL.md");
+pub const PLUGIN_ARCH_OFFICE_SKILLS_DOCX_RESEARCH_REPORT_SKILL_MD: &str =
+    include_str!("../assets/plugins/arch-office/skills/docx-research-report/SKILL.md");
 /// Встроенный файл плагина `assets/plugins/arch-office/skills/docx-research-report/references/docx_research_report_gen.py`.
-pub const PLUGIN_ARCH_OFFICE_SKILLS_DOCX_RESEARCH_REPORT_REFERENCES_DOCX_RESEARCH_REPORT_GEN_PY: &str = include_str!("../assets/plugins/arch-office/skills/docx-research-report/references/docx_research_report_gen.py");
+pub const PLUGIN_ARCH_OFFICE_SKILLS_DOCX_RESEARCH_REPORT_REFERENCES_DOCX_RESEARCH_REPORT_GEN_PY:
+    &str = include_str!(
+    "../assets/plugins/arch-office/skills/docx-research-report/references/docx_research_report_gen.py"
+);
 /// Встроенный файл плагина `assets/plugins/arch-office/skills/docx-solution-design/SKILL.md`.
-pub const PLUGIN_ARCH_OFFICE_SKILLS_DOCX_SOLUTION_DESIGN_SKILL_MD: &str = include_str!("../assets/plugins/arch-office/skills/docx-solution-design/SKILL.md");
+pub const PLUGIN_ARCH_OFFICE_SKILLS_DOCX_SOLUTION_DESIGN_SKILL_MD: &str =
+    include_str!("../assets/plugins/arch-office/skills/docx-solution-design/SKILL.md");
 /// Встроенный файл плагина `assets/plugins/arch-office/skills/docx-solution-design/references/docx_solution_design_gen.py`.
-pub const PLUGIN_ARCH_OFFICE_SKILLS_DOCX_SOLUTION_DESIGN_REFERENCES_DOCX_SOLUTION_DESIGN_GEN_PY: &str = include_str!("../assets/plugins/arch-office/skills/docx-solution-design/references/docx_solution_design_gen.py");
+pub const PLUGIN_ARCH_OFFICE_SKILLS_DOCX_SOLUTION_DESIGN_REFERENCES_DOCX_SOLUTION_DESIGN_GEN_PY:
+    &str = include_str!(
+    "../assets/plugins/arch-office/skills/docx-solution-design/references/docx_solution_design_gen.py"
+);
 /// Встроенный файл плагина `assets/plugins/arch-office/skills/pptx-architecture-review/SKILL.md`.
-pub const PLUGIN_ARCH_OFFICE_SKILLS_PPTX_ARCHITECTURE_REVIEW_SKILL_MD: &str = include_str!("../assets/plugins/arch-office/skills/pptx-architecture-review/SKILL.md");
+pub const PLUGIN_ARCH_OFFICE_SKILLS_PPTX_ARCHITECTURE_REVIEW_SKILL_MD: &str =
+    include_str!("../assets/plugins/arch-office/skills/pptx-architecture-review/SKILL.md");
 /// Встроенный файл плагина `assets/plugins/arch-office/skills/pptx-architecture-review/references/pptx_architecture_review_gen.py`.
 pub const PLUGIN_ARCH_OFFICE_SKILLS_PPTX_ARCHITECTURE_REVIEW_REFERENCES_PPTX_ARCHITECTURE_REVIEW_GEN_PY: &str = include_str!("../assets/plugins/arch-office/skills/pptx-architecture-review/references/pptx_architecture_review_gen.py");
 /// Встроенный файл плагина `assets/plugins/arch-office/skills/pptx-board-deck/SKILL.md`.
-pub const PLUGIN_ARCH_OFFICE_SKILLS_PPTX_BOARD_DECK_SKILL_MD: &str = include_str!("../assets/plugins/arch-office/skills/pptx-board-deck/SKILL.md");
+pub const PLUGIN_ARCH_OFFICE_SKILLS_PPTX_BOARD_DECK_SKILL_MD: &str =
+    include_str!("../assets/plugins/arch-office/skills/pptx-board-deck/SKILL.md");
 /// Встроенный файл плагина `assets/plugins/arch-office/skills/pptx-board-deck/references/pptx_board_deck_gen.py`.
-pub const PLUGIN_ARCH_OFFICE_SKILLS_PPTX_BOARD_DECK_REFERENCES_PPTX_BOARD_DECK_GEN_PY: &str = include_str!("../assets/plugins/arch-office/skills/pptx-board-deck/references/pptx_board_deck_gen.py");
+pub const PLUGIN_ARCH_OFFICE_SKILLS_PPTX_BOARD_DECK_REFERENCES_PPTX_BOARD_DECK_GEN_PY: &str = include_str!(
+    "../assets/plugins/arch-office/skills/pptx-board-deck/references/pptx_board_deck_gen.py"
+);
 /// Встроенный файл плагина `assets/plugins/arch-office/skills/xlsx-decision-matrix/SKILL.md`.
-pub const PLUGIN_ARCH_OFFICE_SKILLS_XLSX_DECISION_MATRIX_SKILL_MD: &str = include_str!("../assets/plugins/arch-office/skills/xlsx-decision-matrix/SKILL.md");
+pub const PLUGIN_ARCH_OFFICE_SKILLS_XLSX_DECISION_MATRIX_SKILL_MD: &str =
+    include_str!("../assets/plugins/arch-office/skills/xlsx-decision-matrix/SKILL.md");
 /// Встроенный файл плагина `assets/plugins/arch-office/skills/xlsx-decision-matrix/references/xlsx_decision_matrix_gen.py`.
-pub const PLUGIN_ARCH_OFFICE_SKILLS_XLSX_DECISION_MATRIX_REFERENCES_XLSX_DECISION_MATRIX_GEN_PY: &str = include_str!("../assets/plugins/arch-office/skills/xlsx-decision-matrix/references/xlsx_decision_matrix_gen.py");
+pub const PLUGIN_ARCH_OFFICE_SKILLS_XLSX_DECISION_MATRIX_REFERENCES_XLSX_DECISION_MATRIX_GEN_PY:
+    &str = include_str!(
+    "../assets/plugins/arch-office/skills/xlsx-decision-matrix/references/xlsx_decision_matrix_gen.py"
+);
 /// Встроенный файл плагина `assets/plugins/arch-office/skills/xlsx-integration-matrix/SKILL.md`.
-pub const PLUGIN_ARCH_OFFICE_SKILLS_XLSX_INTEGRATION_MATRIX_SKILL_MD: &str = include_str!("../assets/plugins/arch-office/skills/xlsx-integration-matrix/SKILL.md");
+pub const PLUGIN_ARCH_OFFICE_SKILLS_XLSX_INTEGRATION_MATRIX_SKILL_MD: &str =
+    include_str!("../assets/plugins/arch-office/skills/xlsx-integration-matrix/SKILL.md");
 /// Встроенный файл плагина `assets/plugins/arch-office/skills/xlsx-integration-matrix/references/xlsx_integration_matrix_gen.py`.
 pub const PLUGIN_ARCH_OFFICE_SKILLS_XLSX_INTEGRATION_MATRIX_REFERENCES_XLSX_INTEGRATION_MATRIX_GEN_PY: &str = include_str!("../assets/plugins/arch-office/skills/xlsx-integration-matrix/references/xlsx_integration_matrix_gen.py");
 /// Встроенный файл плагина `assets/plugins/arch-office/skills/xlsx-risk-register/SKILL.md`.
-pub const PLUGIN_ARCH_OFFICE_SKILLS_XLSX_RISK_REGISTER_SKILL_MD: &str = include_str!("../assets/plugins/arch-office/skills/xlsx-risk-register/SKILL.md");
+pub const PLUGIN_ARCH_OFFICE_SKILLS_XLSX_RISK_REGISTER_SKILL_MD: &str =
+    include_str!("../assets/plugins/arch-office/skills/xlsx-risk-register/SKILL.md");
 /// Встроенный файл плагина `assets/plugins/arch-office/skills/xlsx-risk-register/references/xlsx_risk_register_gen.py`.
-pub const PLUGIN_ARCH_OFFICE_SKILLS_XLSX_RISK_REGISTER_REFERENCES_XLSX_RISK_REGISTER_GEN_PY: &str = include_str!("../assets/plugins/arch-office/skills/xlsx-risk-register/references/xlsx_risk_register_gen.py");
+pub const PLUGIN_ARCH_OFFICE_SKILLS_XLSX_RISK_REGISTER_REFERENCES_XLSX_RISK_REGISTER_GEN_PY: &str = include_str!(
+    "../assets/plugins/arch-office/skills/xlsx-risk-register/references/xlsx_risk_register_gen.py"
+);
 /// Встроенный файл плагина `assets/plugins/arch-office/skills/xlsx-system-catalog/SKILL.md`.
-pub const PLUGIN_ARCH_OFFICE_SKILLS_XLSX_SYSTEM_CATALOG_SKILL_MD: &str = include_str!("../assets/plugins/arch-office/skills/xlsx-system-catalog/SKILL.md");
+pub const PLUGIN_ARCH_OFFICE_SKILLS_XLSX_SYSTEM_CATALOG_SKILL_MD: &str =
+    include_str!("../assets/plugins/arch-office/skills/xlsx-system-catalog/SKILL.md");
 /// Встроенный файл плагина `assets/plugins/arch-office/skills/xlsx-system-catalog/references/xlsx_system_catalog_gen.py`.
-pub const PLUGIN_ARCH_OFFICE_SKILLS_XLSX_SYSTEM_CATALOG_REFERENCES_XLSX_SYSTEM_CATALOG_GEN_PY: &str = include_str!("../assets/plugins/arch-office/skills/xlsx-system-catalog/references/xlsx_system_catalog_gen.py");
+pub const PLUGIN_ARCH_OFFICE_SKILLS_XLSX_SYSTEM_CATALOG_REFERENCES_XLSX_SYSTEM_CATALOG_GEN_PY:
+    &str = include_str!(
+    "../assets/plugins/arch-office/skills/xlsx-system-catalog/references/xlsx_system_catalog_gen.py"
+);
 
 /// Встроенный файл `assets/plugins/arch-core/skills/agents-md-authoring/SKILL.md`.
-pub const PLUGIN_ARCH_CORE_SKILLS_AGENTS_MD_AUTHORING_SKILL_MD: &str = include_str!("../assets/plugins/arch-core/skills/agents-md-authoring/SKILL.md");
+pub const PLUGIN_ARCH_CORE_SKILLS_AGENTS_MD_AUTHORING_SKILL_MD: &str =
+    include_str!("../assets/plugins/arch-core/skills/agents-md-authoring/SKILL.md");
 /// Встроенный файл `assets/rubrics/agents_md_quality.yaml`.
-pub const RUBRIC_AGENTS_MD_QUALITY_YAML: &str = include_str!("../assets/rubrics/agents_md_quality.yaml");
+pub const RUBRIC_AGENTS_MD_QUALITY_YAML: &str =
+    include_str!("../assets/rubrics/agents_md_quality.yaml");
 /// Встроенный файл `examples/cron/agents_md_drift.md`.
 pub const CRON_TASK_AGENTS_MD_DRIFT_MD: &str = include_str!("../examples/cron/agents_md_drift.md");
 
 /// Встроенный файл плагина `assets/plugins/aws-agentic-ai/agents/agentic-architect.md`.
-pub const PLUGIN_AWS_AGENTIC_AI_AGENTS_AGENTIC_ARCHITECT_MD: &str = include_str!("../assets/plugins/aws-agentic-ai/agents/agentic-architect.md");
+pub const PLUGIN_AWS_AGENTIC_AI_AGENTS_AGENTIC_ARCHITECT_MD: &str =
+    include_str!("../assets/plugins/aws-agentic-ai/agents/agentic-architect.md");
 /// Встроенный файл плагина `assets/plugins/aws-agentic-ai/hooks/hooks.json`.
-pub const PLUGIN_AWS_AGENTIC_AI_HOOKS_HOOKS_JSON: &str = include_str!("../assets/plugins/aws-agentic-ai/hooks/hooks.json");
+pub const PLUGIN_AWS_AGENTIC_AI_HOOKS_HOOKS_JSON: &str =
+    include_str!("../assets/plugins/aws-agentic-ai/hooks/hooks.json");
 /// Встроенный файл плагина `assets/plugins/aws-agentic-ai/mcp.json`.
-pub const PLUGIN_AWS_AGENTIC_AI_MCP_JSON: &str = include_str!("../assets/plugins/aws-agentic-ai/mcp.json");
+pub const PLUGIN_AWS_AGENTIC_AI_MCP_JSON: &str =
+    include_str!("../assets/plugins/aws-agentic-ai/mcp.json");
 /// Встроенный файл плагина `assets/plugins/aws-agentic-ai/plugin.json`.
-pub const PLUGIN_AWS_AGENTIC_AI_PLUGIN_JSON: &str = include_str!("../assets/plugins/aws-agentic-ai/plugin.json");
+pub const PLUGIN_AWS_AGENTIC_AI_PLUGIN_JSON: &str =
+    include_str!("../assets/plugins/aws-agentic-ai/plugin.json");
 /// Встроенный файл плагина `assets/plugins/aws-agentic-ai/references/guide-map.md`.
-pub const PLUGIN_AWS_AGENTIC_AI_REFERENCES_GUIDE_MAP_MD: &str = include_str!("../assets/plugins/aws-agentic-ai/references/guide-map.md");
+pub const PLUGIN_AWS_AGENTIC_AI_REFERENCES_GUIDE_MAP_MD: &str =
+    include_str!("../assets/plugins/aws-agentic-ai/references/guide-map.md");
 /// Встроенный файл плагина `assets/plugins/aws-agentic-ai/skills/agent-patterns-overview/SKILL.md`.
-pub const PLUGIN_AWS_AGENTIC_AI_SKILLS_AGENT_PATTERNS_OVERVIEW_SKILL_MD: &str = include_str!("../assets/plugins/aws-agentic-ai/skills/agent-patterns-overview/SKILL.md");
+pub const PLUGIN_AWS_AGENTIC_AI_SKILLS_AGENT_PATTERNS_OVERVIEW_SKILL_MD: &str =
+    include_str!("../assets/plugins/aws-agentic-ai/skills/agent-patterns-overview/SKILL.md");
 /// Встроенный файл плагина `assets/plugins/aws-agentic-ai/skills/llm-workflow-patterns/SKILL.md`.
-pub const PLUGIN_AWS_AGENTIC_AI_SKILLS_LLM_WORKFLOW_PATTERNS_SKILL_MD: &str = include_str!("../assets/plugins/aws-agentic-ai/skills/llm-workflow-patterns/SKILL.md");
+pub const PLUGIN_AWS_AGENTIC_AI_SKILLS_LLM_WORKFLOW_PATTERNS_SKILL_MD: &str =
+    include_str!("../assets/plugins/aws-agentic-ai/skills/llm-workflow-patterns/SKILL.md");
 /// Встроенный файл плагина `assets/plugins/aws-agentic-ai/skills/multi-agent-collaboration/SKILL.md`.
-pub const PLUGIN_AWS_AGENTIC_AI_SKILLS_MULTI_AGENT_COLLABORATION_SKILL_MD: &str = include_str!("../assets/plugins/aws-agentic-ai/skills/multi-agent-collaboration/SKILL.md");
+pub const PLUGIN_AWS_AGENTIC_AI_SKILLS_MULTI_AGENT_COLLABORATION_SKILL_MD: &str =
+    include_str!("../assets/plugins/aws-agentic-ai/skills/multi-agent-collaboration/SKILL.md");
 /// Встроенный файл плагина `assets/plugins/aws-agentic-ai/skills/reflect-refine-loops/SKILL.md`.
-pub const PLUGIN_AWS_AGENTIC_AI_SKILLS_REFLECT_REFINE_LOOPS_SKILL_MD: &str = include_str!("../assets/plugins/aws-agentic-ai/skills/reflect-refine-loops/SKILL.md");
+pub const PLUGIN_AWS_AGENTIC_AI_SKILLS_REFLECT_REFINE_LOOPS_SKILL_MD: &str =
+    include_str!("../assets/plugins/aws-agentic-ai/skills/reflect-refine-loops/SKILL.md");
 /// Встроенный файл плагина `assets/plugins/aws-agentic-ai/skills/saga-orchestration-agents/SKILL.md`.
-pub const PLUGIN_AWS_AGENTIC_AI_SKILLS_SAGA_ORCHESTRATION_AGENTS_SKILL_MD: &str = include_str!("../assets/plugins/aws-agentic-ai/skills/saga-orchestration-agents/SKILL.md");
+pub const PLUGIN_AWS_AGENTIC_AI_SKILLS_SAGA_ORCHESTRATION_AGENTS_SKILL_MD: &str =
+    include_str!("../assets/plugins/aws-agentic-ai/skills/saga-orchestration-agents/SKILL.md");
 /// Встроенный файл плагина `assets/plugins/aws-builders-library/agents/distributed-systems-reviewer.md`.
-pub const PLUGIN_AWS_BUILDERS_LIBRARY_AGENTS_DISTRIBUTED_SYSTEMS_REVIEWER_MD: &str = include_str!("../assets/plugins/aws-builders-library/agents/distributed-systems-reviewer.md");
+pub const PLUGIN_AWS_BUILDERS_LIBRARY_AGENTS_DISTRIBUTED_SYSTEMS_REVIEWER_MD: &str =
+    include_str!("../assets/plugins/aws-builders-library/agents/distributed-systems-reviewer.md");
 /// Встроенный файл плагина `assets/plugins/aws-builders-library/hooks/hooks.json`.
-pub const PLUGIN_AWS_BUILDERS_LIBRARY_HOOKS_HOOKS_JSON: &str = include_str!("../assets/plugins/aws-builders-library/hooks/hooks.json");
+pub const PLUGIN_AWS_BUILDERS_LIBRARY_HOOKS_HOOKS_JSON: &str =
+    include_str!("../assets/plugins/aws-builders-library/hooks/hooks.json");
 /// Встроенный файл плагина `assets/plugins/aws-builders-library/mcp.json`.
-pub const PLUGIN_AWS_BUILDERS_LIBRARY_MCP_JSON: &str = include_str!("../assets/plugins/aws-builders-library/mcp.json");
+pub const PLUGIN_AWS_BUILDERS_LIBRARY_MCP_JSON: &str =
+    include_str!("../assets/plugins/aws-builders-library/mcp.json");
 /// Встроенный файл плагина `assets/plugins/aws-builders-library/plugin.json`.
-pub const PLUGIN_AWS_BUILDERS_LIBRARY_PLUGIN_JSON: &str = include_str!("../assets/plugins/aws-builders-library/plugin.json");
+pub const PLUGIN_AWS_BUILDERS_LIBRARY_PLUGIN_JSON: &str =
+    include_str!("../assets/plugins/aws-builders-library/plugin.json");
 /// Встроенный файл плагина `assets/plugins/aws-builders-library/references/catalog.md`.
-pub const PLUGIN_AWS_BUILDERS_LIBRARY_REFERENCES_CATALOG_MD: &str = include_str!("../assets/plugins/aws-builders-library/references/catalog.md");
+pub const PLUGIN_AWS_BUILDERS_LIBRARY_REFERENCES_CATALOG_MD: &str =
+    include_str!("../assets/plugins/aws-builders-library/references/catalog.md");
 /// Встроенный файл плагина `assets/plugins/aws-builders-library/skills/avoiding-fallback/SKILL.md`.
-pub const PLUGIN_AWS_BUILDERS_LIBRARY_SKILLS_AVOIDING_FALLBACK_SKILL_MD: &str = include_str!("../assets/plugins/aws-builders-library/skills/avoiding-fallback/SKILL.md");
+pub const PLUGIN_AWS_BUILDERS_LIBRARY_SKILLS_AVOIDING_FALLBACK_SKILL_MD: &str =
+    include_str!("../assets/plugins/aws-builders-library/skills/avoiding-fallback/SKILL.md");
 /// Встроенный файл плагина `assets/plugins/aws-builders-library/skills/control-data-plane/SKILL.md`.
-pub const PLUGIN_AWS_BUILDERS_LIBRARY_SKILLS_CONTROL_DATA_PLANE_SKILL_MD: &str = include_str!("../assets/plugins/aws-builders-library/skills/control-data-plane/SKILL.md");
+pub const PLUGIN_AWS_BUILDERS_LIBRARY_SKILLS_CONTROL_DATA_PLANE_SKILL_MD: &str =
+    include_str!("../assets/plugins/aws-builders-library/skills/control-data-plane/SKILL.md");
 /// Встроенный файл плагина `assets/plugins/aws-builders-library/skills/eight-failure-modes/SKILL.md`.
-pub const PLUGIN_AWS_BUILDERS_LIBRARY_SKILLS_EIGHT_FAILURE_MODES_SKILL_MD: &str = include_str!("../assets/plugins/aws-builders-library/skills/eight-failure-modes/SKILL.md");
+pub const PLUGIN_AWS_BUILDERS_LIBRARY_SKILLS_EIGHT_FAILURE_MODES_SKILL_MD: &str =
+    include_str!("../assets/plugins/aws-builders-library/skills/eight-failure-modes/SKILL.md");
 /// Встроенный файл плагина `assets/plugins/aws-builders-library/skills/fairness-admission-control/SKILL.md`.
-pub const PLUGIN_AWS_BUILDERS_LIBRARY_SKILLS_FAIRNESS_ADMISSION_CONTROL_SKILL_MD: &str = include_str!("../assets/plugins/aws-builders-library/skills/fairness-admission-control/SKILL.md");
+pub const PLUGIN_AWS_BUILDERS_LIBRARY_SKILLS_FAIRNESS_ADMISSION_CONTROL_SKILL_MD: &str = include_str!(
+    "../assets/plugins/aws-builders-library/skills/fairness-admission-control/SKILL.md"
+);
 /// Встроенный файл плагина `assets/plugins/aws-builders-library/skills/leader-election/SKILL.md`.
-pub const PLUGIN_AWS_BUILDERS_LIBRARY_SKILLS_LEADER_ELECTION_SKILL_MD: &str = include_str!("../assets/plugins/aws-builders-library/skills/leader-election/SKILL.md");
+pub const PLUGIN_AWS_BUILDERS_LIBRARY_SKILLS_LEADER_ELECTION_SKILL_MD: &str =
+    include_str!("../assets/plugins/aws-builders-library/skills/leader-election/SKILL.md");
 /// Встроенный файл плагина `assets/plugins/aws-builders-library/skills/load-shedding/SKILL.md`.
-pub const PLUGIN_AWS_BUILDERS_LIBRARY_SKILLS_LOAD_SHEDDING_SKILL_MD: &str = include_str!("../assets/plugins/aws-builders-library/skills/load-shedding/SKILL.md");
+pub const PLUGIN_AWS_BUILDERS_LIBRARY_SKILLS_LOAD_SHEDDING_SKILL_MD: &str =
+    include_str!("../assets/plugins/aws-builders-library/skills/load-shedding/SKILL.md");
 /// Встроенный файл плагина `assets/plugins/aws-builders-library/skills/queue-backlogs/SKILL.md`.
-pub const PLUGIN_AWS_BUILDERS_LIBRARY_SKILLS_QUEUE_BACKLOGS_SKILL_MD: &str = include_str!("../assets/plugins/aws-builders-library/skills/queue-backlogs/SKILL.md");
+pub const PLUGIN_AWS_BUILDERS_LIBRARY_SKILLS_QUEUE_BACKLOGS_SKILL_MD: &str =
+    include_str!("../assets/plugins/aws-builders-library/skills/queue-backlogs/SKILL.md");
 /// Встроенный файл плагина `assets/plugins/aws-builders-library/skills/static-stability/SKILL.md`.
-pub const PLUGIN_AWS_BUILDERS_LIBRARY_SKILLS_STATIC_STABILITY_SKILL_MD: &str = include_str!("../assets/plugins/aws-builders-library/skills/static-stability/SKILL.md");
+pub const PLUGIN_AWS_BUILDERS_LIBRARY_SKILLS_STATIC_STABILITY_SKILL_MD: &str =
+    include_str!("../assets/plugins/aws-builders-library/skills/static-stability/SKILL.md");
 /// Встроенный файл плагина `assets/plugins/aws-builders-library/skills/timeouts-backoff-jitter/SKILL.md`.
-pub const PLUGIN_AWS_BUILDERS_LIBRARY_SKILLS_TIMEOUTS_BACKOFF_JITTER_SKILL_MD: &str = include_str!("../assets/plugins/aws-builders-library/skills/timeouts-backoff-jitter/SKILL.md");
+pub const PLUGIN_AWS_BUILDERS_LIBRARY_SKILLS_TIMEOUTS_BACKOFF_JITTER_SKILL_MD: &str =
+    include_str!("../assets/plugins/aws-builders-library/skills/timeouts-backoff-jitter/SKILL.md");
 
 /// Файлы плагинов: «относительный путь в домашнем каталоге → содержимое».
 const PLUGIN_FILES: &[(&str, &str)] = &[
@@ -359,26 +461,56 @@ const DEFAULT_FILES: &[(&str, &str)] = &[
     ("assets/prompts/architect.md", PROMPT_ARCHITECT),
     ("assets/prompts/adr.md", PROMPT_ADR),
     ("assets/prompts/spine.md", PROMPT_SPINE),
-    ("assets/prompts/review_adversarial.md", PROMPT_REVIEW_ADVERSARIAL),
+    (
+        "assets/prompts/review_adversarial.md",
+        PROMPT_REVIEW_ADVERSARIAL,
+    ),
     ("assets/prompts/readiness_gate.md", PROMPT_READINESS_GATE),
     ("assets/prompts/handoff_compile.md", PROMPT_HANDOFF_COMPILE),
-    ("assets/prompts/reverse_discovery.md", PROMPT_REVERSE_DISCOVERY),
+    (
+        "assets/prompts/reverse_discovery.md",
+        PROMPT_REVERSE_DISCOVERY,
+    ),
     ("assets/prompts/nfr_design.md", PROMPT_NFR_DESIGN),
     ("assets/prompts/skill_distiller.md", PROMPT_SKILL_DISTILLER),
-    ("assets/rubrics/solution_architecture.yaml", RUBRIC_SOLUTION_ARCHITECTURE),
-    ("assets/rubrics/architecture_gates.yaml", RUBRIC_ARCHITECTURE_GATES),
-    ("assets/rubrics/macedo_dimensions.yaml", RUBRIC_MACEDO_DIMENSIONS),
+    (
+        "assets/rubrics/solution_architecture.yaml",
+        RUBRIC_SOLUTION_ARCHITECTURE,
+    ),
+    (
+        "assets/rubrics/architecture_gates.yaml",
+        RUBRIC_ARCHITECTURE_GATES,
+    ),
+    (
+        "assets/rubrics/macedo_dimensions.yaml",
+        RUBRIC_MACEDO_DIMENSIONS,
+    ),
     ("assets/rubrics/adr_quality.yaml", RUBRIC_ADR_QUALITY),
-    ("assets/rubrics/handoff_quality.yaml", RUBRIC_HANDOFF_QUALITY),
-    ("assets/benchmarks/payment_integration.yaml", BENCH_PAYMENT_INTEGRATION),
-    ("assets/benchmarks/legacy_decomposition.yaml", BENCH_LEGACY_DECOMPOSITION),
-    ("assets/benchmarks/event_driven_design.yaml", BENCH_EVENT_DRIVEN_DESIGN),
+    (
+        "assets/rubrics/handoff_quality.yaml",
+        RUBRIC_HANDOFF_QUALITY,
+    ),
+    (
+        "assets/benchmarks/payment_integration.yaml",
+        BENCH_PAYMENT_INTEGRATION,
+    ),
+    (
+        "assets/benchmarks/legacy_decomposition.yaml",
+        BENCH_LEGACY_DECOMPOSITION,
+    ),
+    (
+        "assets/benchmarks/event_driven_design.yaml",
+        BENCH_EVENT_DRIVEN_DESIGN,
+    ),
     ("mcp.json", MCP_SERVERS_EXAMPLE),
     ("cron.toml", CRON_EXAMPLE),
     ("CONSTRAINTS.example.yaml", CONSTRAINTS_EXAMPLE),
     ("cron/kb_digest.md", CRON_TASK_KB_DIGEST),
     ("cron/spec_drift.md", CRON_TASK_SPEC_DRIFT),
-    ("assets/rubrics/agents_md_quality.yaml", RUBRIC_AGENTS_MD_QUALITY_YAML),
+    (
+        "assets/rubrics/agents_md_quality.yaml",
+        RUBRIC_AGENTS_MD_QUALITY_YAML,
+    ),
     ("cron/agents_md_drift.md", CRON_TASK_AGENTS_MD_DRIFT_MD),
 ];
 
@@ -422,7 +554,10 @@ mod tests {
             let path = tmp.path().join(rel);
             assert!(path.is_file(), "нет файла {rel}");
             let on_disk = std::fs::read_to_string(&path).expect("read");
-            assert_eq!(&on_disk, content, "содержимое {rel} не совпадает со встроенным");
+            assert_eq!(
+                &on_disk, content,
+                "содержимое {rel} не совпадает со встроенным"
+            );
         }
     }
 
@@ -437,7 +572,10 @@ mod tests {
         std::fs::write(&marker, "МЕТКА-ПОЛЬЗОВАТЕЛЯ").expect("маркер");
 
         let second = write_defaults(tmp.path()).expect("второй прогон");
-        assert!(second.is_empty(), "повторный вызов что-то записал: {second:?}");
+        assert!(
+            second.is_empty(),
+            "повторный вызов что-то записал: {second:?}"
+        );
         let kept = std::fs::read_to_string(&marker).expect("read marker");
         assert_eq!(kept, "МЕТКА-ПОЛЬЗОВАТЕЛЯ", "пользовательский файл затёрт");
 
@@ -451,13 +589,20 @@ mod tests {
     #[test]
     fn banner_fits_60_columns_and_has_signature() {
         let lines: Vec<&str> = BANNER.lines().collect();
-        assert!((5..=8).contains(&lines.len()), "строк в баннере: {}", lines.len());
+        assert!(
+            (5..=8).contains(&lines.len()),
+            "строк в баннере: {}",
+            lines.len()
+        );
         for line in &lines {
             let width = UnicodeWidthStr::width(*line);
             assert!(width <= 60, "строка шире 60 колонок ({width}): {line}");
         }
         let last = lines.last().expect("непустой баннер");
-        assert!(last.contains("solution-архитект"), "нет строки-подписи: {last}");
+        assert!(
+            last.contains("solution-архитект"),
+            "нет строки-подписи: {last}"
+        );
     }
 
     #[test]
@@ -495,7 +640,10 @@ mod tests {
             serde_yaml::from_str(RUBRIC_SOLUTION_ARCHITECTURE).expect("parse");
         assert_eq!(r.criteria.len(), 15, "критериев не 15 (матрица §C.3)");
         let sum: f64 = r.criteria.iter().map(|c| c.weight).sum();
-        assert!((sum - 100.0).abs() < 1e-9, "сумма весов {sum}, ожидается 100");
+        assert!(
+            (sum - 100.0).abs() < 1e-9,
+            "сумма весов {sum}, ожидается 100"
+        );
     }
 
     #[test]
@@ -507,18 +655,31 @@ mod tests {
         ];
         for text in benches {
             let b: crate::bench::Benchmark = serde_yaml::from_str(text).expect("бенчмарк парсится");
-            assert!((b.pass_threshold - 3.5).abs() < f64::EPSILON, "{}: порог", b.name);
+            assert!(
+                (b.pass_threshold - 3.5).abs() < f64::EPSILON,
+                "{}: порог",
+                b.name
+            );
             assert_eq!(b.rubric, "solution_architecture", "{}: рубрика", b.name);
             assert!(!b.tags.is_empty(), "{}: нет тегов", b.name);
-            assert!(b.task.lines().count() >= 10, "{}: постановка короче 10 строк", b.name);
-            assert!(b.system_prompt.contains("architect"), "{}: system_prompt без роли", b.name);
+            assert!(
+                b.task.lines().count() >= 10,
+                "{}: постановка короче 10 строк",
+                b.name
+            );
+            assert!(
+                b.system_prompt.contains("architect"),
+                "{}: system_prompt без роли",
+                b.name
+            );
         }
     }
 
     #[test]
     fn example_config_parses_into_config_struct() {
         let text = include_str!("../config.example.toml");
-        let cfg: crate::config::Config = toml::from_str(text).expect("config.example.toml парсится");
+        let cfg: crate::config::Config =
+            toml::from_str(text).expect("config.example.toml парсится");
         assert_eq!(cfg.default_model, "deepseek");
         for name in ["deepseek", "deepseek-pro", "kimi", "glm"] {
             assert!(cfg.models.contains_key(name), "нет модели {name}");
@@ -532,26 +693,49 @@ mod tests {
 
     #[test]
     fn example_cron_parses_and_tasks_are_shipped() {
-        let tab: crate::cron::CronTab = toml::from_str(CRON_EXAMPLE).expect("cron.example.toml парсится");
+        let tab: crate::cron::CronTab =
+            toml::from_str(CRON_EXAMPLE).expect("cron.example.toml парсится");
         assert_eq!(tab.jobs.len(), 3, "задач не 3");
         let names: Vec<&str> = tab.jobs.iter().map(|j| j.name.as_str()).collect();
-        assert!(names.contains(&"kb-digest") && names.contains(&"spec-drift") && names.contains(&"agents-md-drift"));
+        assert!(
+            names.contains(&"kb-digest")
+                && names.contains(&"spec-drift")
+                && names.contains(&"agents-md-drift")
+        );
         for job in &tab.jobs {
-            assert_eq!(job.schedule.split_whitespace().count(), 5, "{}: не 5 полей cron", job.name);
-            let file = job.task_md.file_name().expect("имя файла").to_string_lossy();
+            assert_eq!(
+                job.schedule.split_whitespace().count(),
+                5,
+                "{}: не 5 полей cron",
+                job.name
+            );
+            let file = job
+                .task_md
+                .file_name()
+                .expect("имя файла")
+                .to_string_lossy();
             let shipped = DEFAULT_FILES
                 .iter()
                 .any(|(rel, _)| rel.ends_with(file.as_ref()));
-            assert!(shipped, "{}: task_md {file} не раскладывается write_defaults", job.name);
+            assert!(
+                shipped,
+                "{}: task_md {file} не раскладывается write_defaults",
+                job.name
+            );
         }
     }
 
     #[test]
     fn example_mcp_json_has_three_servers() {
         let v: serde_json::Value = serde_json::from_str(MCP_SERVERS_EXAMPLE).expect("mcp json");
-        let servers = v.get("mcpServers").and_then(|s| s.as_object()).expect("mcpServers");
+        let servers = v
+            .get("mcpServers")
+            .and_then(|s| s.as_object())
+            .expect("mcpServers");
         for name in ["filesystem", "fetch", "memory"] {
-            let spec = servers.get(name).unwrap_or_else(|| panic!("нет сервера {name}"));
+            let spec = servers
+                .get(name)
+                .unwrap_or_else(|| panic!("нет сервера {name}"));
             assert!(spec.get("command").is_some(), "{name}: нет command");
         }
     }
@@ -583,10 +767,14 @@ mod tests {
                 skills += 1;
             }
             if rel.ends_with(".json") && !rel.ends_with("plugin.json") {
-                serde_json::from_str::<serde_json::Value>(content).unwrap_or_else(|_| panic!("{rel}"));
+                serde_json::from_str::<serde_json::Value>(content)
+                    .unwrap_or_else(|_| panic!("{rel}"));
             }
         }
-        assert!(plugin_jsons >= 3, "ожидаются плагины arch-core + patterns-*");
+        assert!(
+            plugin_jsons >= 3,
+            "ожидаются плагины arch-core + patterns-*"
+        );
         assert!(skills >= 20, "скиллов: {skills}");
     }
 
@@ -602,7 +790,9 @@ mod tests {
         std::fs::write(&spine, text).expect("write");
         let issues = crate::control::lint_spine(&spine).expect("lint");
         let errors: Vec<_> = issues.iter().filter(|i| i.severity == "error").collect();
-        assert!(errors.is_empty(), "шаблон spine не проходит линтер: {errors:?}");
+        assert!(
+            errors.is_empty(),
+            "шаблон spine не проходит линтер: {errors:?}"
+        );
     }
 }
-

@@ -79,7 +79,10 @@ mod tests {
             "skill_search",
             "mermaid_render",
         ] {
-            assert!(names.iter().any(|n| n == expected), "нет инструмента {expected}");
+            assert!(
+                names.iter().any(|n| n == expected),
+                "нет инструмента {expected}"
+            );
         }
     }
 }

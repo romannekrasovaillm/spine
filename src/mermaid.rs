@@ -205,8 +205,14 @@ mod tests {
     #[test]
     fn detects_diagram_kind() {
         assert_eq!(diagram_kind("graph TD\nA-->B"), DiagramKind::Flowchart);
-        assert_eq!(diagram_kind("%% шапка\n\nflowchart LR\nA-->B"), DiagramKind::Flowchart);
-        assert_eq!(diagram_kind("sequenceDiagram\nA->>B: x"), DiagramKind::Sequence);
+        assert_eq!(
+            diagram_kind("%% шапка\n\nflowchart LR\nA-->B"),
+            DiagramKind::Flowchart
+        );
+        assert_eq!(
+            diagram_kind("sequenceDiagram\nA->>B: x"),
+            DiagramKind::Sequence
+        );
         assert_eq!(diagram_kind("graph\tLR\nA-->B"), DiagramKind::Flowchart);
         assert_eq!(diagram_kind("just text"), DiagramKind::Unknown);
         assert_eq!(diagram_kind(""), DiagramKind::Unknown);
@@ -243,7 +249,10 @@ mod tests {
         assert!(art.contains("нет"), "метка 'нет' потерялась:\n{art}");
         // метки лежат на шине между слоями (4-я строка арта)
         let bus_row = art.lines().nth(3).unwrap_or("");
-        assert!(bus_row.contains("да") && bus_row.contains("нет"), "метки не на шине:\n{art}");
+        assert!(
+            bus_row.contains("да") && bus_row.contains("нет"),
+            "метки не на шине:\n{art}"
+        );
     }
 
     #[test]
@@ -258,15 +267,24 @@ mod tests {
     #[test]
     fn renders_quoted_label() {
         let art = render("graph LR\nA[\"текст с --> внутри\"] --> B").unwrap();
-        assert!(art.contains("текст с --> внутри"), "quoted-метка потерялась:\n{art}");
+        assert!(
+            art.contains("текст с --> внутри"),
+            "quoted-метка потерялась:\n{art}"
+        );
         assert!(art.contains('▶'), "ребро не отрисовано:\n{art}");
     }
 
     #[test]
     fn renders_plain_and_dotted_edges() {
         let art = render("graph LR\nA --- B\nB -.-> C").unwrap();
-        assert!(art.contains("─│") || art.contains("──"), "нет линий:\n{art}");
-        assert!(art.contains('▶'), "пунктир должен рендериться как стрелка:\n{art}");
+        assert!(
+            art.contains("─│") || art.contains("──"),
+            "нет линий:\n{art}"
+        );
+        assert!(
+            art.contains('▶'),
+            "пунктир должен рендериться как стрелка:\n{art}"
+        );
         assert!(!art.contains('◀'), "направление перепутано:\n{art}");
     }
 
@@ -348,7 +366,10 @@ mod tests {
             Arc::new(crate::config::Config::default()),
         );
         let tool = &tools()[0];
-        let out = tool.call(serde_json::json!({"path": "d.mmd"}), &ctx).await.unwrap();
+        let out = tool
+            .call(serde_json::json!({"path": "d.mmd"}), &ctx)
+            .await
+            .unwrap();
         assert!(!out.is_error, "вызов завершился ошибкой: {}", out.content);
         assert!(out.content.contains('▼'), "{}", out.content);
     }
@@ -380,7 +401,10 @@ mod tests {
         let msg = err.to_string();
         assert!(msg.contains("каталог"), "{msg}");
         assert!(msg.contains("flow.mmd"), "файл диаграммы подсказан: {msg}");
-        assert!(!msg.contains("notes.txt"), "посторонние файлы скрыты, когда есть диаграммы: {msg}");
+        assert!(
+            !msg.contains("notes.txt"),
+            "посторонние файлы скрыты, когда есть диаграммы: {msg}"
+        );
         // Обычный файл читается как раньше.
         let code = read_diagram_source(&tmp.path().join("flow.mmd")).expect("файл");
         assert!(code.contains("flowchart"));

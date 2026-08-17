@@ -93,7 +93,11 @@ impl LoopDetectors {
     /// - `verdict = Some(text)` — вызов НЕ исполнять; text отдать модели
     ///   как результат инструмента (предупреждение или DENIED при рецидиве);
     /// - `note` — статусная строка для TUI/журнала (при срабатывании).
-    pub fn check_call(&mut self, name: &str, args: &serde_json::Value) -> (Option<String>, Option<DetectorNote>) {
+    pub fn check_call(
+        &mut self,
+        name: &str,
+        args: &serde_json::Value,
+    ) -> (Option<String>, Option<DetectorNote>) {
         let fp = fingerprint(name, args);
         if self.doom_warned.contains(&fp) {
             return (
@@ -118,7 +122,9 @@ impl LoopDetectors {
                      Измените стратегию.]",
                 )),
                 Some(DetectorNote {
-                    text: format!("⚠ doom-loop: «{name}» ×{count} с одинаковыми аргументами (окно {FP_WINDOW})"),
+                    text: format!(
+                        "⚠ doom-loop: «{name}» ×{count} с одинаковыми аргументами (окно {FP_WINDOW})"
+                    ),
                 }),
             );
         }
@@ -210,7 +216,9 @@ mod tests {
         assert!(verdict2.expect("v2").starts_with("DENIED"));
         // Другие аргументы не затронуты.
         assert!(
-            d.check_call("read_file", &json!({ "path": "other.md" })).0.is_none()
+            d.check_call("read_file", &json!({ "path": "other.md" }))
+                .0
+                .is_none()
         );
     }
 
@@ -276,7 +284,10 @@ mod tests {
             d.check_call("bash", &args);
         }
         d.reset();
-        assert!(d.check_call("bash", &args).0.is_none(), "после reset снова чисто");
+        assert!(
+            d.check_call("bash", &args).0.is_none(),
+            "после reset снова чисто"
+        );
     }
 
     #[test]

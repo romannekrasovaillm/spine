@@ -213,7 +213,11 @@ fn parse_frontmatter(path: &Path) -> Option<(String, String)> {
             if let Some(which) = current {
                 let t = line.trim();
                 if !t.is_empty() {
-                    let target = if which == "name" { &mut name } else { &mut description };
+                    let target = if which == "name" {
+                        &mut name
+                    } else {
+                        &mut description
+                    };
                     if !target.is_empty() {
                         target.push(' ');
                     }
@@ -341,9 +345,13 @@ pub fn skill_by_name<'a>(plugins: &'a [Plugin], name: &str) -> Option<&'a SkillM
 /// # Errors
 /// Файл не читается.
 pub fn load_skill(meta: &SkillMeta) -> Result<String> {
-    let mut text = std::fs::read_to_string(&meta.path)
-        .map_err(|e| HarnessError::io(&meta.path, e))?;
-    let refs_dir = meta.path.parent().unwrap_or(Path::new(".")).join("references");
+    let mut text =
+        std::fs::read_to_string(&meta.path).map_err(|e| HarnessError::io(&meta.path, e))?;
+    let refs_dir = meta
+        .path
+        .parent()
+        .unwrap_or(Path::new("."))
+        .join("references");
     if refs_dir.is_dir() {
         let mut files: Vec<String> = Vec::new();
         if let Ok(rd) = std::fs::read_dir(&refs_dir) {
@@ -402,9 +410,7 @@ pub fn mcp_servers(plugins: &[Plugin]) -> Vec<McpServerConfig> {
                     .and_then(|e| e.as_object())
                     .map(|m| {
                         m.iter()
-                            .filter_map(|(k, v)| {
-                                v.as_str().map(|s| (k.clone(), s.to_string()))
-                            })
+                            .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
                             .collect()
                     })
                     .unwrap_or_default();
@@ -424,9 +430,7 @@ pub fn mcp_servers(plugins: &[Plugin]) -> Vec<McpServerConfig> {
 pub fn tools(cfg: &Config) -> Vec<Arc<dyn Tool>> {
     let dirs = cfg.plugins.dirs.clone();
     vec![
-        Arc::new(SkillSearchTool {
-            dirs: dirs.clone(),
-        }),
+        Arc::new(SkillSearchTool { dirs: dirs.clone() }),
         Arc::new(SkillLoadTool { dirs: dirs.clone() }),
         Arc::new(PluginListTool { dirs }),
     ]
@@ -447,9 +451,10 @@ impl Tool for SkillSearchTool {
     fn spec(&self) -> crate::llm::ToolSpec {
         crate::llm::ToolSpec {
             name: "skill_search".into(),
-            description: "Поиск по библиотеке архитектурных скиллов (плагины: навыки, MCP, субагенты). \
+            description:
+                "Поиск по библиотеке архитектурных скиллов (плагины: навыки, MCP, субагенты). \
                           Вызывай, когда нужна методика по теме (ADR, saga, NFR, рубрики…)"
-                .into(),
+                    .into(),
             parameters: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -655,7 +660,11 @@ mod tests {
         );
         let plugins = discover(&[tmp.path().to_path_buf()]);
         let colon = skill_by_name(&plugins, "with-colon").expect("colon skill");
-        assert!(colon.description.contains("двоеточие внутри значения"), "{:?}", colon.description);
+        assert!(
+            colon.description.contains("двоеточие внутри значения"),
+            "{:?}",
+            colon.description
+        );
         let folded = skill_by_name(&plugins, "folded").expect("folded skill");
         assert_eq!(folded.description, "первая часть вторая часть");
     }
@@ -673,8 +682,15 @@ mod tests {
         // 'adr': у adr-authoring матч в имени (+12), описании и keywords.
         let hits = search(&plugins, "adr", 10);
         assert_eq!(hits[0].meta.name, "adr-authoring");
-        let adr_hit = hits.iter().find(|h| h.meta.name == "adr-authoring").expect("adr hit");
-        assert!(adr_hit.snippet.contains(">>> "), "snippet: {}", adr_hit.snippet);
+        let adr_hit = hits
+            .iter()
+            .find(|h| h.meta.name == "adr-authoring")
+            .expect("adr hit");
+        assert!(
+            adr_hit.snippet.contains(">>> "),
+            "snippet: {}",
+            adr_hit.snippet
+        );
         let limited = search(&plugins, "сага", 1);
         assert_eq!(limited.len(), 1);
     }

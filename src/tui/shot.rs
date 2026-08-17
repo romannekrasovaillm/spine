@@ -81,7 +81,9 @@ fn css_color(c: Color) -> Option<String> {
 
 /// XML-эскейп текста ячейки.
 fn esc(s: &str) -> String {
-    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
 }
 
 /// Стиль одного прогона ячеек (одинаковые fg/bg/модификаторы).
@@ -142,9 +144,9 @@ pub(crate) fn buffer_to_svg(buf: &Buffer, title: &str) -> String {
             let bold = cell.modifier.contains(Modifier::BOLD);
             let dim = cell.modifier.contains(Modifier::DIM);
             let sym = cell.symbol();
-            let same = runs.last().is_some_and(|r: &Run| {
-                r.fg == fg && r.bg == bg && r.bold == bold && r.dim == dim
-            });
+            let same = runs
+                .last()
+                .is_some_and(|r: &Run| r.fg == fg && r.bg == bg && r.bold == bold && r.dim == dim);
             if same {
                 if let Some(r) = runs.last_mut() {
                     r.text.push_str(sym);
@@ -279,7 +281,8 @@ mod tests {
         });
         app.push_block(ChatBlock::Assistant(
             "Готово к передаче: `/handoff claude-code ./sbp-gateway` — пакет с инвариантами, \
-             критериями приёмки и рубрикой.".into(),
+             критериями приёмки и рубрикой."
+                .into(),
         ));
         app.panels.mermaid = crate::mermaid::render(
             "flowchart TD\n  API[API ТСП] --> SM[Ядро: статусная машина]\n  \
@@ -311,11 +314,16 @@ mod tests {
         set_thinking(&mut app, true);
         app.queue
             .push_back("а теперь NFR: p95 шлюза и деградация НСПК".into());
-        app.queue
-            .push_back("потом /handoff claude-code ./sbp-gateway\nс инвариантами и рубрикой".into());
+        app.queue.push_back(
+            "потом /handoff claude-code ./sbp-gateway\nс инвариантами и рубрикой".into(),
+        );
         app.input
             .set_text("покажи fitness-функции для outbox и сверки\nи пороги для p95".into());
-        write(&out, "02-chat-mermaid.svg", &snap(&mut app, 150, 40, "arch — чат + mermaid"));
+        write(
+            &out,
+            "02-chat-mermaid.svg",
+            &snap(&mut app, 150, 40, "arch — чат + mermaid"),
+        );
 
         // 3. Пикер моделей (модалка поверх чата).
         let mut app = test_app();
@@ -336,7 +344,11 @@ mod tests {
             ask.recommended = Some("deepseek".into());
         }
         set_context_usage(&mut app, 12_300, 1_000_000);
-        write(&out, "03-model-picker.svg", &snap(&mut app, 122, 32, "arch — /model"));
+        write(
+            &out,
+            "03-model-picker.svg",
+            &snap(&mut app, 122, 32, "arch — /model"),
+        );
 
         // 4. Рубрика: отчёт LLM-судьи на правой вкладке; индикатор контекста
         //    за порогом L1 (оранжевый) — видна семантика цветов.
@@ -359,7 +371,8 @@ mod tests {
         });
         app.push_block(ChatBlock::Assistant(
             "**Итог: READY с замечаниями.** Обратимость (3/5) и критерии отката — \
-             в доработку; остальное закрыто.".into(),
+             в доработку; остальное закрыто."
+                .into(),
         ));
         app.push_block(ChatBlock::User(
             "зафиксируй замечания в ADR и подготовь вопросы к архкому".into(),
@@ -371,7 +384,8 @@ mod tests {
         });
         app.push_block(ChatBlock::Assistant(
             "Замечания внесены в ADR-002. На A3 выносится выбор вендора транспорта — \
-             RFP-пакет готов (`docs/rfp/vendor-rfp.md`).".into(),
+             RFP-пакет готов (`docs/rfp/vendor-rfp.md`)."
+                .into(),
         ));
         app.panels.rubric = "Оценка: solution_architecture (якорная)\n\n\
              ✓ Контекст и драйверы      5/5\n✓ Альтернативы             4/5\n\
@@ -381,7 +395,11 @@ mod tests {
             .into();
         app.right_tab = RightTab::Rubric;
         set_context_usage(&mut app, 812_000, 1_000_000);
-        write(&out, "04-rubric.svg", &snap(&mut app, 134, 30, "arch — рубрика"));
+        write(
+            &out,
+            "04-rubric.svg",
+            &snap(&mut app, 134, 30, "arch — рубрика"),
+        );
 
         // 5. Handoff: архитектор передаёт контекст кодовому харнессу —
         //    пакет .arch-handoff/, прогон harness_run с умными таймаутами,
@@ -404,7 +422,8 @@ mod tests {
             name: "harness_run".into(),
             state: ToolState::Ok,
             summary: "claude-code: код 0 · 1 847 с · контракт status=complete · \
-                 assumptions 3 · open_questions 1 · прерываний нет".into(),
+                 assumptions 3 · open_questions 1 · прерываний нет"
+                .into(),
         });
         app.push_block(ChatBlock::Assistant(
             "**Исполнение принято.** Claude Code реализовал статусную машину и outbox-\n\
@@ -427,7 +446,11 @@ mod tests {
         )
         .expect("рендер mermaid");
         set_context_usage(&mut app, 96_500, 1_000_000);
-        write(&out, "05-handoff.svg", &snap(&mut app, 150, 36, "arch — handoff кодовому харнессу"));
+        write(
+            &out,
+            "05-handoff.svg",
+            &snap(&mut app, 150, 36, "arch — handoff кодовому харнессу"),
+        );
     }
 
     /// Кадры кейса 004 (кейсы/parallel-epics/screenshots): параллельный флот
@@ -498,7 +521,11 @@ mod tests {
         )
         .expect("рендер mermaid");
         set_context_usage(&mut app, 148_200, 1_000_000);
-        write(&out, "run.svg", &snap(&mut app, 150, 38, "arch — параллельные эпики (кейс 004)"));
+        write(
+            &out,
+            "run.svg",
+            &snap(&mut app, 150, 38, "arch — параллельные эпики (кейс 004)"),
+        );
 
         // B. Handoff как сервис: пакет читается через MCP-сервер arch-handoff;
         //    прогон p4 честно прерван стражем тишины (медленный прокси).
@@ -540,7 +567,11 @@ mod tests {
         )
         .expect("рендер mermaid");
         set_context_usage(&mut app, 122_700, 1_000_000);
-        write(&out, "mcp.svg", &snap(&mut app, 150, 30, "arch — handoff через MCP (кейс 004)"));
+        write(
+            &out,
+            "mcp.svg",
+            &snap(&mut app, 150, 30, "arch — handoff через MCP (кейс 004)"),
+        );
     }
 
     /// Кадры кейса 005 (кейсы/fleet-of-ten/screenshots): флот из десяти
@@ -550,8 +581,8 @@ mod tests {
         if std::env::var("ARCH_GEN_SHOTS").is_err() {
             return; // генерация — только по явному запросу
         }
-        let out = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("кейсы/fleet-of-ten/screenshots");
+        let out =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("кейсы/fleet-of-ten/screenshots");
         std::fs::create_dir_all(&out).expect("mkdir");
 
         // A. Флот из десяти: прогоны, гейты, интеграция с первой сборки.
@@ -561,13 +592,15 @@ mod tests {
         app.tool_ctx.cwd = std::path::PathBuf::from("/home/user/bankcalc-fleet");
         app.push_block(ChatBlock::User(
             "десять эпиков bankcalc — десятью параллельными Claude Code, каждому worktree \
-             и под-пакет; спайн AD-1…AD-10 — единственный канал согласования".into(),
+             и под-пакет; спайн AD-1…AD-10 — единственный канал согласования"
+                .into(),
         ));
         app.push_block(ChatBlock::Tool {
             name: "handoff_create".into(),
             state: ToolState::Ok,
             summary: "10 worktree: пакеты по AD-1…AD-10 · baseline 82d2f9d · \
-                 epic-context ~1 028 токенов · план отката в каждом TASK.md".into(),
+                 epic-context ~1 028 токенов · план отката в каждом TASK.md"
+                .into(),
         });
         for (wt, modname, tests, secs) in [
             ("p01-amount", "validate_amount", 5, 104),
@@ -585,12 +618,14 @@ mod tests {
         }
         app.push_block(ChatBlock::Assistant(
             "p02–p07, p09 — аналогично: все complete, все закоммичены самими\n\
-             исполнителями. Стена: 10 эпиков за ~3,2 минуты.".into(),
+             исполнителями. Стена: 10 эпиков за ~3,2 минуты."
+                .into(),
         ));
         app.push_block(ChatBlock::Tool {
             name: "control_check".into(),
             state: ToolState::Ok,
-            summary: "fitness 60/60 PASS по десяти worktree · сигнатуры AD-1…AD-10 соблюдены".into(),
+            summary: "fitness 60/60 PASS по десяти worktree · сигнатуры AD-1…AD-10 соблюдены"
+                .into(),
         });
         app.push_block(ChatBlock::Tool {
             name: "spine_lint".into(),
@@ -600,7 +635,8 @@ mod tests {
         app.push_block(ChatBlock::Assistant(
             "**Ландшафт из десяти не разошёлся.** Склейка `bankcalc` — «день процессинга»\n\
              прошёл с первой сборки: платёж прошёл все десять контрактов по цепочке.\n\
-             Интеграция читается из git log — оркестратору нечего дособирать.".into(),
+             Интеграция читается из git log — оркестратору нечего дособирать."
+                .into(),
         ));
         app.panels.mermaid = crate::mermaid::render(
             "flowchart LR\n  S[спайн AD-1…10] --> F[10 × Claude Code]\n  \
@@ -608,7 +644,11 @@ mod tests {
         )
         .expect("рендер mermaid");
         set_context_usage(&mut app, 341_800, 1_000_000);
-        write(&out, "run.svg", &snap(&mut app, 150, 40, "arch — флот из десяти (кейс 005)"));
+        write(
+            &out,
+            "run.svg",
+            &snap(&mut app, 150, 40, "arch — флот из десяти (кейс 005)"),
+        );
 
         // B. Финализация: флот закоммитил сам (урок утреннего кейса 004).
         let mut app = test_app();
@@ -633,7 +673,8 @@ mod tests {
         app.push_block(ChatBlock::Assistant(
             "**Контракт «Финализация» сработал 10/10.** Утренний флот кейса 004 не закоммитил\n\
              ничего — интеграцию собирал оркестратор; вечерний флот зафиксировал всё сам.\n\
-             Точка интеграции переехала в git log каждого worktree.".into(),
+             Точка интеграции переехала в git log каждого worktree."
+                .into(),
         ));
         app.panels.mermaid = crate::mermaid::render(
             "flowchart LR\n  B[baseline 82d2f9d] --> C[10/10 коммитов]\n  \
@@ -641,6 +682,10 @@ mod tests {
         )
         .expect("рендер mermaid");
         set_context_usage(&mut app, 208_400, 1_000_000);
-        write(&out, "commits.svg", &snap(&mut app, 150, 30, "arch — флот коммитит сам (кейс 005)"));
+        write(
+            &out,
+            "commits.svg",
+            &snap(&mut app, 150, 30, "arch — флот коммитит сам (кейс 005)"),
+        );
     }
 }

@@ -55,7 +55,9 @@ impl Policy {
     pub fn parse(s: &str) -> Result<Self, crate::error::HarnessError> {
         let digits: String = s.chars().filter(|c| c.is_ascii_digit()).collect();
         let level: u8 = digits.parse().map_err(|_| {
-            crate::error::HarnessError::Config(format!("некорректный уровень автономии '{s}' (R0–R5)"))
+            crate::error::HarnessError::Config(format!(
+                "некорректный уровень автономии '{s}' (R0–R5)"
+            ))
         })?;
         if level > 5 {
             return Err(crate::error::HarnessError::Config(format!(
@@ -113,19 +115,69 @@ pub fn classify_tool(tool: &str, args: &serde_json::Value) -> RiskClass {
 
 /// Деструктивные паттерны команд (необратимые/внешние эффекты).
 const DESTRUCTIVE_PATTERNS: &[&str] = &[
-    "rm -rf", "rm -fr", "rm -r /", "mkfs", "dd if=", "dd of=", ":(){", "shutdown", "reboot",
-    "kill -9", "pkill", "chmod -R /", "chown -R /", "> /dev/", "git push --force",
-    "git push -f", "git reset --hard", "drop table", "DROP TABLE", "truncate table",
-    "kubectl delete", "docker system prune", "terraform destroy", "ansible",
+    "rm -rf",
+    "rm -fr",
+    "rm -r /",
+    "mkfs",
+    "dd if=",
+    "dd of=",
+    ":(){",
+    "shutdown",
+    "reboot",
+    "kill -9",
+    "pkill",
+    "chmod -R /",
+    "chown -R /",
+    "> /dev/",
+    "git push --force",
+    "git push -f",
+    "git reset --hard",
+    "drop table",
+    "DROP TABLE",
+    "truncate table",
+    "kubectl delete",
+    "docker system prune",
+    "terraform destroy",
+    "ansible",
 ];
 
 /// Изменяющие паттерны (обратимые, в рабочем контуре).
 const MUTATING_PATTERNS: &[&str] = &[
-    "rm ", "mv ", "cp ", "mkdir", "touch ", "sed -i", "sed -i.bak", "tee ", "> ", ">> ",
-    "git add", "git commit", "git push", "git checkout", "git switch", "git merge", "git rebase",
-    "cargo build", "cargo test", "cargo clippy", "cargo fmt", "npm install", "npm run", "pnpm ",
-    "pip install", "mvn ", "gradle", "make ", "docker build", "kubectl apply", "curl -X POST",
-    "curl -X PUT", "curl -X DELETE", "curl -d ", "wget -O",
+    "rm ",
+    "mv ",
+    "cp ",
+    "mkdir",
+    "touch ",
+    "sed -i",
+    "sed -i.bak",
+    "tee ",
+    "> ",
+    ">> ",
+    "git add",
+    "git commit",
+    "git push",
+    "git checkout",
+    "git switch",
+    "git merge",
+    "git rebase",
+    "cargo build",
+    "cargo test",
+    "cargo clippy",
+    "cargo fmt",
+    "npm install",
+    "npm run",
+    "pnpm ",
+    "pip install",
+    "mvn ",
+    "gradle",
+    "make ",
+    "docker build",
+    "kubectl apply",
+    "curl -X POST",
+    "curl -X PUT",
+    "curl -X DELETE",
+    "curl -d ",
+    "wget -O",
 ];
 
 /// Классификация bash-команды по тексту.
@@ -151,9 +203,18 @@ mod tests {
     #[test]
     fn readonly_commands_are_always_allowed() {
         let p = Policy::default();
-        for cmd in ["ls -la", "cat spec.md", "grep -r foo src/", "git status", "pwd"] {
+        for cmd in [
+            "ls -la",
+            "cat spec.md",
+            "grep -r foo src/",
+            "git status",
+            "pwd",
+        ] {
             assert_eq!(classify_bash(cmd), RiskClass::ReadOnly, "{cmd}");
-            assert_eq!(p.check("bash", &serde_json::json!({"command": cmd})), PolicyDecision::Allow);
+            assert_eq!(
+                p.check("bash", &serde_json::json!({"command": cmd})),
+                PolicyDecision::Allow
+            );
         }
     }
 
@@ -169,7 +230,9 @@ mod tests {
             PolicyDecision::Allow
         );
         assert!(matches!(
-            Policy::parse("R0").expect("R0").check("write_file", &serde_json::json!({})),
+            Policy::parse("R0")
+                .expect("R0")
+                .check("write_file", &serde_json::json!({})),
             PolicyDecision::RequireConfirm(_)
         ));
     }
@@ -177,10 +240,22 @@ mod tests {
     #[test]
     fn destructive_denied_below_r4_and_confirmed_at_r4() {
         let cmd = serde_json::json!({"command": "rm -rf /tmp/x"});
-        assert!(matches!(Policy::default().check("bash", &cmd), PolicyDecision::Deny(_)));
-        assert!(matches!(Policy::parse("R4").unwrap().check("bash", &cmd), PolicyDecision::RequireConfirm(_)));
-        assert_eq!(Policy::parse("R5").unwrap().check("bash", &cmd), PolicyDecision::Allow);
-        assert!(matches!(Policy::default().check("bash", &serde_json::json!({"command": "git push --force"})), PolicyDecision::Deny(_)));
+        assert!(matches!(
+            Policy::default().check("bash", &cmd),
+            PolicyDecision::Deny(_)
+        ));
+        assert!(matches!(
+            Policy::parse("R4").unwrap().check("bash", &cmd),
+            PolicyDecision::RequireConfirm(_)
+        ));
+        assert_eq!(
+            Policy::parse("R5").unwrap().check("bash", &cmd),
+            PolicyDecision::Allow
+        );
+        assert!(matches!(
+            Policy::default().check("bash", &serde_json::json!({"command": "git push --force"})),
+            PolicyDecision::Deny(_)
+        ));
     }
 
     #[test]

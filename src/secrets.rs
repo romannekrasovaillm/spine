@@ -50,7 +50,11 @@ impl SecretRule {
     ///
     /// # Errors
     /// Невалидный regex-шаблон.
-    pub fn new(name: impl Into<String>, pattern: &str, keep_prefix: usize) -> Result<Self, regex::Error> {
+    pub fn new(
+        name: impl Into<String>,
+        pattern: &str,
+        keep_prefix: usize,
+    ) -> Result<Self, regex::Error> {
         Ok(Self {
             name: name.into(),
             regex: Regex::new(pattern)?,
@@ -66,11 +70,11 @@ impl SecretRule {
 /// недостижимость.
 #[must_use]
 pub fn builtin_rules() -> Vec<SecretRule> {
-    let compile = |name: &str, pattern: &str, keep: usize| match SecretRule::new(name, pattern, keep)
-    {
-        Ok(rule) => rule,
-        Err(err) => panic!("невалидный встроенный шаблон `{name}`: {err}"),
-    };
+    let compile =
+        |name: &str, pattern: &str, keep: usize| match SecretRule::new(name, pattern, keep) {
+            Ok(rule) => rule,
+            Err(err) => panic!("невалидный встроенный шаблон `{name}`: {err}"),
+        };
     vec![
         // Многострочный PEM-блок целиком; `(?s)` — точка захватывает \n.
         compile(

@@ -23,7 +23,7 @@ use std::fmt::Write as _;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::error::{HarnessError, Result};
 use crate::llm::ToolSpec;
@@ -70,9 +70,8 @@ where
     let mut dropped = 0usize;
     let mut keep = Vec::new();
     for (name, value) in vars {
-        let hidden = scrub
-            && is_secret_env_name(&name.to_uppercase())
-            && !allow.iter().any(|a| a == &name);
+        let hidden =
+            scrub && is_secret_env_name(&name.to_uppercase()) && !allow.iter().any(|a| a == &name);
         if hidden {
             dropped += 1;
         } else {
@@ -165,7 +164,9 @@ impl Tool for BashTool {
             .and_then(Value::as_str)
             .filter(|s| !s.trim().is_empty())
             .ok_or_else(|| {
-                HarnessError::Tool("bash: обязательный аргумент `command` отсутствует или пуст".into())
+                HarnessError::Tool(
+                    "bash: обязательный аргумент `command` отсутствует или пуст".into(),
+                )
             })?;
         let timeout_secs = args
             .get("timeout_secs")
@@ -189,7 +190,12 @@ impl Tool for BashTool {
         let (vars, dropped) = scrub_env(
             std::env::vars_os()
                 .filter(|(k, _)| k != "PWD")
-                .map(|(k, v)| (k.to_string_lossy().into_owned(), v.to_string_lossy().into_owned())),
+                .map(|(k, v)| {
+                    (
+                        k.to_string_lossy().into_owned(),
+                        v.to_string_lossy().into_owned(),
+                    )
+                }),
             ctx.config.bash.env_scrub,
             &ctx.config.bash.env_allow,
         );
@@ -209,22 +215,21 @@ impl Tool for BashTool {
         let out_task = tokio::spawn(async move { read_pipe(stdout_pipe).await });
         let err_task = tokio::spawn(async move { read_pipe(stderr_pipe).await });
 
-        let outcome = match tokio::time::timeout(Duration::from_secs(timeout_secs), child.wait())
-            .await
-        {
-            Ok(Ok(status)) => Outcome::Exited(status),
-            Ok(Err(e)) => {
-                return Err(HarnessError::Tool(format!(
-                    "bash: ошибка ожидания процесса: {e}"
-                )));
-            }
-            Err(_) => {
-                // Dispose до квиэссенции: SIGKILL и ожидание смерти процесса,
-                // затем читатели до EOF (pipe закрывается смертью процесса).
-                let _ = child.kill().await;
-                Outcome::TimedOut(timeout_secs)
-            }
-        };
+        let outcome =
+            match tokio::time::timeout(Duration::from_secs(timeout_secs), child.wait()).await {
+                Ok(Ok(status)) => Outcome::Exited(status),
+                Ok(Err(e)) => {
+                    return Err(HarnessError::Tool(format!(
+                        "bash: ошибка ожидания процесса: {e}"
+                    )));
+                }
+                Err(_) => {
+                    // Dispose до квиэссенции: SIGKILL и ожидание смерти процесса,
+                    // затем читатели до EOF (pipe закрывается смертью процесса).
+                    let _ = child.kill().await;
+                    Outcome::TimedOut(timeout_secs)
+                }
+            };
         let stdout = out_task.await.unwrap_or_default();
         let stderr = err_task.await.unwrap_or_default();
         Ok(format_result(&stdout, &stderr, &outcome, dropped).truncated(MAX_OUTPUT_CHARS))
@@ -247,7 +252,12 @@ async fn read_pipe(pipe: Option<impl tokio::io::AsyncRead + Unpin>) -> Vec<u8> {
 }
 
 /// Собирает текстовый результат: вывод + независимые маркеры исхода.
-fn format_result(stdout: &[u8], stderr: &[u8], outcome: &Outcome, dropped_env: usize) -> ToolOutput {
+fn format_result(
+    stdout: &[u8],
+    stderr: &[u8],
+    outcome: &Outcome,
+    dropped_env: usize,
+) -> ToolOutput {
     let mut content = String::from_utf8_lossy(stdout).into_owned();
     let stderr_text = String::from_utf8_lossy(stderr);
     if !stderr_text.is_empty() {
@@ -291,7 +301,9 @@ fn format_result(stdout: &[u8], stderr: &[u8], outcome: &Outcome, dropped_env: u
 #[cfg(unix)]
 fn signal_of(status: &std::process::ExitStatus) -> String {
     use std::os::unix::process::ExitStatusExt;
-    status.signal().map_or_else(|| "?".to_string(), |s| s.to_string())
+    status
+        .signal()
+        .map_or_else(|| "?".to_string(), |s| s.to_string())
 }
 
 /// Заглушка для не-Unix платформ.
@@ -424,11 +436,7 @@ mod tests {
             .call(json!({"command": "pwd", "workdir": "sub"}), &test_ctx(&dir))
             .await?;
         assert!(!out.is_error, "output: {}", out.content);
-        assert!(
-            out.content.contains("sub"),
-            "output: {}",
-            out.content
-        );
+        assert!(out.content.contains("sub"), "output: {}", out.content);
         Ok(())
     }
 
@@ -497,7 +505,11 @@ mod tests {
             .next()
             .and_then(|l| l.trim().parse().ok())
             .unwrap_or(0);
-        assert_eq!(count, 0, "секретоподобные переменные видны: {}", out.content);
+        assert_eq!(
+            count, 0,
+            "секретоподобные переменные видны: {}",
+            out.content
+        );
         Ok(())
     }
 }
