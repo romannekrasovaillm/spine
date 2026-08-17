@@ -3,12 +3,19 @@
 //! КОНТРАКТ (владелец: агент `mermaid`): подмножество mermaid —
 //! `graph|flowchart TD|TB|BT|LR|RL` (узлы `A[label]`, `B(label)`, `C{label}`,
 //! `D((label))`, рёбра `-->`, `---`, `-.->`, `-- label -->`, цепочки
-//! `A --> B --> C`, quoted-метки `A["текст с --> внутри"]`) и `sequenceDiagram`
-//! (участники `participant X as Label`, `->>`/`-->>`, `Note left/right of`).
+//! `A --> B --> C`, quoted-метки `A["текст с --> внутри"]`), `sequenceDiagram`
+//! (участники `participant X as Label`, `->>`/`-->>`, `Note left/right of`),
+//! `erDiagram` (сущности с блоками атрибутов `{ тип имя [PK] }`, связи
+//! `A ||--o{ B : label` с кардинальностями; ADR-009) и C4-подмножество
+//! (`C4Context`/`C4Container`/`C4Component`: `Person`/`System`/`Container`/
+//! `Component` + суффиксы `_Ext`/`Db`/`Queue`, связи `Rel*`/`BiRel`;
+//! boundaries/стили пропускаются; ADR-009).
 //! Рендер — на символьную сетку box-drawing символами (┌─┐│└┘, ▼, ─▶),
-//! layered layout (Sugiyama-lite: слои по longest path, barycenter-сортировка).
+//! layered layout (Sugiyama-lite: слои по longest path, barycenter-сортировка);
+//! ER и C4 понижаются к flowchart-AST (узлы с многострочными метками).
 //! Неподдерживаемые конструкции (`subgraph`, `classDef`, `click`, `style`,
-//! `loop`, …) пропускаются с предупреждением `%% пропущено: …` в конце вывода.
+//! `loop`, `*_Boundary`, …) пропускаются с предупреждением `%% пропущено: …`
+//! в конце вывода. `C4Deployment`/`C4Dynamic` отклоняются с подсказкой-рецептом.
 //! Без внешних зависимостей-рендеров; чистые функции, покрытые тестами.
 
 mod draw;
@@ -32,6 +39,13 @@ pub enum DiagramKind {
     Flowchart,
     /// `sequenceDiagram`.
     Sequence,
+    /// `erDiagram` (ADR-009).
+    Er,
+    /// `C4Context`/`C4Container`/`C4Component` (ADR-009).
+    C4,
+    /// `C4Deployment`/`C4Dynamic` — осознанно не поддерживаются (ADR-009):
+    /// deployment выражается рецептом flowchart+subgraph, динамика — sequence.
+    C4Unsupported,
     /// Не удалось определить.
     Unknown,
 }
@@ -55,6 +69,15 @@ pub fn diagram_kind(input: &str) -> DiagramKind {
         if first == "sequenceDiagram" {
             return DiagramKind::Sequence;
         }
+        if first == "erDiagram" {
+            return DiagramKind::Er;
+        }
+        if matches!(first, "C4Context" | "C4Container" | "C4Component") {
+            return DiagramKind::C4;
+        }
+        if matches!(first, "C4Deployment" | "C4Dynamic") {
+            return DiagramKind::C4Unsupported;
+        }
         return DiagramKind::Unknown;
     }
     DiagramKind::Unknown
@@ -75,9 +98,24 @@ pub fn render(input: &str) -> Result<String> {
             let ast = parse::parse_sequence(input)?;
             Ok(draw::render_sequence(&ast))
         }
+        DiagramKind::Er => {
+            let ast = parse::parse_er(input)?;
+            Ok(draw::render_flowchart(&ast.to_flow()))
+        }
+        DiagramKind::C4 => {
+            let ast = parse::parse_c4(input)?;
+            Ok(draw::render_flowchart(&ast.to_flow()))
+        }
+        DiagramKind::C4Unsupported => Err(HarnessError::Mermaid(
+            "C4Deployment/C4Dynamic не поддерживаются (ADR-009): deployment-вид \
+             соберите через 'flowchart TD' + subgraph (окружение → subgraph, \
+             артефакты → узлы), динамику вызовов — через sequenceDiagram"
+                .into(),
+        )),
         DiagramKind::Unknown => Err(HarnessError::Mermaid(
             "не удалось определить вид диаграммы: первая строка должна быть \
-             'graph TD|TB|BT|LR|RL', 'flowchart …' или 'sequenceDiagram'"
+             'graph TD|TB|BT|LR|RL', 'flowchart …', 'sequenceDiagram', \
+             'erDiagram' или 'C4Context'/'C4Container'/'C4Component'"
                 .into(),
         )),
     }
@@ -96,9 +134,10 @@ impl Tool for MermaidRenderTool {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
             name: "mermaid_render".to_owned(),
-            description: "Рендерит mermaid-диаграмму (flowchart или sequenceDiagram) \
-                          в Unicode/ASCII-арт. Вход: 'code' (исходник) или 'path' \
-                          (путь к .mmd-файлу относительно рабочего каталога)."
+            description: "Рендерит mermaid-диаграмму (flowchart, sequenceDiagram, erDiagram \
+                          или C4Context/C4Container/C4Component) в Unicode/ASCII-арт. \
+                          Вход: 'code' (исходник) или 'path' (путь к .mmd-файлу относительно \
+                          рабочего каталога)."
                 .to_owned(),
             parameters: serde_json::json!({
                 "type": "object",
@@ -216,6 +255,19 @@ mod tests {
         assert_eq!(diagram_kind("graph\tLR\nA-->B"), DiagramKind::Flowchart);
         assert_eq!(diagram_kind("just text"), DiagramKind::Unknown);
         assert_eq!(diagram_kind(""), DiagramKind::Unknown);
+        assert_eq!(diagram_kind("erDiagram\nA ||--o{ B : x"), DiagramKind::Er);
+        assert_eq!(
+            diagram_kind("%% комментарий\nC4Context\nSystem(a, \"A\")"),
+            DiagramKind::C4
+        );
+        assert_eq!(
+            diagram_kind("C4Component\nComponent(a, \"A\")"),
+            DiagramKind::C4
+        );
+        assert_eq!(
+            diagram_kind("C4Deployment\nSystem(a, \"A\")"),
+            DiagramKind::C4Unsupported
+        );
     }
 
     #[test]
@@ -418,6 +470,70 @@ mod tests {
         let msg = err.to_string();
         assert!(msg.contains("нет"), "нет диаграмм: {msg}");
         assert!(msg.contains("run.sh"), "содержимое показано: {msg}");
+    }
+
+    #[test]
+    fn renders_er_diagram_with_attributes_and_cards() {
+        let art = render(
+            "erDiagram\n\
+             CUSTOMER ||--o{ ORDER : places\n\
+             CUSTOMER {\n\
+             \x20   string name\n\
+             \x20   int id PK\n\
+             }\n",
+        )
+        .unwrap();
+        // Рамка сущности: имя, разделитель, атрибуты.
+        assert!(art.contains("CUSTOMER"), "{art}");
+        assert!(art.contains("├"), "нет разделителя атрибутов:\n{art}");
+        assert!(art.contains("string name"), "{art}");
+        assert!(art.contains("int id PK"), "{art}");
+        assert!(art.contains("ORDER"), "{art}");
+        // Кардинальности — текстом в метке ребра.
+        assert!(art.contains("places (1:0..*)"), "метка связи:\n{art}");
+        for line in art.lines() {
+            assert_eq!(line, line.trim_end(), "хвостовые пробелы: «{line}»");
+        }
+    }
+
+    #[test]
+    fn renders_er_without_attributes_and_relations() {
+        // Сущности без блоков и связей — не паника, рамки рядом.
+        let art = render("erDiagram\nA ||--|| B : one\nC {\n  int x\n}\n").unwrap();
+        assert!(art.contains("│ A │"), "{art}");
+        assert!(art.contains("│ B │"), "{art}");
+        assert!(art.contains("one (1:1)"), "{art}");
+        let single = render("erDiagram\nSOLO {\n  int id\n}\n").unwrap();
+        assert!(single.contains("SOLO"), "{single}");
+        assert!(single.contains("int id"), "{single}");
+    }
+
+    #[test]
+    fn renders_c4_container_diagram() {
+        let art = render(
+            "C4Container\n\
+             Person(user, \"Пользователь\")\n\
+             Container(api, \"API\", \"Rust\")\n\
+             Rel(user, api, \"HTTPS\")\n",
+        )
+        .unwrap();
+        assert!(art.contains("«person»"), "{art}");
+        assert!(art.contains("Пользователь"), "{art}");
+        assert!(art.contains("«container»"), "{art}");
+        assert!(art.contains("[Rust]"), "технология в рамке:\n{art}");
+        assert!(art.contains('▼'), "стрелка Rel:\n{art}");
+        assert!(art.contains("HTTPS"), "метка связи:\n{art}");
+        for line in art.lines() {
+            assert_eq!(line, line.trim_end(), "хвостовые пробелы: «{line}»");
+        }
+    }
+
+    #[test]
+    fn c4deployment_rejected_with_recipe_hint() {
+        let err = render("C4Deployment\nSystem(a, \"A\")\n").unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("не поддерживаются"), "{msg}");
+        assert!(msg.contains("flowchart"), "подсказка-рецепт: {msg}");
     }
 
     #[tokio::test]

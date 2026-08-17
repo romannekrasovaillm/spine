@@ -17,9 +17,12 @@
 //! - [`parse`] — разбор файлов в сущности, [`validate`] — ссылочная
 //!   целостность (битая ссылка/дубль/цикл — `error`; `ADR` без `CMP`,
 //!   `NFR` без проверки — `warn`), [`graph`] — текстовый/mermaid-граф,
-//!   [`project`] — проекция `ADR-*` в `.arch-handoff/adr/`;
+//!   [`project`] — проекция `ADR-*` в `.arch-handoff/adr/`,
+//!   [`exchange`] — обмен с отраслевыми форматами (экспорт Structurizr
+//!   DSL/PlantUML/drawio, импорт Structurizr DSL; ADR-009);
 //! - инструмент агента: `model_query` ([`tools`]).
 
+pub mod exchange;
 pub mod graph;
 pub mod parse;
 pub mod project;
@@ -37,6 +40,7 @@ use crate::error::{HarnessError, Result};
 use crate::llm::ToolSpec;
 use crate::tool::{Tool, ToolContext, ToolOutput};
 
+pub use exchange::{ExportFormat, ImportReport, export_model, import_structurizr};
 pub use graph::{find_cycle, graph_mermaid, graph_text};
 pub use parse::{Entity, LinkKind, Model, load_model, parse_entity, split_frontmatter};
 pub use project::{ProjectReport, project_adr, render_adr};

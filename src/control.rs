@@ -925,7 +925,7 @@ fn translit_cyrillic(ch: char) -> Option<&'static str> {
 /// kebab-case slug заголовка: ASCII-буквы/цифры в нижний регистр, кириллица
 /// транслитерируется (`translit_cyrillic`), всё прочее — в `-`, повторы `-`
 /// схлопываются. Пустой результат (пустой/символьный заголовок) → `"adr"`.
-fn kebab_slug(title: &str) -> String {
+pub(crate) fn kebab_slug(title: &str) -> String {
     let mut out = String::with_capacity(title.len());
     let mut dash = true; // подавляет '-' в начале
     for ch in title.chars().flat_map(char::to_lowercase) {

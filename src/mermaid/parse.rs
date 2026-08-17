@@ -12,7 +12,8 @@ use std::collections::HashMap;
 use crate::error::{HarnessError, Result};
 
 use super::model::{
-    Direction, FlowAst, FlowEdge, FlowNode, NoteSide, Participant, SeqAst, SeqItem, SeqMessage,
+    C4Ast, C4ElemKind, C4Element, C4Relation, Direction, ErAst, ErAttribute, ErCard, ErEntity,
+    ErRelation, FlowAst, FlowEdge, FlowNode, NoteSide, Participant, SeqAst, SeqItem, SeqMessage,
     SeqNote, Shape, Skipped,
 };
 
@@ -594,6 +595,507 @@ pub(crate) fn parse_sequence(input: &str) -> Result<SeqAst> {
     })
 }
 
+// ===== erDiagram =====
+
+/// Сканирует идентификатор сущности ER (буквы/цифры/`_`/`-`).
+fn scan_er_id(cur: &mut Cursor<'_>, line_no: usize, full: &str) -> Result<String> {
+    cur.skip_ws();
+    let start = cur.pos;
+    while let Some(c) = cur.rest().chars().next() {
+        if c.is_alphanumeric() || c == '_' || c == '-' {
+            cur.pos += c.len_utf8();
+        } else {
+            break;
+        }
+    }
+    if cur.pos == start {
+        return Err(err_at(line_no, full, "ожидался идентификатор сущности"));
+    }
+    Ok(cur.text[start..cur.pos].to_owned())
+}
+
+/// Разбирает двухсимвольную кардинальность crow's foot. `left` — левая
+/// сторона связи (маркеры `|`/`}`/`o` + `|`/`o`), иначе правая (`|`/`o` +
+/// `|`/`{`).
+fn scan_er_card(cur: &mut Cursor<'_>, left: bool, line_no: usize, full: &str) -> Result<ErCard> {
+    let pair = cur.rest().get(..2);
+    let card = if left {
+        match pair {
+            Some("||") => ErCard::One,
+            Some("|o") => ErCard::ZeroOne,
+            Some("}|") => ErCard::OneMany,
+            Some("}o") => ErCard::ZeroMany,
+            _ => {
+                return Err(err_at(
+                    line_no,
+                    full,
+                    "ожидалась кардинальность '||', '|o', '}|' или '}o'",
+                ));
+            }
+        }
+    } else {
+        match pair {
+            Some("||") => ErCard::One,
+            Some("o|") => ErCard::ZeroOne,
+            Some("|{") => ErCard::OneMany,
+            Some("o{") => ErCard::ZeroMany,
+            _ => {
+                return Err(err_at(
+                    line_no,
+                    full,
+                    "ожидалась кардинальность '||', 'o|', '|{' или 'o{'",
+                ));
+            }
+        }
+    };
+    cur.pos += 2;
+    Ok(card)
+}
+
+/// Регистрирует сущность ER (первое упоминание), возвращает её индекс.
+fn register_er_entity(
+    id: &str,
+    entities: &mut Vec<ErEntity>,
+    ids: &mut HashMap<String, usize>,
+) -> usize {
+    if let Some(&i) = ids.get(id) {
+        return i;
+    }
+    let i = entities.len();
+    entities.push(ErEntity {
+        id: id.to_owned(),
+        attributes: Vec::new(),
+    });
+    ids.insert(id.to_owned(), i);
+    i
+}
+
+/// Разбирает строку атрибута: `тип имя [PK|FK|UK|комментарий …]`.
+fn parse_er_attribute(text: &str, line_no: usize) -> Result<ErAttribute> {
+    let mut parts = text.split_whitespace();
+    let typ = parts.next().unwrap_or("");
+    let Some(name) = parts.next() else {
+        return Err(err_at(
+            line_no,
+            text,
+            "ожидались тип и имя атрибута (например, 'string name')",
+        ));
+    };
+    let rest: Vec<&str> = parts.collect();
+    let extra = if rest.is_empty() {
+        None
+    } else {
+        // Кавычки комментариев в рамке не нужны.
+        Some(rest.join(" ").replace('"', ""))
+    };
+    Ok(ErAttribute {
+        typ: typ.to_owned(),
+        name: name.to_owned(),
+        extra,
+    })
+}
+
+/// Разбирает связь ER: `A ||--o{ B : метка` (`--` identifying, `..` — нет).
+fn parse_er_relation(
+    text: &str,
+    line_no: usize,
+    entities: &mut Vec<ErEntity>,
+    ids: &mut HashMap<String, usize>,
+    relations: &mut Vec<ErRelation>,
+) -> Result<()> {
+    let mut cur = Cursor::new(text);
+    let from_id = scan_er_id(&mut cur, line_no, text)?;
+    cur.skip_ws();
+    let from_card = scan_er_card(&mut cur, true, line_no, text)?;
+    let identifying = if cur.eat("--") {
+        true
+    } else if cur.eat("..") {
+        false
+    } else {
+        return Err(err_at(
+            line_no,
+            text,
+            "ожидалась связь '--' (identifying) или '..' (non-identifying)",
+        ));
+    };
+    let to_card = scan_er_card(&mut cur, false, line_no, text)?;
+    let to_id = scan_er_id(&mut cur, line_no, text)?;
+    cur.skip_ws();
+    if !cur.eat(":") {
+        return Err(err_at(line_no, text, "ожидалось ':' и метка связи"));
+    }
+    let label = unquote(cur.rest());
+    if label.is_empty() {
+        return Err(err_at(line_no, text, "пустая метка связи"));
+    }
+    let from = register_er_entity(&from_id, entities, ids);
+    let to = register_er_entity(&to_id, entities, ids);
+    relations.push(ErRelation {
+        from,
+        to,
+        from_card,
+        to_card,
+        label,
+        identifying,
+    });
+    Ok(())
+}
+
+/// Разбирает `erDiagram` целиком (ADR-009): сущности с блоками атрибутов
+/// `{ … }` и связи `A ||--o{ B : метка`.
+///
+/// # Ошибки
+/// Некорректный заголовок, битая связь/атрибут (с номером строки),
+/// незакрытый блок, диаграмма без сущностей.
+pub(crate) fn parse_er(input: &str) -> Result<ErAst> {
+    let mut header_seen = false;
+    let mut entities: Vec<ErEntity> = Vec::new();
+    let mut ids = HashMap::new();
+    let mut relations = Vec::new();
+    let skipped = Vec::new();
+    // Индекс сущности с открытым блоком атрибутов.
+    let mut open_block: Option<usize> = None;
+    for (idx, raw) in input.lines().enumerate() {
+        let line_no = idx + 1;
+        let text = strip_comment(raw).trim();
+        if text.is_empty() {
+            continue;
+        }
+        if !header_seen {
+            if text == "erDiagram" {
+                header_seen = true;
+                continue;
+            }
+            return Err(err_at(line_no, text, "ожидался заголовок 'erDiagram'"));
+        }
+        if let Some(ei) = open_block {
+            if text == "}" {
+                open_block = None;
+                continue;
+            }
+            if text.ends_with('{') {
+                return Err(err_at(
+                    line_no,
+                    text,
+                    "вложенные блоки в erDiagram не поддерживаются",
+                ));
+            }
+            let attr = parse_er_attribute(text, line_no)?;
+            entities[ei].attributes.push(attr);
+            continue;
+        }
+        if text == "}" {
+            return Err(err_at(line_no, text, "закрывающая '}' вне блока сущности"));
+        }
+        if let Some(head) = text.strip_suffix('{') {
+            let head = head.trim();
+            if head.contains('[') {
+                return Err(err_at(
+                    line_no,
+                    text,
+                    "алиасы сущностей (`id[\"метка\"]`) не поддерживаются",
+                ));
+            }
+            let mut cur = Cursor::new(head);
+            let id = scan_er_id(&mut cur, line_no, text)?;
+            cur.skip_ws();
+            if !cur.rest().is_empty() {
+                return Err(err_at(
+                    line_no,
+                    text,
+                    "ожидался идентификатор сущности перед '{'",
+                ));
+            }
+            open_block = Some(register_er_entity(&id, &mut entities, &mut ids));
+            continue;
+        }
+        parse_er_relation(text, line_no, &mut entities, &mut ids, &mut relations)?;
+    }
+    if !header_seen {
+        return Err(HarnessError::Mermaid(
+            "пустой ввод: ожидался 'erDiagram'".into(),
+        ));
+    }
+    if open_block.is_some() {
+        return Err(HarnessError::Mermaid(
+            "незакрытый блок атрибутов сущности (нет '}')".into(),
+        ));
+    }
+    if entities.is_empty() {
+        return Err(HarnessError::Mermaid(
+            "erDiagram не содержит ни одной сущности".into(),
+        ));
+    }
+    Ok(ErAst {
+        entities,
+        relations,
+        skipped,
+    })
+}
+
+// ===== C4 (C4Context/C4Container/C4Component) =====
+
+/// Разбирает вызов `Keyword(arg, "…")` с необязательным `{` в конце.
+/// Возвращает `(keyword, содержимое скобок)`; `None` — строка не похожа
+/// на вызов.
+fn parse_c4_call(text: &str) -> Option<(&str, &str)> {
+    let open = text.find('(')?;
+    let kw = text[..open].trim();
+    if kw.is_empty() || kw.contains(char::is_whitespace) {
+        return None;
+    }
+    let close = text.rfind(')')?;
+    if close < open {
+        return None;
+    }
+    let tail = text[close + 1..].trim();
+    if !tail.is_empty() && tail != "{" {
+        return None;
+    }
+    Some((kw, &text[open + 1..close]))
+}
+
+/// Разбивает аргументы вызова C4 по запятым вне кавычек; кавычки снимает.
+fn split_c4_args(inner: &str) -> Vec<String> {
+    let mut args = Vec::new();
+    let mut cur = String::new();
+    let mut in_quotes = false;
+    for c in inner.chars() {
+        match c {
+            '"' => {
+                in_quotes = !in_quotes;
+                cur.push(c);
+            }
+            ',' if !in_quotes => {
+                args.push(unquote(&cur));
+                cur.clear();
+            }
+            _ => cur.push(c),
+        }
+    }
+    if !cur.trim().is_empty() {
+        args.push(unquote(&cur));
+    }
+    args
+}
+
+/// Ключевые слова границ C4 (содержимое разбирается, рамки не рисуются).
+fn is_c4_boundary(kw: &str) -> bool {
+    matches!(
+        kw,
+        "Enterprise_Boundary" | "System_Boundary" | "Container_Boundary" | "Boundary"
+    )
+}
+
+/// Ключевое слово элемента C4 → (стереотип, external, хранилище).
+fn c4_element_kind(kw: &str) -> Option<(C4ElemKind, bool, Option<&'static str>)> {
+    let (stem, external) = match kw.strip_suffix("_Ext") {
+        Some(s) => (s, true),
+        None => (kw, false),
+    };
+    let (stem, store) = if let Some(s) = stem.strip_suffix("Db") {
+        (s, Some("db"))
+    } else if let Some(s) = stem.strip_suffix("Queue") {
+        (s, Some("queue"))
+    } else {
+        (stem, None)
+    };
+    let kind = match stem {
+        "Person" => C4ElemKind::Person,
+        "System" => C4ElemKind::System,
+        "Container" => C4ElemKind::Container,
+        "Component" => C4ElemKind::Component,
+        _ => return None,
+    };
+    Some((kind, external, store))
+}
+
+/// Ключевое слово связи C4: `Rel`, `Rel_U/D/L/R/Back`, `BiRel`.
+fn c4_rel_bidir(kw: &str) -> Option<bool> {
+    if kw == "BiRel" {
+        Some(true)
+    } else if kw == "Rel" || kw.starts_with("Rel_") {
+        Some(false)
+    } else {
+        None
+    }
+}
+
+/// Неразрешённая связь C4 (алиасы разрешаются после разбора всех строк).
+struct C4PendingRel {
+    from: String,
+    to: String,
+    label: String,
+    bidir: bool,
+    line: usize,
+}
+
+/// Разбирает C4-диаграмму (`C4Context`/`C4Container`/`C4Component`) целиком
+/// (ADR-009). Границы `*_Boundary`, стили, раскладка и легенды пропускаются
+/// с предупреждением; `title` — тоже.
+///
+/// # Ошибки
+/// Некорректный заголовок, битый вызов элемента/связи (с номером строки),
+/// связь на неизвестный алиас, диаграмма без элементов.
+pub(crate) fn parse_c4(input: &str) -> Result<C4Ast> {
+    let mut header_seen = false;
+    let mut elements = Vec::new();
+    let mut ids: HashMap<String, usize> = HashMap::new();
+    let mut pending: Vec<C4PendingRel> = Vec::new();
+    let mut skipped = Vec::new();
+    for (idx, raw) in input.lines().enumerate() {
+        let line_no = idx + 1;
+        let text = strip_comment(raw).trim();
+        if text.is_empty() {
+            continue;
+        }
+        if !header_seen {
+            if matches!(text, "C4Context" | "C4Container" | "C4Component") {
+                header_seen = true;
+                continue;
+            }
+            return Err(err_at(
+                line_no,
+                text,
+                "ожидался заголовок 'C4Context', 'C4Container' или 'C4Component'",
+            ));
+        }
+        // Закрытие boundary-блока.
+        if text == "}" {
+            skipped.push(Skipped {
+                line: line_no,
+                text: text.to_owned(),
+            });
+            continue;
+        }
+        // `title …` — строка без скобок.
+        if text.split_whitespace().next() == Some("title") {
+            skipped.push(Skipped {
+                line: line_no,
+                text: text.to_owned(),
+            });
+            continue;
+        }
+        let Some((kw, inner)) = parse_c4_call(text) else {
+            return Err(err_at(
+                line_no,
+                text,
+                "ожидалась C4-инструкция вида Keyword(аргументы)",
+            ));
+        };
+        if is_c4_boundary(kw) {
+            skipped.push(Skipped {
+                line: line_no,
+                text: text.to_owned(),
+            });
+            continue;
+        }
+        if let Some((kind, external, store)) = c4_element_kind(kw) {
+            let args = split_c4_args(inner);
+            if args.len() < 2 {
+                return Err(err_at(
+                    line_no,
+                    text,
+                    "ожидались аргументы (alias, \"label\"[, \"tech\"[, \"desc\"]])",
+                ));
+            }
+            let alias = args[0].clone();
+            if alias.is_empty() || alias.contains(char::is_whitespace) {
+                return Err(err_at(line_no, text, "некорректный алиас элемента"));
+            }
+            let label = args[1].clone();
+            let tech = if matches!(kind, C4ElemKind::Container | C4ElemKind::Component) {
+                args.get(2).filter(|t| !t.is_empty()).cloned()
+            } else {
+                None
+            };
+            if let Some(&i) = ids.get(&alias) {
+                // Повторное объявление — обновляем (как узлы flowchart).
+                elements[i] = C4Element {
+                    alias,
+                    kind,
+                    external,
+                    store: store.map(str::to_owned),
+                    label,
+                    tech,
+                };
+            } else {
+                ids.insert(alias.clone(), elements.len());
+                elements.push(C4Element {
+                    alias,
+                    kind,
+                    external,
+                    store: store.map(str::to_owned),
+                    label,
+                    tech,
+                });
+            }
+            continue;
+        }
+        if let Some(bidir) = c4_rel_bidir(kw) {
+            let args = split_c4_args(inner);
+            if args.len() < 2 {
+                return Err(err_at(
+                    line_no,
+                    text,
+                    "ожидались аргументы связи (from, to[, \"label\"])",
+                ));
+            }
+            pending.push(C4PendingRel {
+                from: args[0].clone(),
+                to: args[1].clone(),
+                label: args.get(2).cloned().unwrap_or_default(),
+                bidir,
+                line: line_no,
+            });
+            continue;
+        }
+        // Стили, раскладка, легенды и прочее известное/неизвестное — пропускаем.
+        skipped.push(Skipped {
+            line: line_no,
+            text: text.to_owned(),
+        });
+    }
+    if !header_seen {
+        return Err(HarnessError::Mermaid(
+            "пустой ввод: ожидался 'C4Context'/'C4Container'/'C4Component'".into(),
+        ));
+    }
+    let mut relations = Vec::with_capacity(pending.len());
+    for rel in pending {
+        let Some(&from) = ids.get(&rel.from) else {
+            return Err(err_at(
+                rel.line,
+                &rel.from,
+                "связь ссылается на неизвестный алиас",
+            ));
+        };
+        let Some(&to) = ids.get(&rel.to) else {
+            return Err(err_at(
+                rel.line,
+                &rel.to,
+                "связь ссылается на неизвестный алиас",
+            ));
+        };
+        relations.push(C4Relation {
+            from,
+            to,
+            label: rel.label,
+            bidir: rel.bidir,
+        });
+    }
+    if elements.is_empty() {
+        return Err(HarnessError::Mermaid(
+            "C4-диаграмма не содержит ни одного элемента".into(),
+        ));
+    }
+    Ok(C4Ast {
+        elements,
+        relations,
+        skipped,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -676,5 +1178,159 @@ mod tests {
         assert_eq!(ast.participants[0].label, "Alpha");
         assert_eq!(ast.items.len(), 3);
         assert!(matches!(&ast.items[2], SeqItem::Message(m) if m.dotted));
+    }
+
+    #[test]
+    fn parses_er_entities_attributes_and_relations() {
+        let ast = parse_er(
+            "erDiagram\n\
+             CUSTOMER ||--o{ ORDER : places\n\
+             ORDER ||--|{ LINE-ITEM : contains\n\
+             CUSTOMER {\n\
+             \x20   string name\n\
+             \x20   int id PK\n\
+             }\n",
+        )
+        .unwrap();
+        assert_eq!(ast.entities.len(), 3);
+        assert_eq!(ast.relations.len(), 2);
+        let customer = &ast.entities[0];
+        assert_eq!(customer.id, "CUSTOMER");
+        assert_eq!(customer.attributes.len(), 2);
+        assert_eq!(customer.attributes[0].typ, "string");
+        assert_eq!(customer.attributes[0].name, "name");
+        assert_eq!(customer.attributes[1].extra.as_deref(), Some("PK"));
+        let rel = &ast.relations[0];
+        assert_eq!(rel.from_card, ErCard::One);
+        assert_eq!(rel.to_card, ErCard::ZeroMany);
+        assert!(rel.identifying);
+        assert_eq!(rel.label, "places");
+    }
+
+    #[test]
+    fn parses_er_all_cardinalities_and_dotted_relation() {
+        let ast = parse_er(
+            "erDiagram\n\
+             A |o..o| B : maybe\n\
+             B }|--|{ C : many\n",
+        )
+        .unwrap();
+        assert_eq!(ast.relations.len(), 2);
+        assert_eq!(ast.relations[0].from_card, ErCard::ZeroOne);
+        assert_eq!(ast.relations[0].to_card, ErCard::ZeroOne);
+        assert!(!ast.relations[0].identifying, "`..` — non-identifying");
+        assert_eq!(ast.relations[1].from_card, ErCard::OneMany);
+        assert_eq!(ast.relations[1].to_card, ErCard::OneMany);
+    }
+
+    #[test]
+    fn er_lowering_places_cardinality_in_edge_label() {
+        let ast = parse_er("erDiagram\nCUSTOMER ||--o{ ORDER : places\n").unwrap();
+        let flow = ast.to_flow();
+        assert_eq!(flow.edges.len(), 1);
+        assert_eq!(
+            flow.edges[0].label.as_deref(),
+            Some("places (1:0..*)"),
+            "метка ребра с множественностью"
+        );
+        assert!(!flow.edges[0].plain, "identifying — со стрелкой");
+        assert_eq!(flow.nodes[0].label, "CUSTOMER");
+    }
+
+    #[test]
+    fn er_lowering_multiline_label_with_separator() {
+        let ast = parse_er("erDiagram\nT {\n  string a\n  int b PK\n}\n").unwrap();
+        let flow = ast.to_flow();
+        assert_eq!(
+            flow.nodes[0].label, "T\n\nstring a\nint b PK",
+            "имя, пустая строка-разделитель, атрибуты"
+        );
+    }
+
+    #[test]
+    fn er_errors_have_line_numbers() {
+        let err = parse_er("erDiagram\nA ||--o{ B : ok\nA ~~ B : bad\n").unwrap_err();
+        assert!(err.to_string().contains("строка 3"), "{}", err);
+        // Незакрытый блок атрибутов.
+        assert!(parse_er("erDiagram\nA {\n  string x\n").is_err());
+        // Пустая метка связи.
+        assert!(parse_er("erDiagram\nA ||--o{ B :\n").is_err());
+        // Диаграмма без сущностей.
+        assert!(parse_er("erDiagram\n%% только комментарий\n").is_err());
+        // Алиасы сущностей не поддерживаются.
+        assert!(parse_er("erDiagram\nA[\"Ай\"] {\n  string x\n}\n").is_err());
+    }
+
+    #[test]
+    fn parses_c4_context_elements_and_relations() {
+        let ast = parse_c4(
+            "C4Context\n\
+             Person(user, \"Пользователь\", \"Клиент банка\")\n\
+             System_Ext(mail, \"E-mail\", \"Exchange\")\n\
+             System(banking, \"Internet Banking\")\n\
+             Rel(user, banking, \"Использует\")\n\
+             BiRel(banking, mail, \"Шлёт письма\")\n",
+        )
+        .unwrap();
+        assert_eq!(ast.elements.len(), 3);
+        assert_eq!(ast.elements[0].kind, C4ElemKind::Person);
+        assert_eq!(ast.elements[1].kind, C4ElemKind::System);
+        assert!(ast.elements[1].external, "_Ext детектируется");
+        assert_eq!(ast.relations.len(), 2);
+        assert!(!ast.relations[0].bidir);
+        assert!(ast.relations[1].bidir);
+        let flow = ast.to_flow();
+        assert_eq!(flow.nodes[0].label, "«person»\nПользователь");
+        assert_eq!(flow.nodes[1].label, "«system, external»\nE-mail");
+        assert!(flow.edges[1].plain, "BiRel — линия без стрелки");
+    }
+
+    #[test]
+    fn parses_c4_container_with_tech_and_boundary() {
+        let ast = parse_c4(
+            "C4Container\n\
+             title Контейнеры\n\
+             System_Boundary(sys, \"Платформа\") {\n\
+             Container(api, \"API\", \"Rust\", \"HTTP-точка входа\")\n\
+             ContainerDb(db, \"БД\", \"PostgreSQL\")\n\
+             }\n\
+             UpdateElementStyle(api, $bgColor=\"red\")\n\
+             Rel(api, db, \"SQL\", \"JDBC\")\n",
+        )
+        .unwrap();
+        assert_eq!(ast.elements.len(), 2, "boundary не элемент");
+        assert_eq!(ast.elements[1].store.as_deref(), Some("db"));
+        assert_eq!(
+            ast.elements[0].tech.as_deref(),
+            Some("Rust"),
+            "технология третьим аргументом"
+        );
+        // title, boundary-открытие, '}' и UpdateElementStyle — пропущены.
+        assert_eq!(ast.skipped.len(), 4, "{:?}", ast.skipped);
+        assert_eq!(ast.relations.len(), 1);
+        let flow = ast.to_flow();
+        assert_eq!(
+            flow.nodes[0].label, "«container»\nAPI\n[Rust]",
+            "стереотип + имя + технология"
+        );
+    }
+
+    #[test]
+    fn c4_errors_on_unknown_alias_and_garbage() {
+        let err = parse_c4("C4Context\nSystem(a, \"A\")\nRel(a, ghost, \"x\")\n").unwrap_err();
+        assert!(err.to_string().contains("неизвестный алиас"), "{}", err);
+        assert!(
+            parse_c4("C4Context\nSystem(a)\n").is_err(),
+            "без label — ошибка"
+        );
+        assert!(parse_c4("C4Context\nэто не вызов\n").is_err());
+        assert!(
+            parse_c4("C4Deployment\nSystem(a, \"A\")\n").is_err(),
+            "заголовок не C4"
+        );
+        assert!(
+            parse_c4("C4Context\n%% пусто\n").is_err(),
+            "без элементов — ошибка"
+        );
     }
 }

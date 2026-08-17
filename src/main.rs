@@ -420,6 +420,27 @@ enum ModelCmd {
         /// Каталог модели.
         dir: PathBuf,
     },
+    /// Экспорт модели (SYS/CMP/INT + связи) в отраслевой формат (ADR-009):
+    /// Structurizr DSL, PlantUML или drawio — на stdout.
+    Export {
+        /// Каталог модели.
+        dir: PathBuf,
+        /// Формат: structurizr, plantuml или drawio.
+        #[arg(long)]
+        format: String,
+    },
+    /// Импорт Structurizr DSL в модель: сущности SYS/CMP/INT + связи
+    /// (по одному .md на элемент; существующие файлы не затираются).
+    Import {
+        /// Файл Structurizr DSL.
+        file: PathBuf,
+        /// Формат (пока только structurizr).
+        #[arg(long)]
+        format: String,
+        /// Каталог модели-получателя (создаётся при отсутствии).
+        #[arg(long, default_value = "model")]
+        dir: PathBuf,
+    },
 }
 
 /// Подкоманды `arch trace` (ADR-006).
@@ -1335,6 +1356,40 @@ fn cmd_model(cmd: ModelCmd) -> Result<()> {
                 report.out_dir.display(),
                 report.written.len(),
                 report.removed.len()
+            );
+        }
+        ModelCmd::Export { dir, format } => {
+            let fmt = arch_harness::model::ExportFormat::from_name(&format).with_context(|| {
+                format!(
+                    "неизвестный формат '{format}' (допустимы: {})",
+                    arch_harness::model::ExportFormat::names()
+                )
+            })?;
+            let model = arch_harness::model::load_model(&dir)
+                .with_context(|| format!("загрузка модели {}", dir.display()))?;
+            let text = arch_harness::model::export_model(&model, fmt)
+                .with_context(|| format!("экспорт модели {}", dir.display()))?;
+            print!("{text}");
+        }
+        ModelCmd::Import { file, format, dir } => {
+            if format.trim().to_ascii_lowercase() != "structurizr" {
+                anyhow::bail!(
+                    "импорт поддерживает только --format structurizr (получено: '{format}')"
+                );
+            }
+            let report = arch_harness::model::import_structurizr(&file, &dir)
+                .with_context(|| format!("импорт {} в {}", file.display(), dir.display()))?;
+            for f in &report.written {
+                println!("записан: {}", f.display());
+            }
+            for w in &report.warnings {
+                println!("предупреждение: {w}");
+            }
+            println!(
+                "Импорт {}: {} сущностей, предупреждений: {}",
+                report.dir.display(),
+                report.written.len(),
+                report.warnings.len()
             );
         }
     }

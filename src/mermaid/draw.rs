@@ -178,6 +178,11 @@ fn slot_on_row_rev(cv: &Canvas, y: i32, x1: i32, x2: i32, w: i32) -> Option<i32>
         .find(|&sx| (0..w).all(|i| cv.slot_cell(sx + i, y)))
 }
 
+/// Ширина строки метки в колонках терминала (многострочная — максимум строк).
+fn label_width(label: &str) -> i32 {
+    label.lines().map(str_width).max().unwrap_or(0)
+}
+
 /// Ширина узла на сетке (с рамкой и отступами).
 fn node_width(shape: Shape, label_w: i32) -> i32 {
     match shape {
@@ -186,11 +191,24 @@ fn node_width(shape: Shape, label_w: i32) -> i32 {
     }
 }
 
+/// Высота узла на сетке: многострочная метка (ER/C4, ADR-009) добавляет
+/// строки; ромб/круг всегда однострочные (высота 3).
+fn node_height(shape: Shape, label: &str) -> i32 {
+    match shape {
+        Shape::Rect | Shape::Rounded => 2 + label.lines().count().max(1) as i32,
+        Shape::Rhombus | Shape::Circle => 3,
+    }
+}
+
 /// Рисует узел (очищая место под ним — линии «проходят за» узлом).
+///
+/// Метка может быть многострочной (только Rect/Rounded): каждая строка —
+/// отдельный ряд рамки, пустая строка рисуется разделителем `├─┤`.
 fn draw_node(cv: &mut Canvas, x: i32, y: i32, shape: Shape, label: &str) {
-    let lw = str_width(label);
+    let lw = label_width(label);
     let w = node_width(shape, lw);
-    cv.clear(x, y, w, 3);
+    let h = node_height(shape, label);
+    cv.clear(x, y, w, h);
     let dash = "─".repeat((lw + 2) as usize);
     match shape {
         Shape::Rect | Shape::Rounded => {
@@ -200,8 +218,16 @@ fn draw_node(cv: &mut Canvas, x: i32, y: i32, shape: Shape, label: &str) {
                 ('┌', '┐', '└', '┘')
             };
             cv.text(x, y, &format!("{tl}{dash}{tr}"));
-            cv.text(x, y + 1, &format!("│ {label} │"));
-            cv.text(x, y + 2, &format!("{bl}{dash}{br}"));
+            for (row, line) in label.lines().enumerate() {
+                let ry = y + 1 + row as i32;
+                if line.is_empty() {
+                    cv.text(x, ry, &format!("├{dash}┤"));
+                } else {
+                    let pad = (lw - str_width(line)).max(0) as usize;
+                    cv.text(x, ry, &format!("│ {line}{} │", " ".repeat(pad)));
+                }
+            }
+            cv.text(x, y + h - 1, &format!("{bl}{dash}{br}"));
         }
         Shape::Rhombus => {
             cv.text(x, y, &format!(" ╱{dash}╲ "));
@@ -222,6 +248,7 @@ struct Geom {
     x: i32,
     y: i32,
     w: i32,
+    h: i32,
 }
 
 /// Стрелка (или конец линии для `---`) у границы узла.
@@ -261,11 +288,11 @@ fn route_vertical(
     let (head_row, bus) = if forward {
         (to.y - 1, to.y - gap)
     } else {
-        (to.y + 3, to.y + 2 + gap)
+        (to.y + to.h, to.y + to.h - 1 + gap)
     };
     if fcx == tcx {
         if forward {
-            for r in (from.y + 3)..head_row {
+            for r in (from.y + from.h)..head_row {
                 cv.line(fcx, r, '│');
             }
         } else {
@@ -291,7 +318,7 @@ fn route_vertical(
         )
     };
     if forward {
-        for r in (from.y + 3)..bus {
+        for r in (from.y + from.h)..bus {
             cv.line(fcx, r, '│');
         }
     } else {
@@ -331,8 +358,8 @@ fn route_horizontal(
     forward: bool,
     gap: i32,
 ) {
-    let fry = from.y + 1;
-    let try_ = to.y + 1;
+    let fry = from.y + from.h / 2;
+    let try_ = to.y + to.h / 2;
     let arrow = if forward { '▶' } else { '◀' };
     let (head_col, bus) = if forward {
         (to.x - 1, to.x - gap)
@@ -424,7 +451,13 @@ pub(crate) fn render_flowchart(ast: &FlowAst) -> String {
     let widths: Vec<i32> = ast
         .nodes
         .iter()
-        .map(|nd| node_width(nd.shape, str_width(&nd.label)))
+        .map(|nd| node_width(nd.shape, label_width(&nd.label)))
+        .collect();
+    // Высота узла переменная: многострочные метки ER/C4 (ADR-009).
+    let node_hs: Vec<i32> = ast
+        .nodes
+        .iter()
+        .map(|nd| node_height(nd.shape, &nd.label))
         .collect();
     let horizontal = ast.dir.is_horizontal();
     let max_label = ast
@@ -442,12 +475,22 @@ pub(crate) fn render_flowchart(ast: &FlowAst) -> String {
     };
 
     // Координаты узлов: слои равномерно, слой центрируется относительно самого широкого/высокого.
-    let mut geoms = vec![Geom { x: 0, y: 0, w: 0 }; n];
+    let mut geoms = vec![
+        Geom {
+            x: 0,
+            y: 0,
+            w: 0,
+            h: 0,
+        };
+        n
+    ];
     if horizontal {
         let heights: Vec<i32> = lay
             .layers
             .iter()
-            .map(|l| 3 * l.len() as i32 + NODE_GAP * (l.len() as i32 - 1).max(0))
+            .map(|l| {
+                l.iter().map(|&i| node_hs[i]).sum::<i32>() + NODE_GAP * (l.len() as i32 - 1).max(0)
+            })
             .collect();
         let total = heights.iter().copied().max().unwrap_or(0);
         let mut x = 0;
@@ -455,8 +498,13 @@ pub(crate) fn render_flowchart(ast: &FlowAst) -> String {
             let lw = layer.iter().map(|&i| widths[i]).max().unwrap_or(0);
             let mut y = (total - heights[li]) / 2;
             for &i in layer {
-                geoms[i] = Geom { x, y, w: widths[i] };
-                y += 3 + NODE_GAP;
+                geoms[i] = Geom {
+                    x,
+                    y,
+                    w: widths[i],
+                    h: node_hs[i],
+                };
+                y += node_hs[i] + NODE_GAP;
             }
             x += lw + layer_gap;
         }
@@ -471,12 +519,18 @@ pub(crate) fn render_flowchart(ast: &FlowAst) -> String {
         let total = ws.iter().copied().max().unwrap_or(0);
         let mut y = 0;
         for (li, layer) in lay.layers.iter().enumerate() {
+            let layer_h = layer.iter().map(|&i| node_hs[i]).max().unwrap_or(0);
             let mut x = (total - ws[li]) / 2;
             for &i in layer {
-                geoms[i] = Geom { x, y, w: widths[i] };
+                geoms[i] = Geom {
+                    x,
+                    y,
+                    w: widths[i],
+                    h: node_hs[i],
+                };
                 x += widths[i] + NODE_GAP;
             }
-            y += 3 + layer_gap;
+            y += layer_h + layer_gap;
         }
     }
 
