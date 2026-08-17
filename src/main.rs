@@ -339,6 +339,10 @@ enum McpCmd {
         #[arg(default_value = "{}")]
         args: String,
     },
+    /// MCP-сервер (stdio JSON-RPC, NDJSON): архитектурный контроль кодовым
+    /// агентам (Claude Code и др.) — `spine_lint`, `fitness_check`,
+    /// `significance_score`, `trace_check`, `model_query`, `rubric_run` (ADR-008).
+    Serve,
 }
 
 #[derive(Subcommand)]
@@ -1129,7 +1133,14 @@ async fn cmd_web(cfg: &Config, cmd: WebCmd) -> Result<()> {
     Ok(())
 }
 
-async fn cmd_mcp(cfg: &Config, cmd: McpCmd) -> Result<()> {
+async fn cmd_mcp(cfg: &Arc<Config>, cmd: McpCmd) -> Result<()> {
+    // Серверный режим (P1-2, ADR-008) обслуживает клиентов и не подключается
+    // к серверам: mcp.json для него не требуется, уходим до его загрузки.
+    if matches!(cmd, McpCmd::Serve) {
+        return arch_harness::mcp_server::serve(Arc::clone(cfg))
+            .await
+            .context("MCP-сервер (stdio)");
+    }
     let mut servers = arch_harness::mcp::load_servers(&cfg.mcp.servers_file)
         .with_context(|| format!("чтение {}", cfg.mcp.servers_file.display()))?;
     // Плагины тоже несут MCP-серверы (стандарт: plugin.json mcpServers / .mcp.json).
@@ -1152,6 +1163,8 @@ async fn cmd_mcp(cfg: &Config, cmd: McpCmd) -> Result<()> {
             let out = manager.call(&name, args).await?;
             println!("{}", out.content);
         }
+        // Недостижимо: Serve обработан выше возвратом до подключения к серверам.
+        McpCmd::Serve => {}
     }
     manager.shutdown().await;
     Ok(())
