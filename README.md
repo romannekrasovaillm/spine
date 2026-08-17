@@ -183,6 +183,38 @@ BMAD, Spec Kit, OpenSpec и др.):
   cost per validated outcome.
 - **Дельта-спеки**: `arch delta new|validate|archive` — state machine OpenSpec.
 
+**Как переключить уровень автономии (R0–R5).** Уровень задаётся в конфиге:
+
+```toml
+[policy]
+autonomy = "R2"   # допустимы формы "R2", "r3", "4"
+```
+
+Файл конфига ищется в порядке: `./arch-harness.toml` (каталог запуска) →
+`~/.config/arch-harness/config.toml`; либо явно — `arch --config /path/strict.toml`.
+Разовое ужесточение для конкретного репозитория: положите `arch-harness.toml`
+с секцией `[policy]` в его корень и запускайте `arch` оттуда. CLI-подкоманды
+читают конфиг на каждый запуск; в TUI политика вшивается в реестр инструментов
+при старте — после правки перезапустите `arch` (фоновые субагенты наследуют
+снимок конфига на момент своего запуска).
+
+| Уровень | Чтение/поиск | Изменения (`write_file`, `cargo test`, `git commit`) | Деструктив (`rm -rf`, `git push --force`, `kubectl delete`) |
+|---|---|---|---|
+| R0–R1 | авто | эскалация человеку | DENY |
+| R2 (дефолт) | авто | авто | DENY |
+| R3 | авто | авто + обязательный журнал (в Spine он ведётся всегда) | DENY |
+| R4 | авто | авто | эскалация человеку |
+| R5 | авто | авто | авто — не рекомендуется, красный флаг аудита |
+
+«Эскалация человеку» означает, что действие не выполняется: модель получает
+отказ с текстом эскалации и корректно останавливается (в том числе в
+headless-режиме); человек либо выполняет действие сам, либо поднимает уровень.
+Проверка без исполнения: `arch policy` — текущий уровень;
+`arch policy --check "rm -rf /tmp/x"` — класс риска и вердикт по команде.
+Отказы журналируются в сессионный JSONL — материал аудита и детектора
+approval theater. Bash классифицируется по тексту команды (паттерны —
+`src/policy.rs`).
+
 Подробности: `docs/governance.md`.
 
 #### Учебные кейсы
@@ -477,6 +509,38 @@ BMAD, Spec Kit, OpenSpec, and more):
   `significance_score`, `trace_check`, `model_query`, `rubric_run` to coding agents
   (Claude Code etc.) — structured verdict (`passed` + findings) at code-writing
   time; read-only, all targets passed as call arguments (`docs/mcp.md`).
+
+**Switching the autonomy level (R0–R5).** The level lives in the config:
+
+```toml
+[policy]
+autonomy = "R2"   # "R2", "r3" and "4" are all accepted
+```
+
+Config resolution order: `./arch-harness.toml` (launch directory) →
+`~/.config/arch-harness/config.toml`; or pass an explicit file —
+`arch --config /path/strict.toml`. To harden a single repository, drop an
+`arch-harness.toml` with a `[policy]` section into its root and run `arch`
+from there. CLI subcommands re-read the config on every invocation; in the TUI
+the policy is baked into the tool registry at startup, so restart `arch` after
+editing (background subagents inherit the config snapshot taken at spawn time).
+
+| Level | Read/search | Mutating (`write_file`, `cargo test`, `git commit`) | Destructive (`rm -rf`, `git push --force`, `kubectl delete`) |
+|---|---|---|---|
+| R0–R1 | auto | escalates to human | DENY |
+| R2 (default) | auto | auto | DENY |
+| R3 | auto | auto + mandatory journal (Spine journals everything anyway) | DENY |
+| R4 | auto | auto | escalates to human |
+| R5 | auto | auto | auto — not recommended, audit red flag |
+
+"Escalates to human" means the action is not executed: the model receives a
+refusal with escalation text and stops cleanly (including headless mode); the
+human either performs the action themselves or raises the level. Verify without
+executing: `arch policy` prints the current level;
+`arch policy --check "rm -rf /tmp/x"` shows the risk class and verdict. Denials
+are journaled to the session JSONL — input for audit and the approval-theater
+detector. Bash commands are classified by command text (patterns in
+`src/policy.rs`).
 
 **Handoff to coding harnesses**: Claude Code, Qwen Code, OpenClaw, Hermes,
 Theseus, CodeWhale — `.arch-handoff/` packages with invariants, acceptance
