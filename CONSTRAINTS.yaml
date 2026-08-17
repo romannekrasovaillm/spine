@@ -1,0 +1,150 @@
+# CONSTRAINTS.yaml — fitness-функции собственного репозитория Spine (dogfood, AD-9).
+#
+# Прогон:  arch control check . --constraints CONSTRAINTS.yaml
+# CI:      джоба dogfood (.github/workflows/ci.yml).
+# Схема:   src/control.rs (FitnessRule); корни rules:|constraints:;
+#          severity critical|high → error (ломает итог, exit 1), medium → warn.
+# Обход пропускает .git, target, node_modules, dist, __pycache__, .next,
+# .pytest_cache, .arch-handoff (src/control.rs, collect_files).
+constraints:
+  # --- AD-6: безопасный Rust -----------------------------------------------
+  - id: C-01
+    name: no_unsafe_code
+    type: must_not_contain
+    glob: "src/**/*.rs"
+    pattern: "unsafe\\s*(\\{|fn|impl)"
+    severity: critical
+
+  - id: C-02
+    name: unsafe_forbidden_in_lints
+    type: must_contain
+    glob: "Cargo.toml"
+    pattern: "unsafe_code = \"forbid\""
+    severity: critical
+
+  - id: C-03
+    name: msrv_pinned
+    type: must_contain
+    glob: "Cargo.toml"
+    pattern: "rust-version = \"1\\.85\""
+    severity: critical
+
+  # --- AD-9/AD-2: гейты CI существуют и запускают механику харнесса ---------
+  - id: C-04
+    name: ci_audit_job
+    type: must_contain
+    glob: ".github/workflows/*.yml"
+    pattern: "cargo audit"
+    severity: critical
+
+  # --- AD-3: секреты не живут в коде и конфигах -----------------------------
+  # Длина {30,} отсекает учебные фейки юнит-тестов secrets.rs/agent.rs;
+  # реальные ключи провайдеров длиннее.
+  - id: C-05
+    name: no_secret_literals_code
+    type: must_not_contain
+    glob: "src/**/*.rs"
+    pattern: "sk-[A-Za-z0-9]{30,}|ghp_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,}"
+    severity: critical
+
+  - id: C-06
+    name: no_secret_literals_configs
+    type: must_not_contain
+    glob: "**/*.toml"
+    pattern: "sk-[A-Za-z0-9]{30,}"
+    severity: critical
+
+  # --- AD-2: политика автономии применяется в dispatch ----------------------
+  - id: C-07
+    name: policy_enforced_in_dispatch
+    type: must_contain
+    glob: "src/tool.rs"
+    pattern: "self\\.policy\\.check"
+    severity: critical
+
+  # --- AD-5: сессионный журнал JSONL ----------------------------------------
+  - id: C-08
+    name: session_journal_jsonl
+    type: must_contain
+    glob: "src/**/*.rs"
+    pattern: "jsonl"
+    severity: high
+
+  # --- AD-1/AD-10: библиотека плагинов в репозитории ------------------------
+  - id: C-09
+    name: plugin_library_present
+    type: file_exists
+    path: "assets/plugins"
+    severity: high
+
+  # --- AD-4: единый провайдерный трейт --------------------------------------
+  - id: C-10
+    name: single_provider_trait
+    type: must_contain
+    glob: "src/llm.rs"
+    pattern: "trait LlmProvider"
+    severity: high
+
+  # --- AD-8: headless JSON-контракт результата handoff ----------------------
+  - id: C-11
+    name: handoff_json_contract
+    type: must_contain
+    glob: "src/**/*.rs"
+    pattern: "open_questions"
+    severity: high
+
+  # --- AD-9: джоба dogfood прогоняет этот же гейт в CI ----------------------
+  - id: C-12
+    name: dogfood_ci_job
+    type: must_contain
+    glob: ".github/workflows/*.yml"
+    pattern: "control check"
+    severity: critical
+
+  # --- Конвенции репозитория -------------------------------------------------
+  - id: C-13
+    name: readme_bilingual
+    type: must_contain
+    glob: "README.md"
+    pattern: "🇬🇧 English"
+    severity: medium
+
+  - id: C-14
+    name: license_present
+    type: file_exists
+    path: "LICENSE"
+    severity: critical
+
+  - id: C-15
+    name: agents_md_present
+    type: file_exists
+    path: "AGENTS.md"
+    severity: critical
+
+  - id: C-16
+    name: architecture_doc_present
+    type: file_exists
+    path: "docs/architecture.md"
+    severity: high
+
+  - id: C-17
+    name: adr_practice
+    type: must_contain
+    glob: "docs/adr/*.md"
+    pattern: "^# ADR-[0-9]+"
+    severity: high
+
+  # --- Гейты качества (полный прогон = качественный гейт репозитория) -------
+  - id: C-18
+    name: rustfmt_gate
+    type: command_succeeds
+    command: "cargo fmt --all -- --check"
+    timeout_secs: 120
+    severity: critical
+
+  - id: C-19
+    name: tests_pass
+    type: command_succeeds
+    command: "cargo test --quiet"
+    timeout_secs: 900
+    severity: critical

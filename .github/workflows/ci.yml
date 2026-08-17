@@ -69,3 +69,26 @@ jobs:
         # rust-cache кэширует $CARGO_HOME/bin — cargo-audit собирается раз.
       - run: cargo install cargo-audit --locked
       - run: cargo audit
+
+  dogfood:
+    # Догфудинг (AD-9 корневого ARCHITECTURE-SPINE.md): харнесс гейтит
+    # собственный репозиторий своими же механиками — spine-линтер и
+    # fitness-гейт по корневым ARCHITECTURE-SPINE.md / CONSTRAINTS.yaml.
+    # Внутри fitness-гейта — cargo fmt --check и cargo test (C-18/C-19).
+    name: dogfood (self spine + fitness)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build
+      - run: ./target/debug/arch control spine ARCHITECTURE-SPINE.md
+      - run: ./target/debug/arch control check . --constraints CONSTRAINTS.yaml
+      - name: personal paths scan
+        # AD-7: персональные пути не живут в репозитории; допустимы только
+        # плейсхолдеры /home/user/ (сцены скриншотов) и /home/.../ (доки).
+        # Сам workflow исключён: в нём литерально записана эта команда.
+        run: |
+          leaks=$(git grep -nI "/home/" -- . ":(exclude).github/workflows/ci.yml" | grep -vE "/home/(user/|\.\.\.)" || true)
+          if [ -n "$leaks" ]; then echo "$leaks"; exit 1; fi
+          echo "personal paths: чисто"

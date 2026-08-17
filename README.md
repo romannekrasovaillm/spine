@@ -215,6 +215,11 @@ headless-режиме); человек либо выполняет действ�
 approval theater. Bash классифицируется по тексту команды (паттерны —
 `src/policy.rs`).
 
+Харнесс применяет эти механики к самому себе: корневые `ARCHITECTURE-SPINE.md`
+(10 инвариантов кодовой базы) и `CONSTRAINTS.yaml` (19 fitness-правил) гейтятся
+CI-джобой `dogfood` (`arch control spine` + `arch control check .` + скан
+персональных путей) — инварианты живут не на бумаге, а в пайплайне.
+
 Подробности: `docs/governance.md`.
 
 #### Учебные кейсы
@@ -541,6 +546,12 @@ executing: `arch policy` prints the current level;
 are journaled to the session JSONL — input for audit and the approval-theater
 detector. Bash commands are classified by command text (patterns in
 `src/policy.rs`).
+
+Spine eats its own dog food: the repo root carries `ARCHITECTURE-SPINE.md`
+(10 invariants of the harness codebase) and `CONSTRAINTS.yaml` (19 fitness
+rules), enforced by the `dogfood` CI job (`arch control spine` +
+`arch control check .` + a personal-path scan) — the invariants live in the
+pipeline, not on paper.
 
 **Handoff to coding harnesses**: Claude Code, Qwen Code, OpenClaw, Hermes,
 Theseus, CodeWhale — `.arch-handoff/` packages with invariants, acceptance

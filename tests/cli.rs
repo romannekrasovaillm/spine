@@ -151,6 +151,42 @@ fn control_check_passing_constraints_exits_0() {
     cmd.assert().success().stdout(contains("Итог: PASS"));
 }
 
+/// `arch control spine` на чистом spine-файле → exit 0.
+#[test]
+fn control_spine_clean_exits_0() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let spine = tmp.path().join("ARCHITECTURE-SPINE.md");
+    std::fs::write(
+        &spine,
+        "# Spine\n\n## AD-1: Первый инвариант\n\n- **Binds**: a ↔ b\n\
+         - **Prevents**: дрейф\n- **Rule**: правило. Страж: C-01.\n\
+         - **Статус**: [ADOPTED]\n",
+    )
+    .expect("write spine");
+
+    let mut cmd = arch_cmd(tmp.path());
+    cmd.arg("control").arg("spine").arg(spine.as_os_str());
+    cmd.assert().success().stdout(contains("нарушений нет"));
+}
+
+/// `arch control spine` с error-находкой (дубль AD-id) → exit 1
+/// (скриптовый гейт spine-линтера в CI).
+#[test]
+fn control_spine_error_exits_1() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let spine = tmp.path().join("ARCHITECTURE-SPINE.md");
+    std::fs::write(
+        &spine,
+        "# Spine\n\n## AD-1: Первый\n\n- **Binds**: a\n- **Prevents**: b\n- **Rule**: c.\n\n\
+         ## AD-1: Дубль\n\n- **Binds**: a\n- **Prevents**: b\n- **Rule**: c.\n",
+    )
+    .expect("write spine");
+
+    let mut cmd = arch_cmd(tmp.path());
+    cmd.arg("control").arg("spine").arg(spine.as_os_str());
+    cmd.assert().code(1).stdout(contains("dup_ad_id"));
+}
+
 /// `harness-run` со `status=blocked` в контракте → exit 2 (скриптовый гейт
 /// в пайпах, см. `docs/harness_integrations.md`).
 #[test]

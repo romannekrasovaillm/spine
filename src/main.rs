@@ -1263,6 +1263,14 @@ fn cmd_control(cmd: ControlCmd) -> Result<()> {
                     i.message
                 );
             }
+            // Гейт в CI: error-находки ломают сборку (warn — только отчёт).
+            let errors = issues.iter().filter(|i| i.severity == "error").count();
+            if !issues.is_empty() {
+                println!("Итог: {} находок (error: {errors})", issues.len());
+            }
+            if errors > 0 {
+                std::process::exit(1);
+            }
         }
         ControlCmd::Sensors { dir } => {
             for r in arch_harness::control::sensors_check(&dir)? {
