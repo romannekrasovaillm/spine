@@ -211,17 +211,23 @@ pub async fn accept(cfg: &crate::config::Config, repo: &Path, name: &str) -> Res
             )));
         }
     }
-    git(
-        repo,
-        &[
-            "merge",
-            "--no-ff",
-            "-m",
-            &format!("arch: accept worktree {name}"),
-            &branch,
-        ],
-    )
-    .await?;
+    // Идентичность коммиттера может быть не настроена (CI, свежие
+    // контейнеры) — merge тогда падает с «Committer identity unknown».
+    // Если git не разрешил идентичность, подставляем фолбэк харнесса через
+    // `-c`; настроенная пользовательская идентичность остаётся приоритетной.
+    let has_identity = git(repo, &["var", "GIT_COMMITTER_IDENT"]).await.is_ok();
+    let message = format!("arch: accept worktree {name}");
+    let mut args: Vec<&str> = Vec::with_capacity(8);
+    if !has_identity {
+        args.extend([
+            "-c",
+            "user.name=spine-harness",
+            "-c",
+            "user.email=spine-harness@localhost",
+        ]);
+    }
+    args.extend(["merge", "--no-ff", "-m", &message, &branch]);
+    git(repo, &args).await?;
     if path.exists() {
         git(repo, &["worktree", "remove", &path.to_string_lossy()]).await?;
     }
