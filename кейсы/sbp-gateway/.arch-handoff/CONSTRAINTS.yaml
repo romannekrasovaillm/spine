@@ -17,7 +17,7 @@ rules:
     severity: error
   - name: abs-credit-only-from-paid
     type: must_contain
-    glob: "docs/adr/ADR-005-adr.md"
+    glob: "docs/adr/ADR-005-integraciya-s-abs-zachislenie-po-podtverzhdyonnomu-statusu-vozvraty-kak-saga.md"
     pattern: 'только из состояния `PAID`'
     severity: error
   - name: adr-no-placeholders

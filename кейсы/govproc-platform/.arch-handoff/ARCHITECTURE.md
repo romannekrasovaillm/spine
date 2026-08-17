@@ -6,7 +6,7 @@
 - ARCHITECTURE-SPINE.md
 - docs/architecture/NFR.md
 - api/openapi.yaml
-- docs/adr/ADR-001-44-223.md
+- docs/adr/ADR-001-dvuhkonturnaya-domennaya-model-zakupok-44-fz-i-223-fz.md
 - docs/adr/ADR-003-eis-integration.md
 - docs/adr/ADR-005-modular-monolith.md
 

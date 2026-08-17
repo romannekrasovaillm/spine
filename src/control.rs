@@ -818,15 +818,62 @@ pub fn adr_new(dir: &Path, title: &str) -> Result<PathBuf> {
     Ok(file)
 }
 
-/// kebab-case slug заголовка: ASCII-буквы/цифры в нижний регистр, всё прочее
-/// (включая кириллицу — без транслитерации) — в `-`, повторы `-` схлопываются.
+/// Практичная транслитерация кириллической буквы для слагов (ADR-002).
+/// `Some("")` для ъ/ь (опускаются без дефиса), `None` для не-кириллицы.
+fn translit_cyrillic(ch: char) -> Option<&'static str> {
+    let lat = match ch {
+        'а' => "a",
+        'б' => "b",
+        'в' => "v",
+        'г' => "g",
+        'д' => "d",
+        'е' => "e",
+        'ё' => "yo",
+        'ж' => "zh",
+        'з' => "z",
+        'и' => "i",
+        'й' => "y",
+        'к' => "k",
+        'л' => "l",
+        'м' => "m",
+        'н' => "n",
+        'о' => "o",
+        'п' => "p",
+        'р' => "r",
+        'с' => "s",
+        'т' => "t",
+        'у' => "u",
+        'ф' => "f",
+        'х' => "h",
+        'ц' => "c",
+        'ч' => "ch",
+        'ш' => "sh",
+        'щ' => "sch",
+        'ъ' | 'ь' => "",
+        'ы' => "y",
+        'э' => "e",
+        'ю' => "yu",
+        'я' => "ya",
+        _ => return None,
+    };
+    Some(lat)
+}
+
+/// kebab-case slug заголовка: ASCII-буквы/цифры в нижний регистр, кириллица
+/// транслитерируется (`translit_cyrillic`), всё прочее — в `-`, повторы `-`
+/// схлопываются. Пустой результат (пустой/символьный заголовок) → `"adr"`.
 fn kebab_slug(title: &str) -> String {
     let mut out = String::with_capacity(title.len());
     let mut dash = true; // подавляет '-' в начале
-    for ch in title.chars() {
+    for ch in title.chars().flat_map(char::to_lowercase) {
         if ch.is_ascii_alphanumeric() {
-            out.push(ch.to_ascii_lowercase());
+            out.push(ch);
             dash = false;
+        } else if let Some(lat) = translit_cyrillic(ch) {
+            out.push_str(lat);
+            if !lat.is_empty() {
+                dash = false;
+            }
         } else if !dash {
             out.push('-');
             dash = true;
@@ -1489,9 +1536,38 @@ mod tests {
         let second = adr_new(&adr_dir, "Шина событий").unwrap();
         assert_eq!(
             second.file_name().unwrap().to_string_lossy(),
-            "ADR-002-adr.md",
-            "кириллица без транслитерации схлопывается в fallback 'adr'"
+            "ADR-002-shina-sobytiy.md",
+            "кириллица транслитерируется (ADR-002)"
         );
+    }
+
+    #[test]
+    fn kebab_slug_transliterates_cyrillic() {
+        assert_eq!(
+            kebab_slug("Сегментация доверенных зон (4 зоны)"),
+            "segmentaciya-doverennyh-zon-4-zony"
+        );
+        assert_eq!(
+            kebab_slug("Стратегия идемпотентности на точках входа"),
+            "strategiya-idempotentnosti-na-tochkah-vhoda"
+        );
+        // ъ/ь опускаются без дефиса, ё → yo, щ → sch
+        assert_eq!(kebab_slug("Подъём щёточный"), "podyom-schyotochnyy");
+    }
+
+    #[test]
+    fn kebab_slug_mixed_latin_cyrillic() {
+        assert_eq!(kebab_slug("Outbox паттерн"), "outbox-pattern");
+        assert_eq!(
+            kebab_slug("ADR для async рельсов"),
+            "adr-dlya-async-relsov"
+        );
+    }
+
+    #[test]
+    fn kebab_slug_empty_falls_back_to_adr() {
+        assert_eq!(kebab_slug(""), "adr");
+        assert_eq!(kebab_slug("!!! ..."), "adr");
     }
 
     #[test]

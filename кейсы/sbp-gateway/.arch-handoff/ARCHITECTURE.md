@@ -4,10 +4,10 @@
 
 Источники:
 - docs/adr/ADR-001-outbox.md
-- docs/adr/ADR-002-adr.md
+- docs/adr/ADR-002-model-konsistentnosti-platezha-konechnyy-avtomat-s-idempotentnostyu-na-urovne-shlyuza.md
 - docs/adr/ADR-003-mtls.md
 - docs/adr/ADR-004-at-least-once-dlq.md
-- docs/adr/ADR-005-adr.md
+- docs/adr/ADR-005-integraciya-s-abs-zachislenie-po-podtverzhdyonnomu-statusu-vozvraty-kak-saga.md
 - docs/adr/ADR-006-trust.md
 - docs/adr/ADR-007-proposed-a3.md
 - docs/solutioning.md
@@ -80,7 +80,7 @@
 - AD-001 (spine): изоляция платёжного контура
 - ADR-002, ADR-003, ADR-004, ADR-005, ADR-006
 
-<!-- источник: docs/adr/ADR-002-adr.md -->
+<!-- источник: docs/adr/ADR-002-model-konsistentnosti-platezha-konechnyy-avtomat-s-idempotentnostyu-na-urovne-shlyuza.md -->
 
 # ADR-002. Модель консистентности платежа: конечный автомат с идемпотентностью на уровне шлюза
 

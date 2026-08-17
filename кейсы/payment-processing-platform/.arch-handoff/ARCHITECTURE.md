@@ -9,9 +9,9 @@
 - docs/adr/ADR-001-saga-orchestration.md
 - docs/adr/ADR-002-transactional-outbox.md
 - docs/adr/ADR-003-database-per-service-postgresql.md
-- docs/adr/ADR-004-4.md
-- docs/adr/ADR-005-adr.md
-- docs/adr/ADR-006-adr.md
+- docs/adr/ADR-004-segmentaciya-doverennyh-zon-4-zony.md
+- docs/adr/ADR-005-strategiya-idempotentnosti-na-tochkah-vhoda.md
+- docs/adr/ADR-006-yavnaya-konechnaya-mashina-sostoyaniy-platezha.md
 - docs/adr/ADR-007-dlq.md
 - docs/adr/ADR-008-backoff-jitter.md
 - docs/adr/ADR-009-reconciliation.md
@@ -19,7 +19,7 @@
 - docs/adr/ADR-011-secrets-management-vault-hsm.md
 - docs/adr/ADR-012-api-versioning-backward-compatibility.md
 - docs/adr/ADR-013-canary-zero-downtime-db-migrations.md
-- docs/adr/ADR-014-async.md
+- docs/adr/ADR-014-vebhuk-i-kolbek-strategiya-dlya-async-relsov.md
 - docs/adr/ADR-015-data-lifecycle-152-vs-append-only-audit.md
 - docs/adr/ADR-016-chaos-engineering-game-days.md
 

@@ -102,9 +102,11 @@ bounded context (DDD), маршрут **Critical** (Significance Score 13).
   (`go build`, `go test`, SQL до/после), негативные сценарии перечислены
   (повторный запрос, poison message → DLQ, 409 на недопустимый переход),
   план отката — удаление namespace.
-- **Честность про несовершенство выдачи**: имена файлов ADR дрейфуют
-  (`ADR-004-4.md`, `ADR-005-adr.md`) — живой пример, почему naming-линт
-  стоит держать в fitness-правилах, а не чинить руками.
+- **Naming-линт слагов — в коде, а не руками**: ранее кириллические
+  заголовки ADR деградировали в имена вроде `ADR-004-4.md` — после
+  транслитерации в `kebab_slug` (ADR-002 в `docs/adr/` харнесса) имена
+  детерминированы и навигационны
+  (`ADR-004-segmentaciya-doverennyh-zon-4-zony.md`).
 
 Анатомия кейса — в его [README.md](payment-processing-platform/README.md).
 

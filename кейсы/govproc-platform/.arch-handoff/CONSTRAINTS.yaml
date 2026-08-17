@@ -6,7 +6,7 @@ rules:
   # --- Дисциплина решений ---
   - name: adr-present
     type: file_exists
-    path: docs/adr/ADR-001-44-223.md
+    path: docs/adr/ADR-001-dvuhkonturnaya-domennaya-model-zakupok-44-fz-i-223-fz.md
     severity: error
   - name: adr-onprem-present
     type: file_exists

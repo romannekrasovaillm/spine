@@ -4,10 +4,10 @@
   "model": "deepseek",
   "sources": [
     "docs/adr/ADR-001-outbox.md",
-    "docs/adr/ADR-002-adr.md",
+    "docs/adr/ADR-002-model-konsistentnosti-platezha-konechnyy-avtomat-s-idempotentnostyu-na-urovne-shlyuza.md",
     "docs/adr/ADR-003-mtls.md",
     "docs/adr/ADR-004-at-least-once-dlq.md",
-    "docs/adr/ADR-005-adr.md",
+    "docs/adr/ADR-005-integraciya-s-abs-zachislenie-po-podtverzhdyonnomu-statusu-vozvraty-kak-saga.md",
     "docs/adr/ADR-006-trust.md",
     "docs/adr/ADR-007-proposed-a3.md",
     "docs/solutioning.md",
