@@ -614,12 +614,12 @@ impl CompletionMessage {
 /// цепочкой рассуждений (там и есть ответ). Сообщения с tool_calls не
 /// трогаем: у них пустой content — норма.
 fn normalize_reply(mut msg: ChatMessage) -> ChatMessage {
-    if msg.tool_calls.is_empty()
-        && msg.content.trim().is_empty()
-        && let Some(reasoning) = &msg.reasoning_content
-        && !reasoning.trim().is_empty()
-    {
-        msg.content = reasoning.trim().to_string();
+    // Let-chains стабилизированы в 1.88 — выше MSRV 1.85: условия разнесены
+    // в плоские выражения (семантика та же, что у цепочки `&& let`).
+    let empty_reply = msg.tool_calls.is_empty() && msg.content.trim().is_empty();
+    let reasoning = msg.reasoning_content.as_deref().unwrap_or_default().trim();
+    if empty_reply && !reasoning.is_empty() {
+        msg.content = reasoning.to_string();
     }
     msg
 }

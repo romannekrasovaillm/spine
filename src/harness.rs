@@ -1285,7 +1285,12 @@ pub fn parse_result_contract(stdout: &str) -> ContractParse {
         }
     }
     // Голый JSON в хвосте (fence уронен): перебираем `{` с конца хвоста.
-    let tail_at = stdout.floor_char_boundary(stdout.len().saturating_sub(4096));
+    // `floor_char_boundary` стабилизирован в 1.91 — выше MSRV 1.85: идём к
+    // ближайшей границе символа вручную (эквивалент по семантике).
+    let mut tail_at = stdout.len().saturating_sub(4096);
+    while !stdout.is_char_boundary(tail_at) {
+        tail_at -= 1;
+    }
     let tail = &stdout[tail_at..];
     let braces: Vec<usize> = tail.match_indices('{').map(|(i, _)| i).collect();
     for i in braces.into_iter().rev().take(8) {
