@@ -2,16 +2,16 @@
 //! маршрутизация по Architecture Significance Score.
 //!
 //! КОНТРАКТ (владелец: агент `control`) — детерминированный механический слой
-//! (идеи из docs/SOURCE_BRIEF.md: линтер spine, сенсоры required-sections и
+//! (идеи из `docs/SOURCE_BRIEF.md`: линтер spine, сенсоры required-sections и
 //! upstream-coverage, 15 триггеров значимости, маршруты Fast/Standard/Critical):
 //! - [`lint_spine`] — проверки ARCHITECTURE-SPINE.md: дубли AD-id, пустые
 //!   Binds/Prevents/Rule, заглушки (TODO/TBD), непиннутые версии, ссылки на
 //!   несуществующие AD;
 //! - [`sensors_check`] — сенсоры спецификаций: наличие обязательных секций,
 //!   upstream-coverage (артефакт ссылается на входы из consumes);
-//! - [`check`] — fitness functions из CONSTRAINTS.yaml: must_contain /
-//!   must_not_contain (regex по glob-набору файлов), file_exists,
-//!   command_succeeds (с таймаутом); итог PASS/FAIL + находки;
+//! - [`check`] — fitness functions из CONSTRAINTS.yaml: `must_contain` /
+//!   `must_not_contain` (regex по glob-набору файлов), `file_exists`,
+//!   `command_succeeds` (с таймаутом); итог PASS/FAIL + находки;
 //! - [`significance_score`] — по ответам на 15 триггеров → Score + Route.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -81,7 +81,7 @@ pub struct Significance {
 }
 
 /// Канонический список из 15 триггеров архитектурной значимости
-/// (из обзора AI-Disrupt PDLC, см. docs/SOURCE_BRIEF.md §C.3).
+/// (из обзора AI-Disrupt PDLC, см. `docs/SOURCE_BRIEF.md` §C.3).
 pub const SIGNIFICANCE_TRIGGERS: [&str; 15] = [
     "new_component",
     "new_datastore",
@@ -105,7 +105,8 @@ pub const REQUIRED_SECTIONS: [&str; 3] = ["## Проблема", "## Крите�
 
 /// Оценивает значимость по карте «триггер → сработал».
 /// Маршрут: 0–1 → Fast, 2–4 → Standard, 5+ или критические триггеры
-/// (security_boundary_change, irreversible_migration, criticality_or_exception) → Critical.
+/// (`security_boundary_change`, `irreversible_migration`, `criticality_or_exception`) → Critical.
+#[must_use]
 pub fn significance_score(answers: &BTreeMap<String, bool>) -> Significance {
     let fired: Vec<String> = answers
         .iter()
@@ -141,8 +142,8 @@ pub struct LintIssue {
     pub file: PathBuf,
     /// Строка (0 — файл целиком).
     pub line: usize,
-    /// Код правила (dup_ad_id, empty_field, stub_marker, unpinned_version,
-    /// broken_ad_ref либо имя fitness-правила из CONSTRAINTS.yaml).
+    /// Код правила (`dup_ad_id`, `empty_field`, `stub_marker`, `unpinned_version`,
+    /// `broken_ad_ref` либо имя fitness-правила из CONSTRAINTS.yaml).
     pub rule: String,
     /// Сообщение.
     pub message: String,
@@ -342,7 +343,7 @@ fn spine_regex(pattern: &str) -> Result<Regex> {
 /// Результат сенсора.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SensorResult {
-    /// Имя сенсора (required_sections, upstream_coverage).
+    /// Имя сенсора (`required_sections`, `upstream_coverage`).
     pub sensor: String,
     /// Проверенный файл.
     pub file: PathBuf,
@@ -471,13 +472,13 @@ struct FitnessRule {
     /// Тип проверки.
     #[serde(rename = "type")]
     kind: RuleKind,
-    /// Glob набора файлов (для must_contain/must_not_contain; дефолт `**/*`).
+    /// Glob набора файлов (для `must_contain/must_not_contain`; дефолт `**/*`).
     glob: Option<String>,
-    /// Regex (для must_contain/must_not_contain).
+    /// Regex (для `must_contain/must_not_contain`).
     pattern: Option<String>,
-    /// Путь относительно репозитория (для file_exists).
+    /// Путь относительно репозитория (для `file_exists`).
     path: Option<String>,
-    /// Команда (для command_succeeds).
+    /// Команда (для `command_succeeds`).
     command: Option<String>,
     /// Критичность находок правила: error|warn (дефолт error).
     #[serde(default = "default_severity")]
@@ -531,7 +532,7 @@ pub fn check(repo: &Path, constraints: &Path) -> Result<FitnessReport> {
     }
     let yaml =
         std::fs::read_to_string(constraints).map_err(|e| HarnessError::io(constraints, e))?;
-    let parsed: ConstraintsFile = serde_yaml::from_str(&yaml)?;
+    let parsed: ConstraintsFile = serde_yaml_ng::from_str(&yaml)?;
     if parsed.all_rules().next().is_none() {
         return Err(HarnessError::Control(format!(
             "{}: файл не содержит правил — ожидается непустой корень `rules:` или `constraints:`",
@@ -680,11 +681,12 @@ fn run_rule(rule: &FitnessRule, repo: &Path, issues: &mut Vec<LintIssue>) -> Res
     Ok(())
 }
 
+/// Подготовленное content-правило: скомпилированный regex, glob-шаблон
+/// и набор файлов (относительный путь, абсолютный путь).
+type PreparedContentRule = (Regex, String, Vec<(String, PathBuf)>);
+
 /// Общая подготовка content-правил: компилированный regex, glob, набор файлов.
-fn prep_content_rule(
-    rule: &FitnessRule,
-    repo: &Path,
-) -> Result<(Regex, String, Vec<(String, PathBuf)>)> {
+fn prep_content_rule(rule: &FitnessRule, repo: &Path) -> Result<PreparedContentRule> {
     let pattern = rule.pattern.as_deref().ok_or_else(|| {
         HarnessError::Control(format!(
             "правило '{}': для {:?} нужен pattern",
@@ -710,7 +712,7 @@ fn prep_content_rule(
 /// `node_modules`, `dist`, `__pycache__`, `.next`, `.pytest_cache` и
 /// `.arch-handoff` — fitness-правила целятся в АРТЕФАКТЫ РЕАЛИЗАЦИИ, а не в
 /// документы решения: пакет handoff содержит текст spine/TASK.md, и правило
-/// must_not_contain срабатывало на собственные цитаты контракта (кейс 1).
+/// `must_not_contain` срабатывало на собственные цитаты контракта (кейс 1).
 fn collect_files(repo: &Path, glob: &str) -> Result<Vec<(String, PathBuf)>> {
     const SKIP: [&str; 8] = [
         ".git",
@@ -890,12 +892,12 @@ fn translit_cyrillic(ch: char) -> Option<&'static str> {
         'в' => "v",
         'г' => "g",
         'д' => "d",
-        'е' => "e",
+        'е' | 'э' => "e",
         'ё' => "yo",
         'ж' => "zh",
         'з' => "z",
         'и' => "i",
-        'й' => "y",
+        'й' | 'ы' => "y",
         'к' => "k",
         'л' => "l",
         'м' => "m",
@@ -913,8 +915,6 @@ fn translit_cyrillic(ch: char) -> Option<&'static str> {
         'ш' => "sh",
         'щ' => "sch",
         'ъ' | 'ь' => "",
-        'ы' => "y",
-        'э' => "e",
         'ю' => "yu",
         'я' => "ya",
         _ => return None,
@@ -993,6 +993,7 @@ fn adr_template(n: u64, title: &str, date: &str) -> String {
 }
 
 /// Инструменты домена: `adr_new`, `spine_lint`, `fitness_check`, `significance_score`.
+#[must_use]
 pub fn tools() -> Vec<Arc<dyn Tool>> {
     vec![
         Arc::new(AdrNewTool),

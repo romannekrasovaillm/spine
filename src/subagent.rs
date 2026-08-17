@@ -23,6 +23,7 @@
 //! - инструменты: `subagent_run` (запуск), `subagent_list` (статусы),
 //!   `subagent_result` (отчёт по id).
 
+use std::fmt::Write as _;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -98,6 +99,7 @@ pub enum TaskStatus {
 
 impl TaskStatus {
     /// Строка для таблиц статусов.
+    #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Running => "running",
@@ -165,14 +167,15 @@ impl SubagentRegistry {
     }
 
     /// Число работающих задач.
+    #[must_use]
     pub fn running(&self) -> usize {
-        self.tasks
-            .lock()
-            .map(|t| t.iter().filter(|x| x.status == TaskStatus::Running).count())
-            .unwrap_or(0)
+        self.tasks.lock().map_or(0, |t| {
+            t.iter().filter(|x| x.status == TaskStatus::Running).count()
+        })
     }
 
     /// Снимок задач (новые первыми).
+    #[must_use]
     pub fn list(&self) -> Vec<SubagentTask> {
         self.tasks
             .lock()
@@ -181,6 +184,7 @@ impl SubagentRegistry {
     }
 
     /// Задача по id.
+    #[must_use]
     pub fn get(&self, id: &str) -> Option<SubagentTask> {
         self.tasks
             .lock()
@@ -190,7 +194,7 @@ impl SubagentRegistry {
 
     /// Генерирует id задачи с префиксом (`sa-…` субагенты, `ralph-…` циклы).
     pub(crate) fn next_id(&self, prefix: &str) -> String {
-        let seq = self.tasks.lock().map(|t| t.len()).unwrap_or(0);
+        let seq = self.tasks.lock().map_or(0, |t| t.len());
         format!(
             "{prefix}-{}-{:02}",
             chrono::Local::now().format("%Y%m%d-%H%M%S"),
@@ -262,10 +266,11 @@ impl SubagentRegistry {
         let system = format!("{}{REPORT_RULES}", spec.body.trim());
         let mut user = task.to_string();
         if let Some(ctx_text) = context.map(str::trim).filter(|s| !s.is_empty()) {
-            user.push_str(&format!(
+            let _ = write!(
+                user,
                 "\n\nКонтекст от родительского агента:\n{}",
                 ctx_text.chars().take(8000).collect::<String>()
-            ));
+            );
         }
 
         let registry = self.clone();
@@ -291,7 +296,7 @@ impl SubagentRegistry {
             if let Ok(mut tasks) = registry.tasks.lock() {
                 if let Some(t) = tasks.iter_mut().find(|x| x.id == task_id) {
                     t.status = status;
-                    t.report = report.clone();
+                    t.report.clone_from(&report);
                     t.finished_at = Some(finished.clone());
                 }
             }
@@ -321,6 +326,7 @@ impl SubagentRegistry {
 }
 
 /// Спеки субагентов всех плагинов (`agents/*.md`), битые файлы пропускаются.
+#[must_use]
 pub fn discover_specs(plugins: &[crate::plugin::Plugin]) -> Vec<SubagentSpec> {
     let mut out = Vec::new();
     for p in plugins {
@@ -336,7 +342,7 @@ pub fn discover_specs(plugins: &[crate::plugin::Plugin]) -> Vec<SubagentSpec> {
         entries.sort();
         for path in entries {
             if let Some(mut spec) = parse_agent_md(&path) {
-                spec.plugin = p.manifest.name.clone();
+                spec.plugin.clone_from(&p.manifest.name);
                 out.push(spec);
             }
         }
@@ -352,7 +358,7 @@ pub fn available_specs(dirs: &[PathBuf]) -> Vec<SubagentSpec> {
 }
 
 /// Парсит `agents/<name>.md`: frontmatter `name`/`description`/`tools` + тело.
-/// Толерантный построчный разбор (как в plugin.rs — serde_yaml падает на
+/// Толерантный построчный разбор (как в plugin.rs — `serde_yaml_ng` падает на
 /// двоеточиях в description).
 fn parse_agent_md(path: &std::path::Path) -> Option<SubagentSpec> {
     let text = std::fs::read_to_string(path).ok()?;
@@ -429,6 +435,7 @@ fn parse_agent_md(path: &std::path::Path) -> Option<SubagentSpec> {
 }
 
 /// Инструменты домена: `subagent_run`, `subagent_list`, `subagent_result`.
+#[must_use]
 pub fn tools(cfg: &Config) -> Vec<Arc<dyn Tool>> {
     vec![
         Arc::new(SubagentRunTool {
@@ -502,18 +509,17 @@ impl Tool for SubagentRunTool {
             general_spec()
         } else {
             let specs = available_specs(&self.dirs);
-            match specs.into_iter().find(|s| s.name == agent) {
-                Some(s) => s,
-                None => {
-                    let available = available_specs(&self.dirs)
-                        .iter()
-                        .map(|s| format!("{} [{}]", s.name, s.plugin))
-                        .collect::<Vec<_>>()
-                        .join(", ");
-                    return Ok(ToolOutput::err(format!(
-                        "субагент '{agent}' не найден. Доступные: general, {available}"
-                    )));
-                }
+            if let Some(s) = specs.into_iter().find(|s| s.name == agent) {
+                s
+            } else {
+                let available = available_specs(&self.dirs)
+                    .iter()
+                    .map(|s| format!("{} [{}]", s.name, s.plugin))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                return Ok(ToolOutput::err(format!(
+                    "субагент '{agent}' не найден. Доступные: general, {available}"
+                )));
             }
         };
         let Some(provider) = ctx
@@ -605,6 +611,7 @@ impl Tool for SubagentResultTool {
 }
 
 /// Таблица задач для `subagent_list` и слэша `/agents`.
+#[must_use]
 pub fn render_tasks(tasks: &[SubagentTask]) -> String {
     if tasks.is_empty() {
         return "фоновых задач нет".into();
@@ -612,8 +619,9 @@ pub fn render_tasks(tasks: &[SubagentTask]) -> String {
     let mut out = String::new();
     for t in tasks {
         let preview: String = t.task.chars().take(60).collect();
-        out.push_str(&format!(
-            "── {} [{}] {} · {} · {preview}{}\n",
+        let _ = writeln!(
+            out,
+            "── {} [{}] {} · {} · {preview}{}",
             t.id,
             t.agent,
             t.status.as_str(),
@@ -623,10 +631,11 @@ pub fn render_tasks(tasks: &[SubagentTask]) -> String {
             } else {
                 ""
             }
-        ));
+        );
         if t.status == TaskStatus::Done && !t.report.is_empty() {
-            out.push_str(&format!(
-                "   {}\n",
+            let _ = writeln!(
+                out,
+                "   {}",
                 t.report
                     .lines()
                     .next()
@@ -634,7 +643,7 @@ pub fn render_tasks(tasks: &[SubagentTask]) -> String {
                     .chars()
                     .take(100)
                     .collect::<String>()
-            ));
+            );
         }
     }
     out
@@ -657,10 +666,10 @@ mod tests {
 
     #[async_trait]
     impl LlmProvider for FakeLlm {
-        fn name(&self) -> &str {
+        fn name(&self) -> &'static str {
             "fake"
         }
-        fn model(&self) -> &str {
+        fn model(&self) -> &'static str {
             "fake-1"
         }
         async fn complete(&self, _req: ChatRequest) -> Result<ChatMessage> {
@@ -677,10 +686,10 @@ mod tests {
 
     #[async_trait]
     impl LlmProvider for SlowLlm {
-        fn name(&self) -> &str {
+        fn name(&self) -> &'static str {
             "slow"
         }
-        fn model(&self) -> &str {
+        fn model(&self) -> &'static str {
             "slow-1"
         }
         async fn complete(&self, _req: ChatRequest) -> Result<ChatMessage> {

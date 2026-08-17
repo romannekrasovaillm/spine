@@ -6,6 +6,7 @@
 //! экспортирует `tools() -> Vec<Arc<dyn Tool>>`).
 
 use std::collections::HashMap;
+use std::fmt::Write as _;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -64,6 +65,7 @@ pub struct ToolContext {
 
 impl ToolContext {
     /// Контекст без LLM (для CLI-подкоманд, не требующих модели).
+    #[must_use]
     pub fn new(cwd: PathBuf, config: Arc<Config>) -> Self {
         Self {
             cwd,
@@ -76,24 +78,28 @@ impl ToolContext {
     }
 
     /// Добавляет реестр LLM.
+    #[must_use]
     pub fn with_llm(mut self, llm: Arc<LlmRegistry>) -> Self {
         self.llm = Some(llm);
         self
     }
 
     /// Подключает мост интерактивных вопросов к UI (TUI).
+    #[must_use]
     pub fn with_ask(mut self, ask: mpsc::Sender<AskRequest>) -> Self {
         self.ask = Some(ask);
         self
     }
 
     /// Задаёт активную модель (для субагентов и дистилляции).
+    #[must_use]
     pub fn with_provider(mut self, provider: Arc<dyn crate::llm::LlmProvider>) -> Self {
         self.provider = Some(provider);
         self
     }
 
     /// Подключает реестр фоновых субагентов.
+    #[must_use]
     pub fn with_subagents(mut self, registry: crate::subagent::SubagentRegistry) -> Self {
         self.subagents = Some(registry);
         self
@@ -137,14 +143,16 @@ impl ToolOutput {
     }
 
     /// Обрезает содержимое до `max_chars` с пометкой об усечении.
+    #[must_use]
     pub fn truncated(mut self, max_chars: usize) -> Self {
         if self.content.len() > max_chars {
             let mut cut = self.content.chars().take(max_chars).collect::<String>();
-            cut.push_str(&format!(
+            let _ = write!(
+                cut,
                 "\n… [усечено: {} из {} байт]",
                 max_chars,
                 self.content.len()
-            ));
+            );
             self.content = cut;
         }
         self
@@ -163,36 +171,29 @@ pub trait Tool: Send + Sync {
     async fn call(&self, args: Value, ctx: &ToolContext) -> Result<ToolOutput>;
     /// Таймаут одного вызова, секунды (агентный цикл применяет его к `call`).
     /// Дефолт — [`DEFAULT_TOOL_TIMEOUT_SECS`]; долгие инструменты
-    /// (harness_run — прогон кодового харнесса до 7200 с) переопределяют.
+    /// (`harness_run` — прогон кодового харнесса до 7200 с) переопределяют.
     fn timeout_secs(&self) -> u64 {
         DEFAULT_TOOL_TIMEOUT_SECS
     }
 }
 
 /// Реестр инструментов.
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct ToolRegistry {
     tools: HashMap<String, Arc<dyn Tool>>,
     /// Политика автономии (R-уровни); по умолчанию R2.
     policy: crate::policy::Policy,
 }
 
-impl Default for ToolRegistry {
-    fn default() -> Self {
-        Self {
-            tools: HashMap::new(),
-            policy: crate::policy::Policy::default(),
-        }
-    }
-}
-
 impl ToolRegistry {
     /// Пустой реестр.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Установить политику автономии.
+    #[must_use]
     pub fn with_policy(mut self, policy: crate::policy::Policy) -> Self {
         self.policy = policy;
         self
@@ -205,18 +206,21 @@ impl ToolRegistry {
     }
 
     /// Builder-вариант регистрации.
+    #[must_use]
     pub fn with(mut self, tool: Arc<dyn Tool>) -> Self {
         self.register(tool);
         self
     }
 
     /// Инструмент по имени.
+    #[must_use]
     pub fn get(&self, name: &str) -> Option<Arc<dyn Tool>> {
         self.tools.get(name).cloned()
     }
 
     /// Таймаут вызова инструмента, секунды (per-tool [`Tool::timeout_secs`];
     /// неизвестный инструмент — дефолт).
+    #[must_use]
     pub fn timeout_secs(&self, name: &str) -> u64 {
         self.get(name)
             .map_or(DEFAULT_TOOL_TIMEOUT_SECS, |t| t.timeout_secs())
@@ -249,7 +253,8 @@ impl ToolRegistry {
         out
     }
 
-    /// Спецификации всех инструментов (для ChatRequest).
+    /// Спецификации всех инструментов (для `ChatRequest`).
+    #[must_use]
     pub fn specs(&self) -> Vec<ToolSpec> {
         let mut specs: Vec<ToolSpec> = self.tools.values().map(|t| t.spec()).collect();
         specs.sort_by(|a, b| a.name.cmp(&b.name));
@@ -257,6 +262,7 @@ impl ToolRegistry {
     }
 
     /// Имена всех инструментов.
+    #[must_use]
     pub fn names(&self) -> Vec<String> {
         let mut names: Vec<String> = self.tools.keys().cloned().collect();
         names.sort();

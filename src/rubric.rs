@@ -57,7 +57,7 @@ const RETRY_YAML_HINT: &str = "Ответ не разобран как YAML. В�
 /// Критерий рубрики с весом и якорями уровней.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Criterion {
-    /// Идентификатор критерия (snake_case).
+    /// Идентификатор критерия (`snake_case`).
     pub id: String,
     /// Название.
     pub name: String,
@@ -111,6 +111,7 @@ pub enum CriterionFlag {
 
 impl CriterionFlag {
     /// Строковое имя для отчётов и журналов.
+    #[must_use]
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Unstable => "unstable",
@@ -127,7 +128,7 @@ pub struct CriterionScore {
     /// Вес критерия в рубрике (копия для отчётной таблицы [`RubricReport::to_markdown`]).
     #[serde(default)]
     pub weight: f64,
-    /// Итоговый балл 1..=scale_max (округлённая медиана сэмплов).
+    /// Итоговый балл `1..=scale_max` (округлённая медиана сэмплов).
     pub score: u8,
     /// Обоснование судьи (из сэмпла с медианным баллом, иначе первое непустое).
     pub rationale: String,
@@ -144,6 +145,7 @@ pub struct CriterionScore {
 
 impl CriterionScore {
     /// Признак наличия метки достоверности.
+    #[must_use]
     pub fn has_flag(&self, flag: CriterionFlag) -> bool {
         self.flags.contains(&flag)
     }
@@ -161,7 +163,7 @@ pub struct RubricReport {
     pub judge_samples: usize,
     /// Оценки по критериям.
     pub scores: Vec<CriterionScore>,
-    /// Взвешенный итог (0..=scale_max) по засчитанным критериям.
+    /// Взвешенный итог (`0..=scale_max`) по засчитанным критериям.
     pub weighted_total: f64,
     /// Общий вердикт судьи (из последнего сэмпла).
     pub verdict: String,
@@ -172,6 +174,7 @@ impl RubricReport {
     /// (критерий | вес | балл | метки | обоснование), взвешенный итог со
     /// списком исключённых критериев (`evidence_not_found`), вердикт, имя
     /// судьи с числом сэмплов и дата формирования.
+    #[must_use]
     pub fn to_markdown(&self) -> String {
         let mut out = String::new();
         let _ = writeln!(out, "# Оценка по рубрике «{}»\n", self.rubric_name);
@@ -229,7 +232,7 @@ impl RubricReport {
 /// Файл не читается / не валиден.
 pub fn load(path: &Path) -> Result<Rubric> {
     let text = std::fs::read_to_string(path).map_err(|e| HarnessError::io(path, e))?;
-    let rubric: Rubric = serde_yaml::from_str(&text)?;
+    let rubric: Rubric = serde_yaml_ng::from_str(&text)?;
     Ok(rubric)
 }
 
@@ -351,20 +354,19 @@ async fn judge_once(rubric: &Rubric, target: &str, llm: &dyn LlmProvider) -> Res
         ChatMessage::user(judge_user_prompt(rubric, target)),
     ];
     let first = complete_idempotent(llm, ChatRequest::chat(messages.clone())).await?;
-    match parse_judge_response(&first.content) {
-        Ok(parsed) => Ok(parsed),
-        Err(_) => {
-            // Один retry с явной инструкцией «только JSON».
-            messages.push(ChatMessage::assistant(first.content.clone(), Vec::new()));
-            messages.push(ChatMessage::user(RETRY_JSON_HINT));
-            let second = complete_idempotent(llm, ChatRequest::chat(messages)).await?;
-            parse_judge_response(&second.content).map_err(|_| {
-                HarnessError::Rubric(format!(
-                    "судья не вернул валидный JSON даже после повторного запроса: {}",
-                    fragment(&second.content)
-                ))
-            })
-        }
+    if let Ok(parsed) = parse_judge_response(&first.content) {
+        Ok(parsed)
+    } else {
+        // Один retry с явной инструкцией «только JSON».
+        messages.push(ChatMessage::assistant(first.content.clone(), Vec::new()));
+        messages.push(ChatMessage::user(RETRY_JSON_HINT));
+        let second = complete_idempotent(llm, ChatRequest::chat(messages)).await?;
+        parse_judge_response(&second.content).map_err(|_| {
+            HarnessError::Rubric(format!(
+                "судья не вернул валидный JSON даже после повторного запроса: {}",
+                fragment(&second.content)
+            ))
+        })
     }
 }
 
@@ -421,20 +423,19 @@ pub async fn generate_dynamic(
                   оценки архитектурных решений. Отвечаешь строго YAML.";
     let mut messages = vec![ChatMessage::system(system), ChatMessage::user(user)];
     let first = complete_idempotent(llm, ChatRequest::chat(messages.clone())).await?;
-    let mut rubric = match parse_rubric_yaml(&first.content) {
-        Ok(rubric) => rubric,
-        Err(_) => {
-            // Один retry с явной инструкцией «только YAML».
-            messages.push(ChatMessage::assistant(first.content.clone(), Vec::new()));
-            messages.push(ChatMessage::user(RETRY_YAML_HINT));
-            let second = complete_idempotent(llm, ChatRequest::chat(messages)).await?;
-            parse_rubric_yaml(&second.content).map_err(|_| {
-                HarnessError::Rubric(format!(
-                    "генератор не вернул валидный YAML рубрики даже после повторного запроса: {}",
-                    fragment(&second.content)
-                ))
-            })?
-        }
+    let mut rubric = if let Ok(rubric) = parse_rubric_yaml(&first.content) {
+        rubric
+    } else {
+        // Один retry с явной инструкцией «только YAML».
+        messages.push(ChatMessage::assistant(first.content.clone(), Vec::new()));
+        messages.push(ChatMessage::user(RETRY_YAML_HINT));
+        let second = complete_idempotent(llm, ChatRequest::chat(messages)).await?;
+        parse_rubric_yaml(&second.content).map_err(|_| {
+            HarnessError::Rubric(format!(
+                "генератор не вернул валидный YAML рубрики даже после повторного запроса: {}",
+                fragment(&second.content)
+            ))
+        })?
     };
     if rubric.criteria.is_empty() {
         return Err(HarnessError::Rubric(
@@ -446,6 +447,7 @@ pub async fn generate_dynamic(
 }
 
 /// Инструменты домена: `rubric_list`, `rubric_evaluate`, `rubric_generate`.
+#[must_use]
 pub fn tools() -> Vec<Arc<dyn Tool>> {
     vec![
         Arc::new(RubricListTool),
@@ -576,7 +578,7 @@ fn parse_judge_response(text: &str) -> Result<JudgeResponse> {
 /// Разбирает YAML рубрики из ответа модели (терпимо к ` ```yaml `-обёртке).
 fn parse_rubric_yaml(text: &str) -> Result<Rubric> {
     let yaml = extract_yaml_payload(text);
-    serde_yaml::from_str(yaml)
+    serde_yaml_ng::from_str(yaml)
         .map_err(|e| HarnessError::Rubric(format!("разбор YAML рубрики: {e}: {}", fragment(yaml))))
 }
 
@@ -666,7 +668,7 @@ fn median(samples: &[u8]) -> f64 {
     if sorted.len() % 2 == 1 {
         f64::from(sorted[mid])
     } else {
-        (f64::from(sorted[mid - 1]) + f64::from(sorted[mid])) / 2.0
+        f64::midpoint(f64::from(sorted[mid - 1]), f64::from(sorted[mid]))
     }
 }
 
@@ -1011,7 +1013,7 @@ impl Tool for RubricGenerateTool {
             None => None,
         };
         let rubric = generate_dynamic(subject, anchor.as_ref(), llm.as_ref()).await?;
-        let yaml = serde_yaml::to_string(&rubric)?;
+        let yaml = serde_yaml_ng::to_string(&rubric)?;
         Ok(ToolOutput::ok(yaml))
     }
 }
@@ -1038,10 +1040,10 @@ mod tests {
 
     #[async_trait]
     impl LlmProvider for FakeLlm {
-        fn name(&self) -> &str {
+        fn name(&self) -> &'static str {
             "fake"
         }
-        fn model(&self) -> &str {
+        fn model(&self) -> &'static str {
             "fake-judge-1"
         }
         async fn complete(&self, _req: ChatRequest) -> Result<ChatMessage> {
@@ -1112,8 +1114,8 @@ mod tests {
     #[test]
     fn rubric_yaml_roundtrip() {
         let rubric = sample_rubric();
-        let yaml = serde_yaml::to_string(&rubric).expect("serialize");
-        let back: Rubric = serde_yaml::from_str(&yaml).expect("deserialize");
+        let yaml = serde_yaml_ng::to_string(&rubric).expect("serialize");
+        let back: Rubric = serde_yaml_ng::from_str(&yaml).expect("deserialize");
         assert_eq!(back.name, rubric.name);
         assert_eq!(back.scale_max, 5);
         assert_eq!(back.criteria.len(), 2);
@@ -1128,7 +1130,7 @@ mod tests {
         let good = dir.path().join("good.yaml");
         std::fs::write(
             &good,
-            serde_yaml::to_string(&sample_rubric()).expect("yaml"),
+            serde_yaml_ng::to_string(&sample_rubric()).expect("yaml"),
         )
         .expect("write");
         std::fs::write(dir.path().join("broken.yaml"), "name: [unclosed").expect("write");
@@ -1581,7 +1583,7 @@ mod tests {
         std::fs::create_dir_all(&rubrics).expect("mkdir");
         std::fs::write(
             rubrics.join("r.yaml"),
-            serde_yaml::to_string(&sample_rubric()).expect("yaml"),
+            serde_yaml_ng::to_string(&sample_rubric()).expect("yaml"),
         )
         .expect("write");
         let mut cfg = crate::config::Config::default();
@@ -1618,7 +1620,7 @@ mod tests {
         std::fs::create_dir_all(&rubrics).expect("mkdir");
         std::fs::write(
             rubrics.join("r.yaml"),
-            serde_yaml::to_string(&sample_rubric()).expect("yaml"),
+            serde_yaml_ng::to_string(&sample_rubric()).expect("yaml"),
         )
         .expect("write");
         let long: String = "б".repeat(MAX_TARGET_CHARS + 500);

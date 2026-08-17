@@ -6,7 +6,7 @@
 //!   (fuzzy-matcher), ранжирование; возвращает хиты со сниппетом (±2 строки
 //!   контекста, подсветка маркерами `>>>`);
 //! - файлы >5 МБ индексируются только по имени; битый UTF-8 — lossy;
-//!   скрытые каталоги и target/.git/node_modules пропускаются;
+//!   скрытые каталоги и `target/.git/node_modules` пропускаются;
 //! - поиск по именам файлов тоже (бонус к скору).
 
 use std::collections::HashSet;
@@ -69,13 +69,14 @@ pub async fn search(
 }
 
 /// Инструменты домена: `kb_search`.
+#[must_use]
 pub fn tools() -> Vec<Arc<dyn Tool>> {
     vec![Arc::new(KbSearchTool)]
 }
 
 /// Синхронный обход и ранжирование (вызывается из `spawn_blocking`).
 fn search_blocking(dirs: &[PathBuf], exts: &[String], query: &str, limit: usize) -> Vec<KbHit> {
-    let terms: Vec<String> = query.split_whitespace().map(|t| t.to_lowercase()).collect();
+    let terms: Vec<String> = query.split_whitespace().map(str::to_lowercase).collect();
     if terms.is_empty() {
         return Vec::new();
     }
@@ -91,7 +92,7 @@ fn search_blocking(dirs: &[PathBuf], exts: &[String], query: &str, limit: usize)
             .follow_links(false)
             .into_iter()
             .filter_entry(is_searchable);
-        for entry in walker.filter_map(|e| e.ok()) {
+        for entry in walker.filter_map(std::result::Result::ok) {
             if !entry.file_type().is_file() {
                 continue;
             }
@@ -282,7 +283,7 @@ fn truncate_line(line: &str) -> String {
     }
 }
 
-/// u64 → f64 без потери точности для реалистичных скоров (насыщение на u32::MAX).
+/// u64 → f64 без потери точности для реалистичных скоров (насыщение на `u32::MAX`).
 fn to_score(score: u64) -> f64 {
     f64::from(u32::try_from(score).unwrap_or(u32::MAX))
 }

@@ -16,6 +16,7 @@
 //! в `arch plugins show`, но не исполняет.
 
 use std::collections::{HashMap, HashSet};
+use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -69,6 +70,7 @@ pub struct Plugin {
 impl Plugin {
     /// Дополнительные компоненты плагина: субагенты (`agents/*.md`) и
     /// хуки (`hooks/hooks.json`) — пути к файлам, если присутствуют.
+    #[must_use]
     pub fn extra_components(&self) -> Vec<PathBuf> {
         let mut out = Vec::new();
         let agents = self.dir.join("agents");
@@ -102,6 +104,7 @@ pub struct SkillHit {
 
 /// Обнаруживает плагины в каталогах. Битые манифесты/скиллы пропускаются —
 /// харнесс не падает из-за одного битого плагина.
+#[must_use]
 pub fn discover(dirs: &[PathBuf]) -> Vec<Plugin> {
     let mut plugins = Vec::new();
     let mut seen_skills: HashSet<String> = HashSet::new();
@@ -131,15 +134,14 @@ pub fn discover(dirs: &[PathBuf]) -> Vec<Plugin> {
 fn load_plugin(dir: &Path) -> Option<Plugin> {
     let manifest_path = dir.join("plugin.json");
     let manifest = if manifest_path.is_file() {
-        match std::fs::read_to_string(&manifest_path)
+        if let Some(m) = std::fs::read_to_string(&manifest_path)
             .ok()
             .and_then(|t| serde_json::from_str::<PluginManifest>(&t).ok())
         {
-            Some(m) => m,
-            None => {
-                tracing::warn!("plugin: битый манифест {}", manifest_path.display());
-                return None;
-            }
+            m
+        } else {
+            tracing::warn!("plugin: битый манифест {}", manifest_path.display());
+            return None;
         }
     } else if dir.join("skills").is_dir()
         || dir.join("hooks").join("hooks.json").is_file()
@@ -191,7 +193,7 @@ fn load_plugin(dir: &Path) -> Option<Plugin> {
 
 /// Парсит YAML-frontmatter SKILL.md: `---\nname: …\ndescription: …\n---`.
 ///
-/// Построчный толерантный разбор (serde_yaml падает на `:` внутри
+/// Построчный толерантный разбор (`serde_yaml_ng` падает на `:` внутри
 /// description — в дикой природе такое встречается): ключи `name`/`description`,
 /// значение — до конца строки; folded-формы `>-`/`>`/`|` собирают следующие
 /// indented-строки.
@@ -249,10 +251,11 @@ fn parse_frontmatter(path: &Path) -> Option<(String, String)> {
 
 /// Поиск по библиотеке скиллов: name ×12, description ×6, keywords ×4,
 /// тело ×1 (лениво, файлы ≤1 МБ). Сниппет — первое вхождение в теле.
+#[must_use]
 pub fn search(plugins: &[Plugin], query: &str, limit: usize) -> Vec<SkillHit> {
     let terms: Vec<String> = query
         .split_whitespace()
-        .map(|t| t.to_lowercase())
+        .map(str::to_lowercase)
         .filter(|t| t.chars().count() > 2)
         .collect();
     if terms.is_empty() {
@@ -333,6 +336,7 @@ fn make_snippet(body: &str, terms: &[String]) -> String {
 }
 
 /// Скилл по точному имени (при дублях — первый по порядку каталогов).
+#[must_use]
 pub fn skill_by_name<'a>(plugins: &'a [Plugin], name: &str) -> Option<&'a SkillMeta> {
     plugins
         .iter()
@@ -362,11 +366,12 @@ pub fn load_skill(meta: &SkillMeta) -> Result<String> {
         }
         files.sort();
         if !files.is_empty() {
-            text.push_str(&format!(
+            let _ = write!(
+                text,
                 "\n\n---\nМатериалы скилла ({}): {}\n",
                 refs_dir.display(),
                 files.join(", ")
-            ));
+            );
         }
     }
     Ok(text)
@@ -375,6 +380,7 @@ pub fn load_skill(meta: &SkillMeta) -> Result<String> {
 /// MCP-серверы, объявленные плагинами: `mcpServers` в plugin.json,
 /// `mcp.json` (стандарт) и `.mcp.json` (Claude Code) в корне плагина.
 /// Имена — `plugin.server` (точка: `__` зарезервирован в mcp.rs).
+#[must_use]
 pub fn mcp_servers(plugins: &[Plugin]) -> Vec<McpServerConfig> {
     let mut out = Vec::new();
     for p in plugins {
@@ -427,6 +433,7 @@ pub fn mcp_servers(plugins: &[Plugin]) -> Vec<McpServerConfig> {
 }
 
 /// Инструменты домена: `skill_search`, `skill_load`, `plugin_list`.
+#[must_use]
 pub fn tools(cfg: &Config) -> Vec<Arc<dyn Tool>> {
     let dirs = cfg.plugins.dirs.clone();
     vec![
@@ -477,7 +484,7 @@ impl Tool for SkillSearchTool {
             .ok_or_else(|| HarnessError::Tool("skill_search: нет аргумента query".into()))?;
         let limit = args
             .get("limit")
-            .and_then(|l| l.as_u64())
+            .and_then(serde_json::Value::as_u64)
             .unwrap_or(8)
             .min(20) as usize;
         let plugins = discover_dirs(&self.dirs);
@@ -490,13 +497,14 @@ impl Tool for SkillSearchTool {
         }
         let mut out = String::new();
         for h in &hits {
-            out.push_str(&format!(
+            let _ = write!(
+                out,
                 "── {} [{}] (score {:.1})\n   {}\n",
                 h.meta.name,
                 h.meta.plugin,
                 h.score,
                 h.meta.description.lines().next().unwrap_or("")
-            ));
+            );
             if !h.snippet.is_empty() {
                 out.push_str(&h.snippet);
                 out.push('\n');
@@ -580,7 +588,8 @@ impl Tool for PluginListTool {
         for p in &plugins {
             let extras = p.extra_components().len();
             let mcp = mcp_servers(std::slice::from_ref(p)).len();
-            out.push_str(&format!(
+            let _ = write!(
+                out,
                 "── {} v{}: скиллов {}, mcp {}, прочих компонентов {}\n   {}\n",
                 p.manifest.name,
                 p.manifest.version,
@@ -588,7 +597,7 @@ impl Tool for PluginListTool {
                 mcp,
                 extras,
                 p.manifest.description.lines().next().unwrap_or("")
-            ));
+            );
         }
         Ok(crate::tool::ToolOutput::ok(out).truncated(12_000))
     }
@@ -646,7 +655,7 @@ mod tests {
     #[test]
     fn frontmatter_tolerates_colons_and_folding() {
         let tmp = tempfile::tempdir().expect("tmp");
-        // Двоеточие внутри description — serde_yaml упал бы, построчный парсер — нет.
+        // Двоеточие внутри description — serde_yaml_ng упал бы, построчный парсер — нет.
         put(
             tmp.path(),
             "p/skills/with-colon/SKILL.md",

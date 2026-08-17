@@ -23,8 +23,9 @@ jobs:
       - run: cargo fmt --all -- --check
 
   clippy:
-    # Без -D warnings: ~378 существующих pedantic-предупреждений (AGENTS.md
-    # их толерирует). Ужесточение — отдельная задача P2-4 ревью (ADR-005).
+    # Строгий режим (P2-4 закрыта 2026-08-17): pedantic-линты зачищены,
+    # осознанные исключения — явный allow-список с обоснованием в Cargo.toml
+    # [lints.clippy]. Новое предупреждение = красная сборка.
     name: clippy
     runs-on: ubuntu-latest
     steps:
@@ -33,7 +34,7 @@ jobs:
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
-      - run: cargo clippy --all-targets
+      - run: cargo clippy --all-targets -- -D warnings
 
   test:
     name: cargo test

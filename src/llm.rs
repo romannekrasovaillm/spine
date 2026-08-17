@@ -1,8 +1,8 @@
 //! Провайдеры LLM: единый трейт [`LlmProvider`], реестр [`LlmRegistry`].
 //!
-//! Все провайдеры (DeepSeek, Kimi, GLM) — OpenAI-совместимые endpoint'ы;
+//! Все провайдеры (`DeepSeek`, Kimi, GLM) — OpenAI-совместимые endpoint'ы;
 //! общая реализация живёт в [`openai_compat`], файлы провайдеров — тонкие
-//! фабрики с пресетами base_url.
+//! фабрики с пресетами `base_url`.
 
 use std::collections::HashMap;
 use std::fmt;
@@ -37,6 +37,7 @@ pub enum Role {
 
 impl Role {
     /// Строковое представление для API.
+    #[must_use]
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::System => "system",
@@ -69,7 +70,7 @@ pub struct ToolCall {
 pub struct ChatMessage {
     /// Роль автора.
     pub role: Role,
-    /// Текстовое содержимое (может быть пустым при tool_calls).
+    /// Текстовое содержимое (может быть пустым при `tool_calls`).
     pub content: String,
     /// Запрошенные вызовы инструментов (для роли Assistant).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -77,14 +78,14 @@ pub struct ChatMessage {
     /// Идентификатор вызова, на который отвечает это сообщение (роль Tool).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_call_id: Option<String>,
-    /// Цепочка рассуждений (роль Assistant, ризонинг-модели: DeepSeek V4
-    /// thinking, Kimi k2.6/K3, GLM-4.x). DeepSeek ТРЕБУЕТ возвращать её в
-    /// последующих запросах, если были tool_calls (иначе HTTP 400) — поэтому
+    /// Цепочка рассуждений (роль Assistant, ризонинг-модели: `DeepSeek` V4
+    /// thinking, Kimi k2.6/K3, GLM-4.x). `DeepSeek` ТРЕБУЕТ возвращать её в
+    /// последующих запросах, если были `tool_calls` (иначе HTTP 400) — поэтому
     /// поле хранится и эхом уходит в API, но в чате не отображается.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning_content: Option<String>,
     /// Причина завершения генерации (`stop` | `length` | `tool_calls`…).
-    /// `length` означает усечение потолком max_tokens: гигантские tool-вызовы
+    /// `length` означает усечение потолком `max_tokens`: гигантские tool-вызовы
     /// обрываются на середине аргументов — агентный цикл такие отклоняет.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub finish_reason: Option<String>,
@@ -140,6 +141,7 @@ impl ChatMessage {
     }
 
     /// Грубая оценка размера в токенах (4 символа ≈ 1 токен).
+    #[must_use]
     pub fn rough_tokens(&self) -> usize {
         (self.content.len()
             + self.reasoning_content.as_deref().unwrap_or("").len()
@@ -155,7 +157,7 @@ impl ChatMessage {
 /// Спецификация инструмента для function calling (JSON Schema).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolSpec {
-    /// Имя инструмента (snake_case).
+    /// Имя инструмента (`snake_case`).
     pub name: String,
     /// Описание для модели: что делает и когда вызывать.
     pub description: String,
@@ -182,6 +184,7 @@ pub struct ChatRequest {
 
 impl ChatRequest {
     /// Запрос без инструментов из списка сообщений.
+    #[must_use]
     pub fn chat(messages: Vec<ChatMessage>) -> Self {
         Self {
             messages,
@@ -193,6 +196,7 @@ impl ChatRequest {
     }
 
     /// Установить инструменты.
+    #[must_use]
     pub fn with_tools(mut self, tools: Vec<ToolSpec>) -> Self {
         self.tools = tools;
         self
@@ -210,6 +214,7 @@ pub struct Usage {
 
 impl Usage {
     /// Суммарные токены.
+    #[must_use]
     pub fn total(&self) -> u64 {
         self.prompt_tokens + self.completion_tokens
     }
@@ -312,18 +317,20 @@ impl LlmRegistry {
 
     /// Провайдер по умолчанию.
     pub fn default(&self) -> Arc<dyn LlmProvider> {
-        self.providers
-            .get(&self.default_name)
-            .map(Arc::clone)
-            .unwrap_or_else(|| unreachable!("default_model проверен в from_config"))
+        self.providers.get(&self.default_name).map_or_else(
+            || unreachable!("default_model проверен в from_config"),
+            Arc::clone,
+        )
     }
 
     /// Имя модели по умолчанию.
+    #[must_use]
     pub fn default_name(&self) -> &str {
         &self.default_name
     }
 
     /// Имена всех настроенных провайдеров.
+    #[must_use]
     pub fn names(&self) -> Vec<String> {
         let mut names: Vec<String> = self.providers.keys().cloned().collect();
         names.sort();
@@ -386,8 +393,10 @@ mod tests {
 
     #[test]
     fn registry_rejects_unknown_default_model() {
-        let mut cfg = crate::config::Config::default();
-        cfg.default_model = "ghost".into();
+        let cfg = crate::config::Config {
+            default_model: "ghost".into(),
+            ..Default::default()
+        };
         assert!(LlmRegistry::from_config(&cfg).is_err());
     }
 }

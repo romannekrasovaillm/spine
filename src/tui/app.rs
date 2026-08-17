@@ -673,8 +673,7 @@ impl App {
         self.tool_ctx
             .subagents
             .as_ref()
-            .map(|r| r.running())
-            .unwrap_or(0)
+            .map_or(0, super::super::subagent::SubagentRegistry::running)
     }
 
     /// Идёт ли фоновый ход (модель/команда).
@@ -760,12 +759,12 @@ impl App {
     /// Драг левой кнопкой по диалогу — выделение текста; на отпускании
     /// выделенное копируется в буфер обмена (см. [`crate::clipboard`]).
     pub(crate) fn handle_mouse(&mut self, mouse: crossterm::event::MouseEvent) {
-        if !matches!(self.screen, Screen::Chat) {
-            return;
-        }
         const WHEEL_LINES: usize = 3;
         use crossterm::event::MouseButton as B;
         use crossterm::event::MouseEventKind as K;
+        if !matches!(self.screen, Screen::Chat) {
+            return;
+        }
         if let Some(mut v) = self.viewer {
             let shift = mouse.modifiers.contains(KeyModifiers::SHIFT);
             match (mouse.kind, shift) {
@@ -825,7 +824,7 @@ impl App {
     }
 
     /// Строки текущего выделения в координатах контента диалога:
-    /// (индекс строки в dialog_lines, начальная колонка, конечная колонка
+    /// (индекс строки в `dialog_lines`, начальная колонка, конечная колонка
     /// exclusive) — в display-колонках. Порядок — чтение (сверху вниз).
     pub(crate) fn selection_rows(&self) -> Vec<(usize, usize, usize)> {
         let mut rows = Vec::new();
@@ -1349,7 +1348,7 @@ impl App {
                         }
                     }
                     Err(e) => {
-                        self.push_block(ChatBlock::Error(format!("ход завершился ошибкой: {e}")))
+                        self.push_block(ChatBlock::Error(format!("ход завершился ошибкой: {e}")));
                     }
                 }
                 // Очередь: следующее набранное во время хода сообщение.
@@ -1642,11 +1641,11 @@ pub(crate) mod testing {
 
     #[async_trait]
     impl LlmProvider for StubProvider {
-        fn name(&self) -> &str {
+        fn name(&self) -> &'static str {
             "stub"
         }
 
-        fn model(&self) -> &str {
+        fn model(&self) -> &'static str {
             "stub-model"
         }
 
@@ -1988,7 +1987,7 @@ mod tests {
         assert_eq!(app.blocks.len(), 1, "осталась только системная заметка");
         match app.blocks.last() {
             Some(ChatBlock::System { text, .. }) => {
-                assert!(text.contains("новая сессия"), "{text}")
+                assert!(text.contains("новая сессия"), "{text}");
             }
             other => panic!("ожидался system-блок, получено: {other:?}"),
         }
@@ -2328,7 +2327,7 @@ mod tests {
         assert!(app.ask.is_none(), "пикер не открывается без журналов");
         match app.blocks.last() {
             Some(ChatBlock::System { text, .. }) => {
-                assert!(text.contains("прошлых сессий нет"), "{text}")
+                assert!(text.contains("прошлых сессий нет"), "{text}");
             }
             other => panic!("ожидалась заметка, получено: {other:?}"),
         }
@@ -2422,7 +2421,7 @@ mod tests {
         assert!(session.messages().is_empty());
     }
 
-    /// Модалка propose_options с двумя вариантами (без рекомендации).
+    /// Модалка `propose_options` с двумя вариантами (без рекомендации).
     fn open_test_ask(app: &mut App) -> tokio::sync::oneshot::Receiver<String> {
         let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
         app.handle_message(AppMessage::AskUser(AskRequest {

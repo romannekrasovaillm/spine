@@ -10,8 +10,8 @@
 //!   [`MatchLevel::TrimEnd`] → [`MatchLevel::TrimBoth`] →
 //!   [`MatchLevel::WhitespaceCollapsed`] (последние три — построчные блоки);
 //! - [`cascade_find`] возвращает байтовые диапазоны вхождений и уровень;
-//! - [`cascade_replace`] — замена с контрактом edit_file: 0 вхождений —
-//!   подсказка, >1 без replace_all — ошибка неоднозначности;
+//! - [`cascade_replace`] — замена с контрактом `edit_file`: 0 вхождений —
+//!   подсказка, >1 без `replace_all` — ошибка неоднозначности;
 //! - нечёткие уровни оперируют ЦЕЛЫМИ строками: замена никогда не рвёт
 //!   строку посередине и не портит соседний текст.
 
@@ -65,7 +65,7 @@ fn normalize(line: &str, level: MatchLevel) -> String {
 }
 
 /// Строки текста с байтовыми диапазонами (start, end включая `\n`, текст
-/// строки без `\n`). Последняя строка без перевода — end = text.len().
+/// строки без `\n`). Последняя строка без перевода — end = `text.len()`.
 fn line_spans(text: &str) -> Vec<(usize, usize, &str)> {
     let mut out = Vec::new();
     let mut start = 0usize;

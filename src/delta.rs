@@ -84,6 +84,7 @@ pub struct DeltaInfo {
 }
 
 /// Список дельт (предложенные и архивные).
+#[must_use]
 pub fn list(repo: &Path) -> Vec<DeltaInfo> {
     let mut out = Vec::new();
     for (dir, status) in [

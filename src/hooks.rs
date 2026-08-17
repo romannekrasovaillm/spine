@@ -8,8 +8,8 @@
 //!   фильтр инструмента (подстрока имени), shell-команда, таймаут;
 //! - хук получает контекст через env: `ARCH_HOOK_EVENT`, `ARCH_HOOK_TOOL`,
 //!   `ARCH_HOOK_CONTEXT` (JSON, ≤ 8 КБ); stdout захватывается (≤ 4 КБ);
-//! - exit code 2 = БЛОК: PreToolUse отменяет вызов инструмента,
-//!   UserPromptSubmit отклоняет весь промпт; прочие коды — наблюдатели;
+//! - exit code 2 = БЛОК: `PreToolUse` отменяет вызов инструмента,
+//!   `UserPromptSubmit` отклоняет весь промпт; прочие коды — наблюдатели;
 //! - stdout PostToolUse-хуков дописывается к результату инструмента
 //!   (маркер `[hook]`), остальных событий — только в журнал;
 //! - хук не должен рушить агента: таймаут/ошибка запуска — заметка
@@ -92,6 +92,7 @@ impl HookEvent {
 /// Спецификация хука из конфига (`[[hooks.specs]]`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
+#[derive(Default)]
 pub struct HookSpec {
     /// Имя события (`PreToolUse`, `PostToolUse`, …).
     pub event: String,
@@ -102,17 +103,6 @@ pub struct HookSpec {
     pub command: String,
     /// Таймаут исполнения, секунды (дефолт 5).
     pub timeout_secs: Option<u64>,
-}
-
-impl Default for HookSpec {
-    fn default() -> Self {
-        Self {
-            event: String::new(),
-            tool: None,
-            command: String::new(),
-            timeout_secs: None,
-        }
-    }
 }
 
 /// Итог исполнения одного хука.
@@ -244,9 +234,10 @@ impl HookSet {
     pub fn from_specs(specs: &[HookSpec]) -> Self {
         let mut out = Vec::new();
         for spec in specs {
-            match HookEvent::from_name(&spec.event) {
-                Some(ev) => out.push((ev, spec.clone())),
-                None => tracing::warn!("хук с неизвестным событием «{}» пропущен", spec.event),
+            if let Some(ev) = HookEvent::from_name(&spec.event) {
+                out.push((ev, spec.clone()));
+            } else {
+                tracing::warn!("хук с неизвестным событием «{}» пропущен", spec.event);
             }
         }
         Self { specs: out }

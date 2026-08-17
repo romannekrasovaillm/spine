@@ -148,3 +148,11 @@ constraints:
     command: "cargo test --quiet"
     timeout_secs: 900
     severity: critical
+
+  # --- AD-6/AD-9: clippy-гейт в строгом режиме (P2-4 закрыта) ----------------
+  - id: C-20
+    name: ci_clippy_deny_warnings
+    type: must_contain
+    glob: ".github/workflows/*.yml"
+    pattern: "clippy --all-targets -- -D warnings"
+    severity: high

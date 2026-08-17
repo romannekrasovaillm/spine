@@ -8,6 +8,7 @@
 //! `<!-- ARCH:END -->` перегенерируется; всё снаружи маркеров — рукописная
 //! зона команды и никогда не затирается.
 
+use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -72,6 +73,9 @@ struct ConstraintsDoc {
 }
 
 /// Собирает факты репозитория (манифесты, CI, карта, артефакты).
+///
+/// # Errors
+/// `repo` не существует или не является каталогом.
 pub fn scan_repo(repo: &Path) -> Result<RepoFacts> {
     if !repo.is_dir() {
         return Err(HarnessError::Agent(format!(
@@ -83,8 +87,7 @@ pub fn scan_repo(repo: &Path) -> Result<RepoFacts> {
     let mut facts = RepoFacts {
         name: canonical
             .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_else(|| "repo".into()),
+            .map_or_else(|| "repo".into(), |n| n.to_string_lossy().to_string()),
         ..RepoFacts::default()
     };
 
@@ -186,13 +189,11 @@ pub fn scan_repo(repo: &Path) -> Result<RepoFacts> {
     for adr in ["docs/adr", "adr"] {
         let dir = repo.join(adr);
         if dir.is_dir() {
-            let count = std::fs::read_dir(&dir)
-                .map(|rd| {
-                    rd.flatten()
-                        .filter(|e| e.path().extension().is_some_and(|x| x == "md"))
-                        .count()
-                })
-                .unwrap_or(0);
+            let count = std::fs::read_dir(&dir).map_or(0, |rd| {
+                rd.flatten()
+                    .filter(|e| e.path().extension().is_some_and(|x| x == "md"))
+                    .count()
+            });
             facts.adr = Some((dir, count));
             break;
         }
@@ -207,6 +208,7 @@ pub fn scan_repo(repo: &Path) -> Result<RepoFacts> {
 }
 
 /// Извлекает инварианты из spine-файла (блоки `## AD-n. Заголовок` + поле Rule).
+#[must_use]
 pub fn parse_spine_invariants(spine: &Path) -> Vec<SpineInvariant> {
     let Ok(text) = std::fs::read_to_string(spine) else {
         return Vec::new();
@@ -223,9 +225,7 @@ pub fn parse_spine_invariants(spine: &Path) -> Vec<SpineInvariant> {
             in_rule = false;
             // `AD-1: Заголовок` или `AD-1. Заголовок` — номер отсекаем по первому
             // разделителю (`.`/`:`/пробел).
-            let sep = rest
-                .find(|c| c == '.' || c == ':' || c == ' ')
-                .unwrap_or(rest.len());
+            let sep = rest.find(['.', ':', ' ']).unwrap_or(rest.len());
             let (num, title) = rest.split_at(sep);
             current = Some(SpineInvariant {
                 id: format!("AD-{}", num.trim()),
@@ -280,22 +280,24 @@ fn inputs_hash(repo: &Path, facts: &RepoFacts) -> Result<u64> {
     if let Some(c) = &facts.constraints {
         buf.push_str(&std::fs::read_to_string(c).map_err(|e| HarnessError::io(c, e))?);
     }
-    buf.push_str(&format!(
+    let _ = write!(
+        buf,
         "{:?}|{:?}|{:?}",
         facts.commands, facts.top_dirs, facts.stack
-    ));
+    );
     let _ = repo;
     Ok(fnv1a(&buf))
 }
 
 /// Компилирует содержимое сгенерированной зоны AGENTS.md.
+///
+/// # Errors
+/// Ошибка чтения файлов-источников (spine, CONSTRAINTS.yaml) при подсчёте хэша.
 pub fn render_generated(repo: &Path, facts: &RepoFacts) -> Result<String> {
     let hash = inputs_hash(repo, facts)?;
     let ts = chrono::Local::now().format("%Y-%m-%d %H:%M").to_string();
     let mut out = String::new();
-    out.push_str(&format!(
-        "{BEGIN_MARKER} hash={hash:016x} ts=\"{ts}\" -->\n"
-    ));
+    let _ = writeln!(out, "{BEGIN_MARKER} hash={hash:016x} ts=\"{ts}\" -->");
     out.push_str("> Сгенерировано харнессом `arch` (`arch agents-md refresh`). Не редактируйте\n> внутри маркеров — правьте источники (spine, CONSTRAINTS.yaml) или зону снаружи.\n\n");
 
     out.push_str("## Команды\n\n");
@@ -303,11 +305,11 @@ pub fn render_generated(repo: &Path, facts: &RepoFacts) -> Result<String> {
         out.push_str("- (манифесты не обнаружены — заполните вручную вне маркеров)\n");
     } else {
         for (label, cmd) in &facts.commands {
-            out.push_str(&format!("- {label}: `{cmd}`\n"));
+            let _ = writeln!(out, "- {label}: `{cmd}`");
         }
     }
     if !facts.ci.is_empty() {
-        out.push_str(&format!("- CI: {}\n", facts.ci.join(", ")));
+        let _ = writeln!(out, "- CI: {}", facts.ci.join(", "));
     }
     out.push('\n');
 
@@ -319,16 +321,16 @@ pub fn render_generated(repo: &Path, facts: &RepoFacts) -> Result<String> {
                 out.push_str("- spine есть, но блоков AD-n не найдено\n");
             }
             for i in &inv {
-                out.push_str(&format!("- **{} {}**", i.id, i.title));
+                let _ = write!(out, "- **{} {}**", i.id, i.title);
                 if !i.rule.is_empty() {
-                    out.push_str(&format!(" — Rule: `{}`", i.rule));
+                    let _ = write!(out, " — Rule: `{}`", i.rule);
                 }
                 out.push('\n');
             }
-            out.push_str(&format!("\nПолный текст: `{}`\n", rel(repo, spine)));
+            let _ = write!(out, "\nПолный текст: `{}`\n", rel(repo, spine));
         }
         None => {
-            out.push_str("- spine не обнаружен; для Standard/Critical маршрутов он обязателен\n")
+            out.push_str("- spine не обнаружен; для Standard/Critical маршрутов он обязателен\n");
         }
     }
     out.push('\n');
@@ -337,38 +339,40 @@ pub fn render_generated(repo: &Path, facts: &RepoFacts) -> Result<String> {
     match &facts.constraints {
         Some(c) => {
             let text = std::fs::read_to_string(c).map_err(|e| HarnessError::io(c, e))?;
-            let doc: ConstraintsDoc =
-                serde_yaml::from_str(&text).map_err(|e| HarnessError::Yaml(e))?;
+            let doc: ConstraintsDoc = serde_yaml_ng::from_str(&text).map_err(HarnessError::Yaml)?;
             for r in &doc.rules {
                 let sev = r.severity.as_deref().unwrap_or("error");
-                out.push_str(&format!("- `{}` ({}, {}) \n", r.name, r.kind, sev));
+                let _ = writeln!(out, "- `{}` ({}, {}) ", r.name, r.kind, sev);
             }
-            out.push_str(&format!(
+            let _ = write!(
+                out,
                 "\nПроверка: `arch control check .` — источник `{}`\n",
                 rel(repo, c)
-            ));
+            );
         }
         None => out.push_str("- CONSTRAINTS.yaml не найден (`arch handoff` создаёт стартовый)\n"),
     }
     out.push('\n');
 
     out.push_str("## Карта репозитория\n\n");
-    out.push_str(&format!(
-        "- Стек: {}\n",
+    let _ = writeln!(
+        out,
+        "- Стек: {}",
         if facts.stack.is_empty() {
             "не определён".into()
         } else {
             facts.stack.join(", ")
         }
-    ));
+    );
     if !facts.top_dirs.is_empty() {
-        out.push_str(&format!("- Каталоги: {}\n", facts.top_dirs.join(", ")));
+        let _ = writeln!(out, "- Каталоги: {}", facts.top_dirs.join(", "));
     }
     if let Some((adr, n)) = &facts.adr {
-        out.push_str(&format!(
-            "- ADR: `{}` ({n} шт.) — решения читаем ДО изменения затронутых мест\n",
+        let _ = writeln!(
+            out,
+            "- ADR: `{}` ({n} шт.) — решения читаем ДО изменения затронутых мест",
             rel(repo, adr)
-        ));
+        );
     }
     out.push('\n');
 
@@ -390,8 +394,7 @@ pub fn render_generated(repo: &Path, facts: &RepoFacts) -> Result<String> {
 /// Относительный путь (для ссылок внутри AGENTS.md).
 fn rel(repo: &Path, path: &Path) -> String {
     path.strip_prefix(repo)
-        .map(|p| p.display().to_string())
-        .unwrap_or_else(|_| path.display().to_string())
+        .map_or_else(|_| path.display().to_string(), |p| p.display().to_string())
 }
 
 /// Итог генерации/обновления.
@@ -421,18 +424,16 @@ pub fn generate(repo: &Path) -> Result<AgentsMdReport> {
     let invariants = facts
         .spine
         .as_ref()
-        .map(|s| parse_spine_invariants(s).len())
-        .unwrap_or(0);
+        .map_or(0, |s| parse_spine_invariants(s).len());
     let path = repo.join("AGENTS.md");
-    let (content, action) = match std::fs::read_to_string(&path) {
-        Ok(existing) => splice(&existing, &zone),
-        Err(_) => {
-            let header = format!(
-                "# AGENTS.md — {}\n\n> Инструкции для агентов и разработчиков. Рукописная зона — вне маркеров ARCH.\n\n",
-                facts.name
-            );
-            (format!("{header}{zone}"), "created")
-        }
+    let (content, action) = if let Ok(existing) = std::fs::read_to_string(&path) {
+        splice(&existing, &zone)
+    } else {
+        let header = format!(
+            "# AGENTS.md — {}\n\n> Инструкции для агентов и разработчиков. Рукописная зона — вне маркеров ARCH.\n\n",
+            facts.name
+        );
+        (format!("{header}{zone}"), "created")
     };
     std::fs::write(&path, content).map_err(|e| HarnessError::io(&path, e))?;
     Ok(AgentsMdReport {
@@ -594,6 +595,7 @@ pub fn lint_registry(registry_file: &Path) -> Result<Vec<(PathBuf, Vec<LintIssue
 }
 
 /// Инструменты домена: `agentsmd_generate`, `agentsmd_lint`.
+#[must_use]
 pub fn tools(cfg: &Config) -> Vec<Arc<dyn Tool>> {
     let _ = cfg;
     vec![Arc::new(AgentsMdGenerateTool), Arc::new(AgentsMdLintTool)]
@@ -673,7 +675,7 @@ impl Tool for AgentsMdLintTool {
         }
         let mut out = String::new();
         for i in &issues {
-            out.push_str(&format!("[{}] {} — {}\n", i.severity, i.rule, i.message));
+            let _ = writeln!(out, "[{}] {} — {}", i.severity, i.rule, i.message);
         }
         Ok(crate::tool::ToolOutput::ok(out))
     }

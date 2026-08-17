@@ -153,6 +153,7 @@ fn ensure_frontmatter(raw: &str, slug: &str) -> String {
 }
 
 /// Инструменты домена: `skill_distill`.
+#[must_use]
 pub fn tools(cfg: &Config) -> Vec<Arc<dyn Tool>> {
     vec![Arc::new(SkillDistillTool {
         plugins_root: cfg.plugins.dirs.first().cloned(),
@@ -242,10 +243,10 @@ mod tests {
 
     #[async_trait]
     impl LlmProvider for GoodLlm {
-        fn name(&self) -> &str {
+        fn name(&self) -> &'static str {
             "good"
         }
-        fn model(&self) -> &str {
+        fn model(&self) -> &'static str {
             "good-1"
         }
         async fn complete(&self, _req: ChatRequest) -> Result<ChatMessage> {
@@ -262,10 +263,10 @@ mod tests {
 
     #[async_trait]
     impl LlmProvider for SloppyLlm {
-        fn name(&self) -> &str {
+        fn name(&self) -> &'static str {
             "sloppy"
         }
-        fn model(&self) -> &str {
+        fn model(&self) -> &'static str {
             "sloppy-1"
         }
         async fn complete(&self, _req: ChatRequest) -> Result<ChatMessage> {

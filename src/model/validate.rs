@@ -105,7 +105,7 @@ pub(crate) fn load_constraint_ids(model_dir: &Path) -> Constraints {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Constraints::Absent,
         Err(e) => return Constraints::Broken(format!("{}: {e}", path.display())),
     };
-    let yaml: serde_yaml::Value = match serde_yaml::from_str(&text) {
+    let yaml: serde_yaml_ng::Value = match serde_yaml_ng::from_str(&text) {
         Ok(v) => v,
         Err(e) => return Constraints::Broken(format!("{}: {e}", path.display())),
     };

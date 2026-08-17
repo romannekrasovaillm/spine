@@ -10,7 +10,7 @@
 //! - [`RetryPolicy::for_kind`] задаёт статическую политику на класс
 //!   (`None` — не повторять);
 //! - [`RetryPolicy::delays`] — конечный итератор задержек между попытками
-//!   (экспонента с капом + детерминированный джиттер SplitMix64);
+//!   (экспонента с капом + детерминированный джиттер `SplitMix64`);
 //! - [`is_context_overflow`] выделяет «контекст не влез» (HTTP 413 и маркеры
 //!   context length) — сигнал агенту для compact & resubmit.
 
@@ -227,7 +227,7 @@ fn apply_jitter(base_ms: u64, jitter_pct: u8, rng: &mut SplitMix64) -> u64 {
     (base_ms + delta).saturating_sub(span)
 }
 
-/// SplitMix64 — детерминированный PRNG без внешних зависимостей
+/// `SplitMix64` — детерминированный PRNG без внешних зависимостей
 /// (джиттер обязан воспроизводиться в тестах).
 struct SplitMix64(u64);
 

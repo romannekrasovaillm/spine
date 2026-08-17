@@ -16,6 +16,7 @@
 //!   (иначе они молча сгорели бы при remove);
 //! - имена — kebab-case `[a-z0-9-]` (ветка и каталог безопасны).
 
+use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
@@ -83,17 +84,15 @@ fn worktrees_root(cfg: &crate::config::Config, repo: &Path) -> PathBuf {
     // Слаг репозитория: имя каталога + короткий FNV-хэш пути (коллизии имён).
     let slug = repo
         .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "repo".into());
-    let mut hash = 0xcbf29ce484222325u64;
+        .map_or_else(|| "repo".into(), |n| n.to_string_lossy().into_owned());
+    let mut hash = 0xcbf2_9ce4_8422_2325_u64;
     for b in repo.to_string_lossy().as_bytes() {
-        hash = (hash ^ u64::from(*b)).wrapping_mul(0x100000001b3);
+        hash = (hash ^ u64::from(*b)).wrapping_mul(0x0100_0000_01b3);
     }
     cfg.paths
         .reports_dir
         .parent()
-        .map(|p| p.join("worktrees"))
-        .unwrap_or_else(|| PathBuf::from(".arch-worktrees"))
+        .map_or_else(|| PathBuf::from(".arch-worktrees"), |p| p.join("worktrees"))
         .join(format!("{slug}-{hash:08x}"))
 }
 
@@ -133,6 +132,9 @@ pub async fn create(
 }
 
 /// Список worktree фабрики (ветки `arch/*`).
+///
+/// # Errors
+/// Сбой запуска `git` или ненулевой выход `git worktree list`.
 pub async fn list(repo: &Path) -> Result<Vec<WorktreeInfo>> {
     let out = git(repo, &["worktree", "list", "--porcelain"]).await?;
     let mut infos = Vec::new();
@@ -141,7 +143,7 @@ pub async fn list(repo: &Path) -> Result<Vec<WorktreeInfo>> {
     let mut flush = |path: Option<PathBuf>, branch: String| {
         if let (Some(p), b) = (path, branch) {
             if let Some(name) = b.strip_prefix(BRANCH_PREFIX) {
-                infos.push((p, name.to_string(), b.to_string()));
+                infos.push((p, name.to_string(), b.clone()));
             }
         }
     };
@@ -161,8 +163,7 @@ pub async fn list(repo: &Path) -> Result<Vec<WorktreeInfo>> {
     for (path, name, branch) in infos {
         let dirty = git(&path, &["status", "--porcelain"])
             .await
-            .map(|s| !s.trim().is_empty())
-            .unwrap_or(false);
+            .is_ok_and(|s| !s.trim().is_empty());
         let ahead = git(
             &path,
             &["rev-list", "--count", &format!("{head}..{branch}")],
@@ -183,6 +184,9 @@ pub async fn list(repo: &Path) -> Result<Vec<WorktreeInfo>> {
 }
 
 /// Diff worktree против HEAD основного дерева (stat + патч, усечённый).
+///
+/// # Errors
+/// Невалидное имя worktree; сбой `git diff` по ветке worktree.
 pub async fn diff(repo: &Path, name: &str) -> Result<String> {
     validate_name(name)?;
     let branch = format!("{BRANCH_PREFIX}{name}");
@@ -266,8 +270,9 @@ pub fn render_list(infos: &[WorktreeInfo]) -> String {
     }
     let mut out = String::new();
     for i in infos {
-        out.push_str(&format!(
-            "── {} · {} · впереди: {} · {}{}\n",
+        let _ = writeln!(
+            out,
+            "── {} · {} · впереди: {} · {}{}",
             i.name,
             i.path.display(),
             i.ahead,
@@ -281,7 +286,7 @@ pub fn render_list(infos: &[WorktreeInfo]) -> String {
             } else {
                 ""
             }
-        ));
+        );
     }
     out
 }

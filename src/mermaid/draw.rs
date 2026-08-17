@@ -4,6 +4,7 @@
 //! «проходят за» промежуточными узлами.
 
 use std::collections::HashMap;
+use std::fmt::Write as _;
 
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
@@ -564,7 +565,7 @@ pub(crate) fn render_flowchart(ast: &FlowAst) -> String {
         let g = geoms[i];
         draw_node(&mut cv, g.x, g.y, nd.shape, &nd.label);
     }
-    finish(cv, &ast.skipped)
+    finish(&cv, &ast.skipped)
 }
 
 /// Рендерит sequence-диаграмму в строку с артом (+ предупреждения).
@@ -598,7 +599,7 @@ pub(crate) fn render_sequence(ast: &SeqAst) -> String {
                     _ => {} // с краю — заметка вылезает наружу, канвас расширится
                 }
             }
-            _ => {}
+            SeqItem::Message(_) => {}
         }
     }
     // Координаты боксов участников.
@@ -673,17 +674,17 @@ pub(crate) fn render_sequence(ast: &SeqAst) -> String {
             cv.line(cx, r, '│');
         }
     }
-    finish(cv, &ast.skipped)
+    finish(&cv, &ast.skipped)
 }
 
 /// Собирает канвас в строку и дописывает предупреждения о пропущенных конструкциях.
-fn finish(cv: Canvas, skipped: &[Skipped]) -> String {
+fn finish(cv: &Canvas, skipped: &[Skipped]) -> String {
     let mut out = cv.paint();
     for s in skipped {
         if !out.is_empty() {
             out.push('\n');
         }
-        out.push_str(&format!("%% пропущено [строка {}]: {}", s.line, s.text));
+        let _ = write!(out, "%% пропущено [строка {}]: {}", s.line, s.text);
     }
     out
 }

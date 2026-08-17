@@ -71,7 +71,7 @@ pub async fn execute(
         "/help" => Ok(SlashOutcome::Handled(help_text())),
         "/compact" => cmd_compact(session).await,
         "/model" => cmd_model(rest, session, ctx),
-        "/think" => cmd_think(rest, session, ctx),
+        "/think" => Ok(cmd_think(rest, session, ctx)),
         "/clear" => {
             session.clear();
             Ok(SlashOutcome::Handled("контекст очищен".into()))
@@ -99,16 +99,16 @@ pub async fn execute(
         "/doctor" => Ok(SlashOutcome::Handled(crate::doctor::render(
             &crate::doctor::run_checks(&ctx.config),
         ))),
-        "/skills" => cmd_skills(rest, ctx),
+        "/skills" => Ok(cmd_skills(rest, ctx)),
         "/skill" => cmd_skill(rest, session, ctx),
-        "/plugins" => cmd_plugins(rest, ctx),
+        "/plugins" => Ok(cmd_plugins(rest, ctx)),
         "/agents" => Ok(SlashOutcome::Handled(cmd_agents(ctx))),
         "/worktree" => cmd_worktree_list(ctx).await,
         "/distill" => cmd_distill(rest, session, ctx).await,
         "/save" => cmd_save(rest, session, ctx),
         "/load" => cmd_load(rest, session, ctx),
         "/agentsmd" => cmd_agentsmd(rest, ctx),
-        "/sessions" => cmd_sessions(ctx),
+        "/sessions" => Ok(cmd_sessions(ctx)),
         "/resume" => cmd_resume(rest, session, ctx),
         other => Ok(SlashOutcome::Unknown(
             other.trim_start_matches('/').to_string(),
@@ -253,9 +253,9 @@ fn cmd_model(rest: &str, session: &mut AgentSession, ctx: &ToolContext) -> Resul
 
 /// `/think [on|off|auto]`: переключатель ризонинг-режима активной модели.
 /// В тело запроса сливается карта `thinking_on`/`thinking_off` из конфига
-/// модели (DeepSeek V4/GLM: `thinking.type`; Kimi K3: `reasoning_effort`).
+/// модели (`DeepSeek` V4/GLM: `thinking.type`; Kimi K3: `reasoning_effort`).
 /// Без аргумента — статус; `auto` — вернуться к дефолту провайдера.
-fn cmd_think(rest: &str, session: &mut AgentSession, ctx: &ToolContext) -> Result<SlashOutcome> {
+fn cmd_think(rest: &str, session: &mut AgentSession, ctx: &ToolContext) -> SlashOutcome {
     let name = session.provider().name().to_string();
     let mc = ctx.config.models.get(&name);
     let map_for = |on: bool| {
@@ -283,32 +283,28 @@ fn cmd_think(rest: &str, session: &mut AgentSession, ctx: &ToolContext) -> Resul
                 _ => "карты thinking_on/thinking_off не настроены — переключение недоступно"
                     .to_string(),
             };
-            Ok(SlashOutcome::Handled(format!(
-                "Ризонинг: {state} · модель {name} · {support}"
-            )))
+            SlashOutcome::Handled(format!("Ризонинг: {state} · модель {name} · {support}"))
         }
         "on" | "off" => {
             let on = rest == "on";
             let Some(map) = map_for(on) else {
-                return Ok(SlashOutcome::Handled(format!(
+                return SlashOutcome::Handled(format!(
                     "для модели {name} не настроена карта thinking_{rest} в config.toml — \
                      переключатель не применён"
-                )));
+                ));
             };
             session.set_thinking(Some(on));
-            Ok(SlashOutcome::Handled(format!(
+            SlashOutcome::Handled(format!(
                 "ризонинг: {rest} ({name}); в тело запроса сливается {map}"
-            )))
+            ))
         }
         "auto" => {
             session.set_thinking(None);
-            Ok(SlashOutcome::Handled(format!(
+            SlashOutcome::Handled(format!(
                 "ризонинг: auto ({name}) — параметры thinking не шлются, дефолт провайдера"
-            )))
+            ))
         }
-        _ => Ok(SlashOutcome::Handled(
-            "использование: /think [on|off|auto]".into(),
-        )),
+        _ => SlashOutcome::Handled("использование: /think [on|off|auto]".into()),
     }
 }
 
@@ -643,7 +639,9 @@ fn score_text(rest: &str) -> String {
         }
     }
     let mut out = String::new();
-    if !answers.is_empty() {
+    if answers.is_empty() {
+        let _ = writeln!(out, "использование: /score <триггер>=true ...\n");
+    } else {
         let sig = crate::control::significance_score(&answers);
         let _ = writeln!(
             out,
@@ -656,8 +654,6 @@ fn score_text(rest: &str) -> String {
             let _ = writeln!(out, "Сработали: {}", sig.fired.join(", "));
         }
         out.push('\n');
-    } else {
-        let _ = writeln!(out, "использование: /score <триггер>=true ...\n");
     }
     let _ = writeln!(
         out,
@@ -773,7 +769,7 @@ fn truncate_chars(text: &str, max: usize) -> String {
 }
 
 /// `/skills [query]`: поиск по библиотеке скиллов (без query — список).
-fn cmd_skills(rest: &str, ctx: &ToolContext) -> Result<SlashOutcome> {
+fn cmd_skills(rest: &str, ctx: &ToolContext) -> SlashOutcome {
     let plugins = crate::plugin::discover(&ctx.config.plugins.dirs);
     let total: usize = plugins.iter().map(|p| p.skills.len()).sum();
     if rest.is_empty() {
@@ -790,13 +786,11 @@ fn cmd_skills(rest: &str, ctx: &ToolContext) -> Result<SlashOutcome> {
                 );
             }
         }
-        return Ok(SlashOutcome::Handled(out));
+        return SlashOutcome::Handled(out);
     }
     let hits = crate::plugin::search(&plugins, rest, 10);
     if hits.is_empty() {
-        return Ok(SlashOutcome::Handled(format!(
-            "ничего не найдено (скиллов в индексе: {total})"
-        )));
+        return SlashOutcome::Handled(format!("ничего не найдено (скиллов в индексе: {total})"));
     }
     let mut out = String::new();
     for h in &hits {
@@ -822,7 +816,7 @@ fn cmd_skills(rest: &str, ctx: &ToolContext) -> Result<SlashOutcome> {
         }
     }
     out.push_str("\n/skill <name> — загрузить скилл в контекст");
-    Ok(SlashOutcome::Handled(out))
+    SlashOutcome::Handled(out)
 }
 
 /// `/skill <name>`: загружает скилл и включает его в контекст сессии.
@@ -846,11 +840,11 @@ fn cmd_skill(rest: &str, session: &mut AgentSession, ctx: &ToolContext) -> Resul
 }
 
 /// `/plugins`: список плагинов (скиллы + MCP).
-fn cmd_plugins(rest: &str, ctx: &ToolContext) -> Result<SlashOutcome> {
+fn cmd_plugins(rest: &str, ctx: &ToolContext) -> SlashOutcome {
     let plugins = crate::plugin::discover(&ctx.config.plugins.dirs);
     if let Some(name) = (!rest.is_empty()).then_some(rest) {
         let Some(p) = plugins.iter().find(|p| p.manifest.name == name) else {
-            return Ok(SlashOutcome::Handled(format!("плагин '{name}' не найден")));
+            return SlashOutcome::Handled(format!("плагин '{name}' не найден"));
         };
         let mut out = format!(
             "{} v{} — {}\n{}\nСкиллы ({}):\n",
@@ -881,7 +875,7 @@ fn cmd_plugins(rest: &str, ctx: &ToolContext) -> Result<SlashOutcome> {
                 let _ = writeln!(out, "  {:<24} {} {}", s.name, s.command, s.args.join(" "));
             }
         }
-        return Ok(SlashOutcome::Handled(out));
+        return SlashOutcome::Handled(out);
     }
     let mut out = format!("Плагины ({}):\n", plugins.len());
     for p in &plugins {
@@ -900,7 +894,7 @@ fn cmd_plugins(rest: &str, ctx: &ToolContext) -> Result<SlashOutcome> {
                 .collect::<String>()
         );
     }
-    Ok(SlashOutcome::Handled(out))
+    SlashOutcome::Handled(out)
 }
 
 /// `/agents`: спецификации субагентов из плагинов + статусы фоновых задач.
@@ -1009,12 +1003,12 @@ async fn cmd_distill(
 }
 
 /// `/sessions`: список журналов прошлых сессий (новые первыми).
-fn cmd_sessions(ctx: &ToolContext) -> Result<SlashOutcome> {
+fn cmd_sessions(ctx: &ToolContext) -> SlashOutcome {
     let logs = crate::agent::list_session_logs(&ctx.config.paths.sessions_dir);
     if logs.is_empty() {
-        return Ok(SlashOutcome::Handled(
+        return SlashOutcome::Handled(
             "журналов сессий нет (каталог пуст или ещё не создан)".into(),
-        ));
+        );
     }
     let mut out = String::from("Сессии (новые первыми); /resume <имя|last> — восстановить:\n");
     for (i, l) in logs.iter().take(15).enumerate() {
@@ -1033,7 +1027,7 @@ fn cmd_sessions(ctx: &ToolContext) -> Result<SlashOutcome> {
             l.first_user_line
         );
     }
-    Ok(SlashOutcome::Handled(out))
+    SlashOutcome::Handled(out)
 }
 
 /// `/resume <file|last>`: восстанавливает историю из журнала прошлой сессии.
@@ -1049,7 +1043,10 @@ fn cmd_resume(rest: &str, session: &mut AgentSession, ctx: &ToolContext) -> Resu
         // «last» — новейший журнал, КРОМЕ журнала текущей сессии.
         logs.iter().find(|l| Some(&l.path) != current.as_ref())
     } else {
-        let want = if rest.ends_with(".jsonl") {
+        let want = if std::path::Path::new(rest)
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("jsonl"))
+        {
             rest.to_string()
         } else {
             format!("{rest}.jsonl")
@@ -1057,8 +1054,7 @@ fn cmd_resume(rest: &str, session: &mut AgentSession, ctx: &ToolContext) -> Resu
         logs.iter().find(|l| {
             l.path
                 .file_name()
-                .map(|n| n.to_string_lossy() == want)
-                .unwrap_or(false)
+                .is_some_and(|n| n.to_string_lossy() == want)
         })
     };
     let Some(info) = target else {
@@ -1130,10 +1126,10 @@ mod tests {
 
     #[async_trait::async_trait]
     impl LlmProvider for StubLlm {
-        fn name(&self) -> &str {
+        fn name(&self) -> &'static str {
             "stub"
         }
-        fn model(&self) -> &str {
+        fn model(&self) -> &'static str {
             "stub-1"
         }
         async fn complete(&self, _req: ChatRequest) -> Result<ChatMessage> {
@@ -1182,7 +1178,7 @@ mod tests {
         let (mut s, ctx) = make_fixture(tmp.path());
         let old_log = s
             .log_path()
-            .map(|p| p.to_path_buf())
+            .map(std::path::Path::to_path_buf)
             .expect("журнал открыт");
         // Немного истории, чтобы было что очищать.
         s.send("привет", None).await.expect("ход заглушки");
@@ -1193,7 +1189,10 @@ mod tests {
             other => panic!("ожидался NewSession, получено {other:?}"),
         }
         assert!(s.messages().is_empty(), "история очищена");
-        let new_log = s.log_path().map(|p| p.to_path_buf()).expect("новый журнал");
+        let new_log = s
+            .log_path()
+            .map(std::path::Path::to_path_buf)
+            .expect("новый журнал");
         assert_ne!(old_log, new_log, "журнал ротирован");
         assert!(old_log.is_file(), "старый журнал остаётся для /sessions");
         let old = std::fs::read_to_string(&old_log).expect("чтение старого журнала");
@@ -1211,7 +1210,7 @@ mod tests {
         execute("/new", &mut s, &ctx).await.expect("ok");
         let third = s
             .log_path()
-            .map(|p| p.to_path_buf())
+            .map(std::path::Path::to_path_buf)
             .expect("третий журнал");
         assert_ne!(new_log, third, "суффикс разводит коллизию одной секунды");
         assert!(third.is_file());
@@ -1267,10 +1266,10 @@ mod tests {
 
     #[async_trait::async_trait]
     impl LlmProvider for NamedStub {
-        fn name(&self) -> &str {
+        fn name(&self) -> &'static str {
             "deepseek"
         }
-        fn model(&self) -> &str {
+        fn model(&self) -> &'static str {
             "deepseek-v4-flash"
         }
         async fn complete(&self, _req: ChatRequest) -> Result<ChatMessage> {

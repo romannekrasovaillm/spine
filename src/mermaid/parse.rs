@@ -195,9 +195,7 @@ fn scan_edge_op(
     full: &str,
 ) -> Result<(Option<String>, bool)> {
     let mut label = None;
-    let plain = if cur.eat("-.->") {
-        false
-    } else if cur.eat("-->") {
+    let plain = if cur.eat("-.->") || cur.eat("-->") {
         false
     } else if cur.eat("---") {
         true

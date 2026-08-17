@@ -1,7 +1,7 @@
 //! Веб-доступ: поиск и фетч по доменным архитектурным знаниям.
 //!
 //! КОНТРАКТ (владелец: агент `web`):
-//! - [`search`] — DuckDuckGo HTML (`WebConfig::search_base`), парсинг результатов
+//! - [`search`] — `DuckDuckGo` HTML (`WebConfig::search_base`), парсинг результатов
 //!   (`scraper`), опциональное site:-ограничение;
 //! - [`search_arch_sites`] — поиск по кураторскому списку сайтов архитектора
 //!   (site:domain через тот же поисковик, опц. фильтр по именам сайтов);
@@ -50,7 +50,7 @@ pub struct SearchResult {
     pub snippet: String,
 }
 
-/// Поиск в вебе (DuckDuckGo HTML).
+/// Поиск в вебе (`DuckDuckGo` HTML).
 ///
 /// GET `WebConfig::search_base` с параметром `q`; пустая выдача — `Ok(vec![])`,
 /// а не ошибка.
@@ -160,11 +160,13 @@ pub async fn fetch(url: &str, cfg: &WebConfig) -> Result<String> {
 }
 
 /// Кураторский список сайтов из конфига.
+#[must_use]
 pub fn curated_sites(cfg: &WebConfig) -> &[ArchSite] {
     &cfg.arch_sites
 }
 
 /// Инструменты домена: `web_search`, `web_fetch`, `web_arch_sites`.
+#[must_use]
 pub fn tools() -> Vec<Arc<dyn Tool>> {
     vec![
         Arc::new(WebSearchTool),
@@ -201,7 +203,7 @@ async fn http_get(
     Ok(resp)
 }
 
-/// Разбирает выдачу DuckDuckGo HTML: `.result__a` (заголовок+ссылка) и
+/// Разбирает выдачу `DuckDuckGo` HTML: `.result__a` (заголовок+ссылка) и
 /// `.result__snippet` внутри контейнеров `.result`.
 fn parse_search_results(html: &str, limit: usize) -> Result<Vec<SearchResult>> {
     let document = Html::parse_document(html);
@@ -289,7 +291,11 @@ fn html_to_text(html: &str) -> Result<String> {
         // блоки (code внутри p/pre и т.п. уже учтены текстом родителя).
         let mut skip = false;
         for ancestor in el.ancestors() {
-            let Some(tag) = ancestor.value().as_element().map(|e| e.name()) else {
+            let Some(tag) = ancestor
+                .value()
+                .as_element()
+                .map(scraper::node::Element::name)
+            else {
                 continue;
             };
             if NOISE_TAGS.contains(&tag) || CONTENT_TAGS.contains(&tag) {
@@ -499,7 +505,7 @@ mod tests {
 
     #[test]
     fn parses_duckduckgo_html_results() {
-        let html = r##"
+        let html = r#"
             <html><body>
             <div class="results">
               <div class="result results_links results_links_deep web-result">
@@ -515,7 +521,7 @@ mod tests {
                 <a class="result__snippet">Visualising software architecture.</a>
               </div>
             </div>
-            </body></html>"##;
+            </body></html>"#;
         let results = parse_search_results(html, 10).expect("parse");
         assert_eq!(results.len(), 2);
         assert_eq!(results[0].url, "https://microservices.io/patterns");
@@ -532,7 +538,7 @@ mod tests {
 
     #[test]
     fn html_to_text_drops_noise_and_keeps_content() {
-        let html = r##"
+        let html = r"
         <html><head><style>.x{color:red}</style><script>track()</script></head>
         <body>
           <header><h2>Меню сайта</h2></header>
@@ -545,7 +551,7 @@ mod tests {
           </main>
           <footer><p>Подвал</p></footer>
           <aside><p>Реклама</p></aside>
-        </body></html>"##;
+        </body></html>";
         let text = html_to_text(html).expect("text");
         assert!(text.contains("Архитектура платежей"));
         assert!(text.contains("Сервис payments обрабатывает транзакции."));

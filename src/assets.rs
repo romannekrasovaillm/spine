@@ -56,7 +56,7 @@ pub const BENCH_EVENT_DRIVEN_DESIGN: &str =
     include_str!("../assets/benchmarks/event_driven_design.yaml");
 
 /// Golden-set судьи рубрик (ADR-004): синтетический ADR-образец + эталонные
-/// оценки по рубрике adr_quality; прогон — `arch bench run --golden`.
+/// оценки по рубрике `adr_quality`; прогон — `arch bench run --golden`.
 pub const GOLDEN_ADR_FULL_MD: &str = include_str!("../assets/benchmarks/golden/adr_full.md");
 /// Эталон к [`GOLDEN_ADR_FULL_MD`].
 pub const GOLDEN_ADR_FULL_EXPECTED: &str =
@@ -706,7 +706,7 @@ mod tests {
             RUBRIC_AGENTS_MD_QUALITY_YAML,
         ];
         for text in rubrics {
-            let r: crate::rubric::Rubric = serde_yaml::from_str(text).expect("рубрика парсится");
+            let r: crate::rubric::Rubric = serde_yaml_ng::from_str(text).expect("рубрика парсится");
             assert_eq!(r.scale_max, 5, "{}: scale_max != 5", r.name);
             assert_eq!(r.origin, "anchor", "{}: origin != anchor", r.name);
             assert!(!r.criteria.is_empty(), "{}: пустые критерии", r.name);
@@ -727,7 +727,7 @@ mod tests {
     #[test]
     fn solution_architecture_weights_sum_to_100() {
         let r: crate::rubric::Rubric =
-            serde_yaml::from_str(RUBRIC_SOLUTION_ARCHITECTURE).expect("parse");
+            serde_yaml_ng::from_str(RUBRIC_SOLUTION_ARCHITECTURE).expect("parse");
         assert_eq!(r.criteria.len(), 15, "критериев не 15 (матрица §C.3)");
         let sum: f64 = r.criteria.iter().map(|c| c.weight).sum();
         assert!(
@@ -744,7 +744,8 @@ mod tests {
             BENCH_EVENT_DRIVEN_DESIGN,
         ];
         for text in benches {
-            let b: crate::bench::Benchmark = serde_yaml::from_str(text).expect("бенчмарк парсится");
+            let b: crate::bench::Benchmark =
+                serde_yaml_ng::from_str(text).expect("бенчмарк парсится");
             assert!(
                 (b.pass_threshold - 3.5).abs() < f64::EPSILON,
                 "{}: порог",
@@ -768,7 +769,7 @@ mod tests {
     #[test]
     fn golden_set_pairs_parse_and_match_adr_quality_rubric() {
         let rubric: crate::rubric::Rubric =
-            serde_yaml::from_str(RUBRIC_ADR_QUALITY).expect("рубрика adr_quality");
+            serde_yaml_ng::from_str(RUBRIC_ADR_QUALITY).expect("рубрика adr_quality");
         let pairs = [
             (GOLDEN_ADR_FULL_MD, GOLDEN_ADR_FULL_EXPECTED),
             (GOLDEN_ADR_DECENT_MD, GOLDEN_ADR_DECENT_EXPECTED),
@@ -788,7 +789,7 @@ mod tests {
         for (doc, expected) in pairs {
             assert!(doc.len() > 100, "golden-документ не должен быть пустышкой");
             let exp: crate::bench::GoldenExpectation =
-                serde_yaml::from_str(expected).expect("эталон парсится");
+                serde_yaml_ng::from_str(expected).expect("эталон парсится");
             assert_eq!(exp.rubric, "adr_quality", "эталонная рубрика");
             assert_eq!(
                 exp.scores.len(),
@@ -900,7 +901,11 @@ mod tests {
                 assert!(content.contains("description:"), "{rel}: нет description");
                 skills += 1;
             }
-            if rel.ends_with(".json") && !rel.ends_with("plugin.json") {
+            if Path::new(rel)
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("json"))
+                && !rel.ends_with("plugin.json")
+            {
                 serde_json::from_str::<serde_json::Value>(content)
                     .unwrap_or_else(|_| panic!("{rel}"));
             }

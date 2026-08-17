@@ -3,6 +3,7 @@
 //! артефактов, `verify` проверяет полноту по профилю маршрута
 //! (Fast/Standard/Critical) и целостность хэшей.
 
+use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -13,7 +14,7 @@ use crate::error::{HarnessError, Result};
 /// Запись манифеста об одном артефакте.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EvidenceItem {
-    /// Ключ артефакта (spec, adr, spine, decision_a3…).
+    /// Ключ артефакта (spec, adr, spine, `decision_a3`…).
     pub key: String,
     /// Путь относительно каталога изменения.
     pub path: String,
@@ -122,12 +123,10 @@ fn find_artifact(change_dir: &Path, key: &str) -> Option<PathBuf> {
             return Some(p);
         }
         if p.is_dir() {
-            let has_md = std::fs::read_dir(&p)
-                .map(|rd| {
-                    rd.flatten()
-                        .any(|e| e.path().extension().is_some_and(|x| x == "md"))
-                })
-                .unwrap_or(false);
+            let has_md = std::fs::read_dir(&p).is_ok_and(|rd| {
+                rd.flatten()
+                    .any(|e| e.path().extension().is_some_and(|x| x == "md"))
+            });
             if has_md {
                 // Каталог (напр. docs/adr) — хэшируем сводку содержимого.
                 return Some(p);
@@ -153,7 +152,7 @@ fn hash_artifact(path: &Path) -> Result<(String, u64)> {
     for e in entries {
         if e.is_file() {
             let (h, s) = hash_file(&e)?;
-            acc.push_str(&format!("{}:{h};", e.display()));
+            let _ = write!(acc, "{}:{h};", e.display());
             size += s;
         }
     }
@@ -180,8 +179,7 @@ pub fn pack(change_dir: &Path, route: Route) -> Result<(EvidenceBundle, Evidence
                     key: key.into(),
                     path: path
                         .strip_prefix(change_dir)
-                        .map(|p| p.display().to_string())
-                        .unwrap_or_else(|_| path.display().to_string()),
+                        .map_or_else(|_| path.display().to_string(), |p| p.display().to_string()),
                     hash,
                     size,
                 });
@@ -195,7 +193,7 @@ pub fn pack(change_dir: &Path, route: Route) -> Result<(EvidenceBundle, Evidence
         items,
     };
     let manifest = change_dir.join("EVIDENCE.yaml");
-    let text = serde_yaml::to_string(&bundle)
+    let text = serde_yaml_ng::to_string(&bundle)
         .map_err(|e| HarnessError::Config(format!("сериализация EVIDENCE: {e}")))?;
     std::fs::write(&manifest, text).map_err(|e| HarnessError::io(&manifest, e))?;
     let verdict = EvidenceVerdict {
@@ -218,7 +216,7 @@ pub fn pack(change_dir: &Path, route: Route) -> Result<(EvidenceBundle, Evidence
 pub fn verify(change_dir: &Path) -> Result<EvidenceVerdict> {
     let manifest = change_dir.join("EVIDENCE.yaml");
     let text = std::fs::read_to_string(&manifest).map_err(|e| HarnessError::io(&manifest, e))?;
-    let bundle: EvidenceBundle = serde_yaml::from_str(&text)?;
+    let bundle: EvidenceBundle = serde_yaml_ng::from_str(&text)?;
     let route = match bundle.route.as_str() {
         "Standard" => Route::Standard,
         "Critical" => Route::Critical,

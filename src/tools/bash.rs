@@ -6,7 +6,7 @@
 //! ctx.cwd). Вывод: stdout+stderr + независимые маркеры исхода
 //! (`[код возврата: N]` / `[сигнал: N]` / `[таймаут: …]`); усечение до ~30 КБ.
 //!
-//! Defensive patterns (DeepSeek Harness `docs/defensive-patterns.md`):
+//! Defensive patterns (`DeepSeek` Harness `docs/defensive-patterns.md`):
 //! - **scrub окружения**: дочерний процесс получает копию env БЕЗ
 //!   секретоподобных переменных (токены имени KEY/SECRET/TOKEN/PASSWORD/…,
 //!   см. [`is_secret_env_name`]) — команда, которую написала модель, не
@@ -281,7 +281,7 @@ fn format_result(
             if let Some(code) = status.code() {
                 let _ = writeln!(content, "[код возврата: {code}]");
             } else {
-                let _ = writeln!(content, "[сигнал: {}]", signal_of(status));
+                let _ = writeln!(content, "[сигнал: {}]", signal_of(*status));
             }
             !status.success()
         }
@@ -299,7 +299,7 @@ fn format_result(
 /// Номер сигнала, которым завершился процесс (Unix); на прочих
 /// платформах — текстовая пометка без номера.
 #[cfg(unix)]
-fn signal_of(status: &std::process::ExitStatus) -> String {
+fn signal_of(status: std::process::ExitStatus) -> String {
     use std::os::unix::process::ExitStatusExt;
     status
         .signal()
@@ -308,7 +308,7 @@ fn signal_of(status: &std::process::ExitStatus) -> String {
 
 /// Заглушка для не-Unix платформ.
 #[cfg(not(unix))]
-fn signal_of(_status: &std::process::ExitStatus) -> String {
+fn signal_of(_status: std::process::ExitStatus) -> String {
     "?".to_string()
 }
 

@@ -13,14 +13,16 @@
 //! Конвертация в PNG для README — `rsvg-convert -z 2` либо headless-Chromium
 //! (см. журнал AGENTS.md). SVG остаются источником истины в репозитории.
 
+use std::fmt::Write as _;
+
 use ratatui::buffer::Buffer;
 use ratatui::style::{Color, Modifier};
 
-/// Шрифт кадра и метрики ячейки (px). DejaVu Sans Mono: advance 0.602em.
+/// Шрифт кадра и метрики ячейки (px). `DejaVu` Sans Mono: advance 0.602em.
 const FONT: &str = "DejaVu Sans Mono, Noto Color Emoji, monospace";
 /// Размер шрифта, px.
 const FONT_SIZE: f32 = 15.0;
-/// Ширина ячейки (0.602 × FONT_SIZE).
+/// Ширина ячейки (0.602 × `FONT_SIZE`).
 const CELL_W: f32 = 9.03;
 /// Высота строки.
 const ROW_H: f32 = 19.0;
@@ -34,8 +36,22 @@ const PAD_BOTTOM: f32 = 12.0;
 /// ANSI-16 в hex (стандартная xterm-палитра; тема Tokyo Night сама в Rgb,
 /// это страховка для именованных цветов ratatui).
 const ANSI16: [u32; 16] = [
-    0x000000, 0xcc0000, 0x4e9a06, 0xc4a000, 0x3465a4, 0x75507b, 0x06989a, 0xd3d7cf, //
-    0x555753, 0xef2929, 0x8ae234, 0xfce94f, 0x729fcf, 0xad7fa8, 0x34e2e2, 0xeeeeec,
+    0x0000_0000,
+    0x00cc_0000,
+    0x004e_9a06,
+    0x00c4_a000,
+    0x0034_65a4,
+    0x0075_507b,
+    0x0006_989a,
+    0x00d3_d7cf, //
+    0x0055_5753,
+    0x00ef_2929,
+    0x008a_e234,
+    0x00fc_e94f,
+    0x0072_9fcf,
+    0x00ad_7fa8,
+    0x0034_e2e2,
+    0x00ee_eeec,
 ];
 
 /// Цвет ячейки в CSS; `Reset` — None (подставляется дефолт сцены).
@@ -61,7 +77,7 @@ fn css_color(c: Color) -> Option<String> {
         Color::LightCyan => hex(ANSI16[14]),
         Color::White => hex(ANSI16[15]),
         Color::Indexed(i) => {
-            let i = i as u32;
+            let i = u32::from(i);
             let v = match i {
                 0..=15 => ANSI16[i as usize],
                 16..=231 => {
@@ -103,31 +119,36 @@ pub(crate) fn buffer_to_svg(buf: &Buffer, title: &str) -> String {
     let w = PAD_X.mul_add(2.0, CELL_W * cols as f32);
     let h = (CHROME_H + PAD_BOTTOM).mul_add(1.0, ROW_H * rows as f32 + 6.0);
     let mut svg = String::with_capacity(64 * 1024);
-    svg.push_str(&format!(
+    let _ = writeln!(
+        svg,
         "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{w:.0}\" height=\"{h:.0}\" \
-         viewBox=\"0 0 {w:.0} {h:.0}\" font-family=\"{FONT}\" font-size=\"{FONT_SIZE}\">\n"
-    ));
+         viewBox=\"0 0 {w:.0} {h:.0}\" font-family=\"{FONT}\" font-size=\"{FONT_SIZE}\">"
+    );
     // Окно: фон + тонкая рамка + хром.
     svg.push_str("<rect width=\"100%\" height=\"100%\" rx=\"10\" fill=\"#1a1b26\"/>\n");
-    svg.push_str(&format!(
-        "<rect x=\"0.5\" y=\"0.5\" width=\"{:.0}\" height=\"{:.0}\" rx=\"10\" fill=\"none\" stroke=\"#3b4261\"/>\n",
+    let _ = writeln!(
+        svg,
+        "<rect x=\"0.5\" y=\"0.5\" width=\"{:.0}\" height=\"{:.0}\" rx=\"10\" fill=\"none\" stroke=\"#3b4261\"/>",
         w - 1.0,
         h - 1.0
-    ));
+    );
     for (i, c) in ["#f7768e", "#e0af68", "#9ece6a"].iter().enumerate() {
-        svg.push_str(&format!(
-            "<circle cx=\"{:.0}\" cy=\"13\" r=\"5\" fill=\"{c}\"/>\n",
+        let _ = writeln!(
+            svg,
+            "<circle cx=\"{:.0}\" cy=\"13\" r=\"5\" fill=\"{c}\"/>",
             20.0 + i as f32 * 16.0
-        ));
+        );
     }
-    svg.push_str(&format!(
-        "<text x=\"{:.0}\" y=\"17\" fill=\"#565f89\" text-anchor=\"middle\">{}</text>\n",
+    let _ = writeln!(
+        svg,
+        "<text x=\"{:.0}\" y=\"17\" fill=\"#565f89\" text-anchor=\"middle\">{}</text>",
         w / 2.0,
         esc(title)
-    ));
-    svg.push_str(&format!(
-        "<line x1=\"0\" y1=\"{CHROME_H}\" x2=\"{w:.0}\" y2=\"{CHROME_H}\" stroke=\"#3b4261\"/>\n"
-    ));
+    );
+    let _ = writeln!(
+        svg,
+        "<line x1=\"0\" y1=\"{CHROME_H}\" x2=\"{w:.0}\" y2=\"{CHROME_H}\" stroke=\"#3b4261\"/>"
+    );
 
     // Ячейки: прогоны одинакового стиля → rect (фон) + text (глифы).
     let mut y_px = CHROME_H + ROW_H * 0.78 + 3.0;
@@ -169,15 +190,16 @@ pub(crate) fn buffer_to_svg(buf: &Buffer, title: &str) -> String {
             // Фон рисуем по ПОЛНОЙ ширине прогона (пробелы в конце — тоже фон).
             if let Some(bg) = &run.bg {
                 let rw = CELL_W * run.text.chars().count() as f32;
-                out_runs.push_str(&format!(
+                let _ = write!(
+                    out_runs,
                     "<rect x=\"{x:.1}\" y=\"{:.1}\" width=\"{rw:.1}\" height=\"{ROW_H}\" fill=\"{bg}\"/>",
                     y_px - ROW_H * 0.78
-                ));
+                );
             }
             if !text.is_empty() {
                 let mut style = String::new();
                 if let Some(fg) = &run.fg {
-                    style.push_str(&format!(" fill=\"{fg}\""));
+                    let _ = write!(style, " fill=\"{fg}\"");
                 }
                 if run.bold {
                     style.push_str(" font-weight=\"700\"");
@@ -185,10 +207,11 @@ pub(crate) fn buffer_to_svg(buf: &Buffer, title: &str) -> String {
                 if run.dim {
                     style.push_str(" opacity=\"0.72\"");
                 }
-                out_runs.push_str(&format!(
+                let _ = write!(
+                    out_runs,
                     "<text x=\"{x:.1}\" y=\"{y_px:.1}\" xml:space=\"preserve\"{style}>{}</text>",
                     esc(text)
-                ));
+                );
             }
         }
         // Дефолтный фон строки не рисуем — окно уже #1a1b26.
@@ -211,7 +234,7 @@ mod tests {
 
     use super::*;
 
-    /// Снимок `App` в SVG: рендер в TestBackend заданного размера.
+    /// Снимок `App` в SVG: рендер в `TestBackend` заданного размера.
     fn snap(app: &mut crate::tui::app::App, w: u16, h: u16, title: &str) -> String {
         let mut terminal = Terminal::new(TestBackend::new(w, h)).expect("terminal");
         terminal.draw(|f| app.render(f)).expect("draw");
@@ -602,10 +625,10 @@ mod tests {
                  epic-context ~1 028 токенов · план отката в каждом TASK.md"
                 .into(),
         });
-        for (wt, modname, tests, secs) in [
-            ("p01-amount", "validate_amount", 5, 104),
-            ("p08-tax", "vat", 4, 190),
-            ("p10-summary", "summarize", 4, 191),
+        for (wt, tests, secs) in [
+            ("p01-amount", 5, 104),
+            ("p08-tax", 4, 190),
+            ("p10-summary", 4, 191),
         ] {
             app.push_block(ChatBlock::Tool {
                 name: "harness_run".into(),

@@ -4,7 +4,7 @@
 //! - [`Benchmark`] — YAML-сценарий: имя, описание, постановка задачи
 //!   (system+user промпты), ссылка на рубрику оценки, проходной порог;
 //! - [`run`] — прогон сценария на модели, оценка ответа рубрикой
-//!   ([`crate::rubric::evaluate_with_options`]), запись отчёта в out_dir (md+json);
+//!   ([`crate::rubric::evaluate_with_options`]), запись отчёта в `out_dir` (md+json);
 //! - golden-set (`assets/benchmarks/golden/`): синтетические документы
 //!   `<имя>.md` + эталонные оценки `<имя>.expected.yaml` ([`GoldenExpectation`]);
 //!   [`run_golden`] — прогон судьи по набору, согласие с эталоном — MAE
@@ -33,7 +33,7 @@ pub struct Benchmark {
     pub task: String,
     /// Файл рубрики (относительно assets/rubrics или абсолютный).
     pub rubric: String,
-    /// Проходной взвешенный порог (0..=scale_max).
+    /// Проходной взвешенный порог (`0..=scale_max`).
     pub pass_threshold: f64,
     /// Теги (integration, adr, nfr, brownfield, …).
     #[serde(default)]
@@ -73,7 +73,7 @@ pub struct BenchReport {
 pub struct GoldenExpectation {
     /// Имя рубрики: файл в assets/rubrics (расширение `.yaml` опционально).
     pub rubric: String,
-    /// Ожидаемые баллы по критериям (id → 1..=scale_max).
+    /// Ожидаемые баллы по критериям (id → `1..=scale_max`).
     pub scores: BTreeMap<String, u8>,
 }
 
@@ -107,7 +107,7 @@ pub struct GoldenReport {
 /// Файл не читается / не валиден.
 pub fn load(path: &Path) -> Result<Benchmark> {
     let text = std::fs::read_to_string(path).map_err(|e| HarnessError::io(path, e))?;
-    let bench: Benchmark = serde_yaml::from_str(&text)?;
+    let bench: Benchmark = serde_yaml_ng::from_str(&text)?;
     Ok(bench)
 }
 
@@ -141,7 +141,7 @@ pub fn list(dir: &Path) -> Result<Vec<BenchSummary>> {
     Ok(out)
 }
 
-/// Прогоняет бенчмарк на модели и оценивает рубрикой; пишет отчёты в out_dir.
+/// Прогоняет бенчмарк на модели и оценивает рубрикой; пишет отчёты в `out_dir`.
 ///
 /// Ответ модели оценивается тем же провайдером (судья = испытуемая модель),
 /// с настройками судьи `judge` (k сэмплов, верификация цитат — ADR-004).
@@ -200,7 +200,7 @@ pub async fn run(
     Ok(report)
 }
 
-/// Загружает golden-set каталога: пары «`<имя>.md` + `<имя>.expected.yaml».
+/// Загружает golden-set каталога: пары «`<имя>.md` + `<имя>.expected.yaml`».
 ///
 /// В отличие от [`list`], битый эталон — ошибка, а не пропуск: молчаливо
 /// потерянный документ завышал бы измеренное согласие судьи с эталоном.
@@ -220,7 +220,7 @@ pub fn load_golden(dir: &Path) -> Result<Vec<(PathBuf, GoldenExpectation)>> {
             continue;
         };
         let text = std::fs::read_to_string(&path).map_err(|e| HarnessError::io(&path, e))?;
-        let expectation: GoldenExpectation = serde_yaml::from_str(&text)
+        let expectation: GoldenExpectation = serde_yaml_ng::from_str(&text)
             .map_err(|e| HarnessError::Bench(format!("{}: разбор эталона: {e}", path.display())))?;
         if expectation.scores.is_empty() {
             return Err(HarnessError::Bench(format!(
@@ -335,6 +335,7 @@ pub async fn run_golden(
 }
 
 /// Средняя абсолютная ошибка по парам (факт, эталон); пустой вход — `None`.
+#[must_use]
 pub fn mean_absolute_error(pairs: &[(f64, f64)]) -> Option<f64> {
     if pairs.is_empty() {
         return None;
@@ -435,10 +436,10 @@ tags:
 
     #[async_trait]
     impl LlmProvider for FakeLlm {
-        fn name(&self) -> &str {
+        fn name(&self) -> &'static str {
             "fake"
         }
-        fn model(&self) -> &str {
+        fn model(&self) -> &'static str {
             "fake-model"
         }
         async fn complete(&self, req: ChatRequest) -> Result<ChatMessage> {
@@ -457,9 +458,9 @@ tags:
 
     #[test]
     fn benchmark_yaml_roundtrip() {
-        let bench: Benchmark = serde_yaml::from_str(BENCH_YAML).expect("parse");
-        let yaml = serde_yaml::to_string(&bench).expect("serialize");
-        let back: Benchmark = serde_yaml::from_str(&yaml).expect("reparse");
+        let bench: Benchmark = serde_yaml_ng::from_str(BENCH_YAML).expect("parse");
+        let yaml = serde_yaml_ng::to_string(&bench).expect("serialize");
+        let back: Benchmark = serde_yaml_ng::from_str(&yaml).expect("reparse");
         assert_eq!(back.name, "adr-basic");
         assert_eq!(back.system_prompt, "Ты solution-архитектор.");
         assert_eq!(back.rubric, "core.yaml");
@@ -495,7 +496,7 @@ tags:
         let rubrics = dir.path().join("rubrics");
         std::fs::create_dir_all(&rubrics).expect("mkdir");
         std::fs::write(rubrics.join("core.yaml"), RUBRIC_YAML).expect("write rubric");
-        let bench: Benchmark = serde_yaml::from_str(BENCH_YAML).expect("bench");
+        let bench: Benchmark = serde_yaml_ng::from_str(BENCH_YAML).expect("bench");
         let llm = FakeLlm {
             answer: "ADR-001: мигрируем платёжный шлюз. Контекст: вендор уходит. \
                      Риски: двойная запись, откат."
@@ -596,10 +597,10 @@ tags:
 
     #[async_trait]
     impl LlmProvider for QueueLlm {
-        fn name(&self) -> &str {
+        fn name(&self) -> &'static str {
             "fake"
         }
-        fn model(&self) -> &str {
+        fn model(&self) -> &'static str {
             "fake-queue"
         }
         async fn complete(&self, _req: ChatRequest) -> Result<ChatMessage> {

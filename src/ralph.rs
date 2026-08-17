@@ -1,10 +1,10 @@
 //! Ralph-цикл: итеративная работа к неизменной цели свежими агентами.
 //!
-//! Идея — DeepSeek Harness (`docs/glossary.md`, «Ralph loop»): раунд —
+//! Идея — `DeepSeek` Harness (`docs/glossary.md`, «Ralph loop»): раунд —
 //! СВЕЖАЯ дочерняя сессия без родительского и предшественного контекста;
 //! междураундное состояние несут общий workspace (файлы рабочего каталога)
 //! и один ограниченный структурированный handoff (status/summary/evidence/
-//! next_steps/blockers). Свежесть контекста — главное свойство: цикл не
+//! `next_steps/blockers`). Свежесть контекста — главное свойство: цикл не
 //! деградирует от накопленной истории и дёшев по токенам.
 //!
 //! КОНТРАКТ (владелец: агент `subagent`):
@@ -295,6 +295,7 @@ pub(crate) fn launch_ralph(
 }
 
 /// Инструменты домена: `ralph_run`.
+#[must_use]
 pub fn tools(cfg: &Config) -> Vec<Arc<dyn Tool>> {
     vec![Arc::new(RalphRunTool {
         dirs: cfg.plugins.dirs.clone(),
@@ -374,23 +375,20 @@ impl Tool for RalphRunTool {
             .unwrap_or("general");
         let spec = if agent == "general" {
             general_spec()
+        } else if let Some(s) = available_specs(&self.dirs)
+            .into_iter()
+            .find(|s| s.name == agent)
+        {
+            s
         } else {
-            match available_specs(&self.dirs)
-                .into_iter()
-                .find(|s| s.name == agent)
-            {
-                Some(s) => s,
-                None => {
-                    let available = available_specs(&self.dirs)
-                        .iter()
-                        .map(|s| format!("{} [{}]", s.name, s.plugin))
-                        .collect::<Vec<_>>()
-                        .join(", ");
-                    return Ok(ToolOutput::err(format!(
-                        "субагент '{agent}' не найден. Доступные: general, {available}"
-                    )));
-                }
-            }
+            let available = available_specs(&self.dirs)
+                .iter()
+                .map(|s| format!("{} [{}]", s.name, s.plugin))
+                .collect::<Vec<_>>()
+                .join(", ");
+            return Ok(ToolOutput::err(format!(
+                "субагент '{agent}' не найден. Доступные: general, {available}"
+            )));
         };
         let Some(provider) = ctx
             .provider
@@ -484,10 +482,10 @@ mod tests {
 
     #[async_trait]
     impl LlmProvider for ScriptLlm {
-        fn name(&self) -> &str {
+        fn name(&self) -> &'static str {
             "script"
         }
-        fn model(&self) -> &str {
+        fn model(&self) -> &'static str {
             "script-1"
         }
         async fn complete(&self, _req: ChatRequest) -> Result<ChatMessage> {

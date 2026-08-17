@@ -18,7 +18,8 @@ pub mod ask;
 pub mod bash;
 pub mod fs;
 
-/// Реестр ядерных инструментов: bash, файлы, glob/grep, propose_options.
+/// Реестр ядерных инструментов: bash, файлы, glob/grep, `propose_options`.
+#[must_use]
 pub fn core_registry() -> ToolRegistry {
     ToolRegistry::new()
         .with(Arc::new(bash::BashTool))
@@ -32,6 +33,7 @@ pub fn core_registry() -> ToolRegistry {
 
 /// Полный реестр: ядро + специализированные инструменты архитектора.
 /// Политика автономии — из `Config::policy` (R-уровни).
+#[must_use]
 pub fn full_registry(cfg: &Config) -> ToolRegistry {
     let mut reg = core_registry();
     for tool in domain_tools(cfg) {

@@ -27,6 +27,7 @@ pub struct Clipboard {
 
 impl Clipboard {
     /// Пустой держатель; соединение с сервером откроется при первом `copy`.
+    #[must_use]
     pub fn new() -> Self {
         Self { inner: None }
     }

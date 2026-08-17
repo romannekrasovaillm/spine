@@ -2,8 +2,8 @@
 //! библиотека промптов, append-only журнал сессии (memlog-паттерн).
 //!
 //! КОНТРАКТ (владелец: агент `agent`):
-//! - [`AgentSession`] — цикл: user → (LLM → tool_calls → ToolRegistry::dispatch
-//!   → tool_result)* → финальный текст; лимит итераций из `AgentConfig`,
+//! - [`AgentSession`] — цикл: user → (LLM → `tool_calls` → `ToolRegistry::dispatch`
+//!   → `tool_result`)* → финальный текст; лимит итераций из `AgentConfig`,
 //!   при исчерпании — финальный ответ без инструментов (не ошибка);
 //!   бюджет контекста: грубая оценка токенов ([`ChatMessage::rough_tokens`]),
 //!   при переполнении — склейка старых tool-результатов (усечение) с пометкой;
@@ -28,10 +28,6 @@ use crate::tool::{ToolContext, ToolOutput, ToolRegistry};
 pub mod prompts;
 pub mod slash;
 
-/// Таймаут одного вызова инструмента по умолчанию, секунды (per-tool
-/// значения — `Tool::timeout_secs`; эта константа — фолбэк для снятого
-/// из реестра инструмента).
-const TOOL_TIMEOUT_SECS: u64 = crate::tool::DEFAULT_TOOL_TIMEOUT_SECS;
 /// Таймаут интерактивного вопроса пользователю (`propose_options`): человеку
 /// на архитектурное решение нужно больше пяти минут — час, не 300 секунд.
 const ASK_TIMEOUT_SECS: u64 = 3600;
@@ -73,7 +69,7 @@ pub enum AgentEvent {
     /// Служебная заметка (детекторы циклов, компактификация, хуки).
     Note(String),
     /// Текущая оценка токенов истории — живое обновление индикатора
-    /// контекста в UI по ходу длинного хода (не дожидаясь TurnFinished).
+    /// контекста в UI по ходу длинного хода (не дожидаясь `TurnFinished`).
     ContextUsage(usize),
     /// Ход завершён.
     TurnDone,
@@ -324,29 +320,28 @@ impl AgentSession {
                 if let Some(note) = note {
                     self.emit_note(&events, note.text);
                 }
-                let out = match verdict {
-                    Some(text) => ToolOutput::err(text),
-                    None => {
-                        // Интерактивный выбор (propose_options) ждёт человека —
-                        // ему расширенный таймаут; остальным — per-tool таймаут
-                        // из реестра (harness_run — до 7200 с + запас; раньше
-                        // все сидели на жёстких 300 с и длинные прогоны
-                        // кодовых харнессов обрывались агентным циклом).
-                        let wait = if call.name == crate::tools::ask::PROPOSE_OPTIONS {
-                            ASK_TIMEOUT_SECS
-                        } else {
-                            self.tools.timeout_secs(&call.name)
-                        };
-                        match tokio::time::timeout(
-                            Duration::from_secs(wait),
-                            self.tools
-                                .dispatch(&call.name, call.arguments.clone(), &self.tool_ctx),
-                        )
-                        .await
-                        {
-                            Ok(out) => out,
-                            Err(_) => ToolOutput::err(format!("{}: таймаут {}с", call.name, wait)),
-                        }
+                let out = if let Some(text) = verdict {
+                    ToolOutput::err(text)
+                } else {
+                    // Интерактивный выбор (propose_options) ждёт человека —
+                    // ему расширенный таймаут; остальным — per-tool таймаут
+                    // из реестра (harness_run — до 7200 с + запас; раньше
+                    // все сидели на жёстких 300 с и длинные прогоны
+                    // кодовых харнессов обрывались агентным циклом).
+                    let wait = if call.name == crate::tools::ask::PROPOSE_OPTIONS {
+                        ASK_TIMEOUT_SECS
+                    } else {
+                        self.tools.timeout_secs(&call.name)
+                    };
+                    match tokio::time::timeout(
+                        Duration::from_secs(wait),
+                        self.tools
+                            .dispatch(&call.name, call.arguments.clone(), &self.tool_ctx),
+                    )
+                    .await
+                    {
+                        Ok(out) => out,
+                        Err(_) => ToolOutput::err(format!("{}: таймаут {}с", call.name, wait)),
                     }
                 };
                 // Редакция секретов до событий/истории/журнала: вывод
@@ -642,7 +637,7 @@ impl AgentSession {
     /// Восстанавливает историю диалога из журнала прошлой сессии (JSONL).
     ///
     /// Переносятся сообщения user/assistant (тексты); вызовы инструментов
-    /// прошлой сессии в историю не попадают (orphan tool_calls недопустимы
+    /// прошлой сессии в историю не попадают (orphan `tool_calls` недопустимы
     /// для API), но остаются в файле журнала. Возвращает число
     /// восстановленных сообщений.
     ///
@@ -691,7 +686,7 @@ impl AgentSession {
     }
 
     /// Собирает запрос к модели: системный промпт + история, инструменты,
-    /// max_tokens/temperature из `ModelConfig` активного провайдера.
+    /// `max_tokens/temperature` из `ModelConfig` активного провайдера.
     fn build_request(&self) -> ChatRequest {
         let mut messages = Vec::with_capacity(self.history.len() + 1);
         messages.push(ChatMessage::system(self.system_prompt.clone()));
@@ -750,7 +745,7 @@ impl AgentSession {
     }
 
     /// L1: маскирование старых tool-результатов (усечение до
-    /// [`COMPACT_TOOL_CHARS`] с пометкой, кроме [`COMPACT_KEEP_TOOL']
+    /// [`COMPACT_TOOL_CHARS`] с пометкой, кроме [`COMPACT_KEEP_TOOL`]
     /// последних). Возвращает число усечённых сообщений.
     fn mask_old_tool_results(&mut self) -> usize {
         let tool_idx: Vec<usize> = self
@@ -813,6 +808,7 @@ impl AgentSession {
     ///   истории до последнего user-сообщения ([`Self::l3_summarize`]);
     ///   если после L3 итог всё равно выше порога — `l3_futile` отключает
     ///   дальнейшие попытки (иначе каждый ход жёг бы API впустую).
+    ///
     /// Факт компактификации пишется в журнал.
     async fn compact_history(&mut self, events: &Option<mpsc::Sender<AgentEvent>>) {
         let budget = self.effective_context_budget();
@@ -882,7 +878,7 @@ impl AgentSession {
 
     /// L3: сворачивает историю ДО последнего user-сообщения в одно
     /// assistant-сообщение с саммари (граница по user никогда не разрывает
-    /// пары tool_call/tool_result). Возвращает число свёрнутых сообщений
+    /// пары `tool_call/tool_result`). Возвращает число свёрнутых сообщений
     /// (0 — сворачивать нечего).
     ///
     /// # Errors
@@ -965,7 +961,7 @@ impl AgentSession {
     }
 }
 
-/// Завершение сессии: хук SessionEnd (аудит/нотификации в корпоративном
+/// Завершение сессии: хук `SessionEnd` (аудит/нотификации в корпоративном
 /// контуре). Журнал к этому моменту ещё открыт — событие фиксируется.
 impl Drop for AgentSession {
     fn drop(&mut self) {
@@ -1011,7 +1007,7 @@ fn open_journal(dir: &Path) -> Result<(PathBuf, std::fs::File)> {
             .open(&path)
         {
             Ok(file) => return Ok((path, file)),
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
             Err(e) => return Err(HarnessError::io(&path, e)),
         }
     }
@@ -1043,7 +1039,7 @@ fn truncate_chars(text: &str, max: usize) -> String {
 
 /// Вердикт-заглушка для вызова с битыми аргументами: `parse_arguments`
 /// возвращает [`Value::String`] только при невалидном JSON — то есть ответ
-/// модели обрезался на середине аргументов (потолок max_tokens либо обрыв
+/// модели обрезался на середине аргументов (потолок `max_tokens` либо обрыв
 /// потока в сети/прокси). Исполнять половину heredoc'а опаснее, чем
 /// отказать: возвращаем модели точную причину и стратегию восстановления
 /// (чанкованная запись), иначе она повторяет гигантский вызов по кругу.
@@ -1093,6 +1089,7 @@ pub struct SessionLogInfo {
 }
 
 /// Список журналов сессий каталога (новые первыми).
+#[must_use]
 pub fn list_session_logs(dir: &Path) -> Vec<SessionLogInfo> {
     let mut out = Vec::new();
     let Ok(rd) = std::fs::read_dir(dir) else {
@@ -1100,13 +1097,10 @@ pub fn list_session_logs(dir: &Path) -> Vec<SessionLogInfo> {
     };
     for entry in rd.flatten() {
         let path = entry.path();
-        let is_log = path
-            .file_name()
-            .map(|n| {
-                let n = n.to_string_lossy();
-                n.starts_with("session-") && n.ends_with(".jsonl")
-            })
-            .unwrap_or(false);
+        let is_log = path.file_name().is_some_and(|n| {
+            let n = n.to_string_lossy();
+            n.starts_with("session-") && n.ends_with(".jsonl")
+        });
         if !is_log {
             continue;
         }
@@ -1172,10 +1166,10 @@ mod tests {
 
     #[async_trait::async_trait]
     impl LlmProvider for FakeLlm {
-        fn name(&self) -> &str {
+        fn name(&self) -> &'static str {
             "fake"
         }
-        fn model(&self) -> &str {
+        fn model(&self) -> &'static str {
             "fake-1"
         }
         async fn complete(&self, _req: ChatRequest) -> Result<ChatMessage> {
@@ -1201,10 +1195,10 @@ mod tests {
 
     #[async_trait::async_trait]
     impl LlmProvider for LoopLlm {
-        fn name(&self) -> &str {
+        fn name(&self) -> &'static str {
             "loop"
         }
-        fn model(&self) -> &str {
+        fn model(&self) -> &'static str {
             "loop-1"
         }
         async fn complete(&self, _req: ChatRequest) -> Result<ChatMessage> {
@@ -1238,7 +1232,7 @@ mod tests {
         }
     }
 
-    /// Инструмент с объёмным выводом (> TOOL_RESULT_MAX_CHARS) — как большой
+    /// Инструмент с объёмным выводом (> `TOOL_RESULT_MAX_CHARS`) — как большой
     /// mermaid-рендер.
     #[derive(Debug)]
     struct BigTool;
@@ -1263,10 +1257,10 @@ mod tests {
 
     #[async_trait::async_trait]
     impl LlmProvider for BigLlm {
-        fn name(&self) -> &str {
+        fn name(&self) -> &'static str {
             "big-llm"
         }
-        fn model(&self) -> &str {
+        fn model(&self) -> &'static str {
             "big-1"
         }
         async fn complete(&self, req: ChatRequest) -> Result<ChatMessage> {
@@ -1321,7 +1315,7 @@ mod tests {
     }
 
     /// Провайдер с обрезанным ответом: tool-вызов с битыми аргументами
-    /// (фолбэк parse_arguments → Value::String) и finish_reason=length.
+    /// (фолбэк `parse_arguments` → `Value::String`) и `finish_reason=length`.
     #[derive(Debug)]
     struct BrokenArgsLlm {
         calls: AtomicUsize,
@@ -1329,10 +1323,10 @@ mod tests {
 
     #[async_trait::async_trait]
     impl LlmProvider for BrokenArgsLlm {
-        fn name(&self) -> &str {
+        fn name(&self) -> &'static str {
             "broken"
         }
-        fn model(&self) -> &str {
+        fn model(&self) -> &'static str {
             "broken-1"
         }
         async fn complete(&self, _req: ChatRequest) -> Result<ChatMessage> {
@@ -1571,10 +1565,10 @@ mod tests {
 
     #[async_trait::async_trait]
     impl LlmProvider for LoopThenAnswerLlm {
-        fn name(&self) -> &str {
+        fn name(&self) -> &'static str {
             "loop-answer"
         }
-        fn model(&self) -> &str {
+        fn model(&self) -> &'static str {
             "loop-answer-1"
         }
         async fn complete(&self, req: ChatRequest) -> Result<ChatMessage> {
@@ -1650,10 +1644,10 @@ mod tests {
         struct SecretLlm;
         #[async_trait::async_trait]
         impl LlmProvider for SecretLlm {
-            fn name(&self) -> &str {
+            fn name(&self) -> &'static str {
                 "secret"
             }
-            fn model(&self) -> &str {
+            fn model(&self) -> &'static str {
                 "sec-1"
             }
             async fn complete(&self, req: ChatRequest) -> Result<ChatMessage> {
@@ -1730,10 +1724,10 @@ mod tests {
 
     #[async_trait::async_trait]
     impl LlmProvider for SumLlm {
-        fn name(&self) -> &str {
+        fn name(&self) -> &'static str {
             "sum"
         }
-        fn model(&self) -> &str {
+        fn model(&self) -> &'static str {
             "sum-1"
         }
         async fn complete(&self, _req: ChatRequest) -> Result<ChatMessage> {
@@ -1752,10 +1746,10 @@ mod tests {
 
     #[async_trait::async_trait]
     impl LlmProvider for OverflowLlm {
-        fn name(&self) -> &str {
+        fn name(&self) -> &'static str {
             "overflow"
         }
-        fn model(&self) -> &str {
+        fn model(&self) -> &'static str {
             "ovf-1"
         }
         async fn complete(&self, _req: ChatRequest) -> Result<ChatMessage> {
@@ -1871,22 +1865,22 @@ mod tests {
 
     #[tokio::test]
     async fn overflow_without_foldable_history_returns_error() {
-        let tmp = tempfile::tempdir().expect("tempdir");
         // Провайдер всегда отвечает 413: сворачивать нечего (user первый).
         #[derive(Debug)]
         struct AlwaysOverflow;
         #[async_trait::async_trait]
         impl LlmProvider for AlwaysOverflow {
-            fn name(&self) -> &str {
+            fn name(&self) -> &'static str {
                 "ao"
             }
-            fn model(&self) -> &str {
+            fn model(&self) -> &'static str {
                 "ao-1"
             }
             async fn complete(&self, _req: ChatRequest) -> Result<ChatMessage> {
                 Err(HarnessError::Llm("test: HTTP 413".into()))
             }
         }
+        let tmp = tempfile::tempdir().expect("tempdir");
         let mut s = make_session(tmp.path(), Arc::new(AlwaysOverflow), |_| {});
         let err = s
             .send("первое сообщение", None)
@@ -1954,11 +1948,9 @@ mod tests {
 
         let path = s.log_path().expect("журнал открыт").to_path_buf();
         let text = std::fs::read_to_string(path).expect("read journal");
-        let has_clear = text.lines().any(|line| {
-            serde_json::from_str::<Value>(line)
-                .map(|v| v["event"] == "clear")
-                .unwrap_or(false)
-        });
+        let has_clear = text
+            .lines()
+            .any(|line| serde_json::from_str::<Value>(line).is_ok_and(|v| v["event"] == "clear"));
         assert!(has_clear, "в журнале должно быть событие clear");
     }
 

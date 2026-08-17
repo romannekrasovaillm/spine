@@ -10,7 +10,7 @@ use crate::agent::slash;
 use super::theme::Theme;
 
 /// Разбирает текст в markdown-lite линии: заголовки `#`..`####`, код-блоки
-/// ```` ``` ``, буллеты `- `/`* `, инлайн `**жирный**`.
+/// `` ``` ``, буллеты `- `/`* `, инлайн `**жирный**`.
 pub(crate) fn markdown_lines(text: &str, theme: &Theme) -> Vec<Line<'static>> {
     let base = theme.base();
     let mut out = Vec::new();

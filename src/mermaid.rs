@@ -54,6 +54,7 @@ pub enum DiagramKind {
 ///
 /// Пустые строки и строки-комментарии `%%` пропускаются; заголовком считается
 /// первая содержательная строка.
+#[must_use]
 pub fn diagram_kind(input: &str) -> DiagramKind {
     for line in input.lines() {
         let t = line.trim();
@@ -122,6 +123,7 @@ pub fn render(input: &str) -> Result<String> {
 }
 
 /// Инструменты домена: `mermaid_render` (code → ascii-арт).
+#[must_use]
 pub fn tools() -> Vec<Arc<dyn Tool>> {
     vec![Arc::new(MermaidRenderTool)]
 }

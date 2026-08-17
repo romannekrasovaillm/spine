@@ -25,7 +25,7 @@ pub struct Config {
     pub knowledge: KnowledgeConfig,
     /// Веб-доступ (поиск, фетч, кураторский список архитектурных сайтов).
     pub web: WebConfig,
-    /// Адаптеры кодовых харнессов (Claude Code, Qwen Code, OpenClaw, …).
+    /// Адаптеры кодовых харнессов (Claude Code, Qwen Code, `OpenClaw`, …).
     pub harnesses: BTreeMap<String, CodingHarnessConfig>,
     /// Настройки MCP.
     pub mcp: McpSettings,
@@ -73,12 +73,12 @@ pub struct ModelConfig {
     /// Бюджет тишины (сек): ожидание заголовков и пауза между чанками стрима.
     pub timeout_secs: u64,
     /// Окно контекста модели в токенах (если задано): автоматическая
-    /// компактификация работает от min(agent.context_budget_tokens, этого
+    /// компактификация работает от `min(agent.context_budget_tokens`, этого
     /// окна) — пороги `compact_l1_pct`/`compact_l3_pct` (70%/95%) привязаны
     /// к реальному пределу API, а не к статичному бюджету.
     pub context_limit: Option<usize>,
     /// JSON-объект, сливаемый в тело запроса при включённом ризонинге
-    /// (`/think on`): напр. `{"thinking": {"type": "enabled"}}` (DeepSeek V4,
+    /// (`/think on`): напр. `{"thinking": {"type": "enabled"}}` (`DeepSeek` V4,
     /// GLM-4.x) или `{"reasoning_effort": "max"}` (Kimi K3).
     /// None — переключение ризонинга для модели не настроено.
     pub thinking_on: Option<serde_json::Map<String, serde_json::Value>>,
@@ -106,6 +106,9 @@ impl Default for ModelConfig {
 
 impl ModelConfig {
     /// Читает API-ключ из переменной окружения (содержимое не логируется).
+    ///
+    /// # Errors
+    /// Переменная окружения `api_key_env` не установлена.
     pub fn api_key(&self) -> Result<String> {
         std::env::var(&self.api_key_env).map_err(|_| {
             HarnessError::Config(format!(
@@ -188,7 +191,7 @@ pub struct ArchSite {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct WebConfig {
-    /// Endpoint поиска (DuckDuckGo HTML).
+    /// Endpoint поиска (`DuckDuckGo` HTML).
     pub search_base: String,
     /// User-Agent для запросов.
     pub user_agent: String,
@@ -297,13 +300,13 @@ pub enum PromptMode {
     Stdin,
 }
 
-/// Адаптер кодового харнесса (Claude Code, Qwen Code, OpenClaw, Hermes, Theseus, CodeWhale).
+/// Адаптер кодового харнесса (Claude Code, Qwen Code, `OpenClaw`, Hermes, Theseus, `CodeWhale`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct CodingHarnessConfig {
     /// Имя бинаря в PATH.
     pub binary: String,
-    /// Дополнительные аргументы (плейсхолдер `{prompt}` подставляется при PromptMode::Flag).
+    /// Дополнительные аргументы (плейсхолдер `{prompt}` подставляется при `PromptMode::Flag`).
     pub args: Vec<String>,
     /// Режим передачи промпта.
     pub prompt_mode: PromptMode,
@@ -383,7 +386,7 @@ pub struct PluginsConfig {
     pub include_mcp: bool,
     /// Исполнять хуки плагинов (`hooks/hooks.json`): shell-команды из
     /// установленных плагинов — включайте только для доверенных библиотек.
-    /// Дефолт `true` (как у include_mcp).
+    /// Дефолт `true` (как у `include_mcp`).
     pub include_hooks: bool,
 }
 
@@ -403,11 +406,11 @@ impl Default for PluginsConfig {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct HooksConfig {
-    /// Спецификации хуков: `[[hooks.specs]]` с event/tool/command/timeout_secs.
+    /// Спецификации хуков: `[[hooks.specs]]` с `event/tool/command/timeout_secs`.
     pub specs: Vec<crate::hooks::HookSpec>,
 }
 
-/// Изоляция окружения bash-команд (defensive pattern DeepSeek Harness:
+/// Изоляция окружения bash-команд (defensive pattern `DeepSeek` Harness:
 /// «никогда не давай недоверенному выводу ambient-окружение»).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -525,27 +528,30 @@ impl Default for PathsConfig {
 
 impl PathsConfig {
     /// Каталог библиотеки промптов.
+    #[must_use]
     pub fn prompts_dir(&self) -> PathBuf {
         self.assets_dir.join("prompts")
     }
 
     /// Каталог якорных рубрик.
+    #[must_use]
     pub fn rubrics_dir(&self) -> PathBuf {
         self.assets_dir.join("rubrics")
     }
 
     /// Каталог бенчмарков.
+    #[must_use]
     pub fn benchmarks_dir(&self) -> PathBuf {
         self.assets_dir.join("benchmarks")
     }
 }
 
+/// JSON-карта параметра ризонинга (`thinking: {type: ...}`) для тела запроса.
+type ThinkingMap = Option<serde_json::Map<String, serde_json::Value>>;
+
 /// Карты ризонинга в стиле `thinking: {type: enabled/disabled}`
-/// (DeepSeek V4, GLM-4.x/5.x): возвращает (on, off).
-fn thinking_type_maps() -> (
-    Option<serde_json::Map<String, serde_json::Value>>,
-    Option<serde_json::Map<String, serde_json::Value>>,
-) {
+/// (`DeepSeek` V4, GLM-4.x/5.x): возвращает (on, off).
+fn thinking_type_maps() -> (ThinkingMap, ThinkingMap) {
     let make = |kind: &str| {
         let mut inner = serde_json::Map::new();
         inner.insert("type".into(), kind.into());
@@ -698,6 +704,7 @@ impl Config {
     }
 
     /// Каталог конфигурации (`~/.config/arch-harness`).
+    #[must_use]
     pub fn config_dir() -> PathBuf {
         dirs::config_dir()
             .unwrap_or_else(|| PathBuf::from("."))
@@ -749,7 +756,7 @@ impl Config {
     /// Подставляет `~` в начале путей (toml не раскрывает тильду).
     fn expand_tildes(&mut self) {
         let expand = |p: &mut PathBuf| {
-            if let Ok(s) = p.to_path_buf().into_os_string().into_string() {
+            if let Ok(s) = p.clone().into_os_string().into_string() {
                 if let Some(rest) = s.strip_prefix("~/") {
                     if let Some(home) = dirs::home_dir() {
                         *p = home.join(rest);
@@ -795,7 +802,7 @@ mod tests {
         // флаг/режим давал argparse-код 2 (hermes: «unrecognized arguments: -p»).
         let cfg = Config::default();
         let h = &cfg.harnesses;
-        let flags = |name: &str| (h[name].args.clone(), h[name].prompt_mode.clone());
+        let flags = |name: &str| (h[name].args.clone(), h[name].prompt_mode);
         assert_eq!(
             flags("hermes"),
             (

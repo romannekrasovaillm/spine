@@ -254,7 +254,7 @@ pub fn split_frontmatter(text: &str) -> Result<(&str, &str)> {
 pub fn parse_entity(file: &Path, text: &str) -> Result<Entity> {
     let (yaml, body) = split_frontmatter(text)
         .map_err(|e| HarnessError::Model(format!("{}: {e}", file.display())))?;
-    let fm: Frontmatter = serde_yaml::from_str(yaml)
+    let fm: Frontmatter = serde_yaml_ng::from_str(yaml)
         .map_err(|e| HarnessError::Model(format!("{}: frontmatter: {e}", file.display())))?;
     if fm.id.trim().is_empty() {
         return Err(HarnessError::Model(format!(
@@ -478,7 +478,7 @@ mod tests {
         assert_eq!(e.rps_per_instance, Some(2000.0));
         assert_eq!(e.instances, Some(4));
         assert_eq!(e.cost_per_instance_month, Some(45000.0));
-        assert_eq!(e.exit_cost, Some(300000.0));
+        assert_eq!(e.exit_cost, Some(300_000.0));
 
         let nfr = write(
             dir.path(),

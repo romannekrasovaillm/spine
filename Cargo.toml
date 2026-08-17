@@ -33,7 +33,7 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "str
 scraper = "0.23"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-serde_yaml = "0.9"
+serde_yaml_ng = "0.10"
 similar = "2"
 thiserror = "2"
 tokio = { version = "1", features = ["full"] }
@@ -49,8 +49,13 @@ zip = { version = "7.2.0", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]
 assert_cmd = "2"
+criterion = "0.5"
 predicates = "3"
 tempfile = "3"
+
+[[bench]]
+name = "harness_benches"
+harness = false
 
 [lints.rust]
 unsafe_code = "forbid"
@@ -59,6 +64,30 @@ unsafe_code = "forbid"
 all = { level = "warn", priority = -1 }
 pedantic = { level = "warn", priority = -1 }
 module_name_repetitions = "allow"
+# Явная политика допускаемых pedantic-линтов (волна P2-4, 2026-08-17):
+# каждая строка — решение с обоснованием, а не молчаливая толерантность.
+# Все остальные pedantic-линты зачищены до нуля; состояние удерживается
+# CI-джобой clippy с `-D warnings` (см. ADR-005, Update 2026-08-17).
+# Арифметика геометрии терминала (u16), счётчиков и баллов рубрик: значения
+# ограничены по построению, потеря точности/знака/переполнение несущественны.
+cast_precision_loss = "allow"
+cast_possible_truncation = "allow"
+cast_possible_wrap = "allow"
+cast_sign_loss = "allow"
+# Длинные render/парсер-функции TUI: дробление ради линта ухудшает читаемость;
+# декомпозиция крупных модулей — отдельная задача P2-3 ревью.
+too_many_lines = "allow"
+# Сравнения float живут только в тестовых ассертах над точно представимыми
+# значениями (баллы рубрик 4.2/3.5, σ = 0.0) — равенство там осмысленно.
+float_cmp = "allow"
+# `&Option<T>` в приватных помощниках — осознанный стиль вызова.
+ref_option = "allow"
+# Аксессоры Theme единообразны с соседними &self-методами семейства.
+unused_self = "allow"
+# Публичную сигнатуру prompts::render не обобщаем по BuildHasher ради линта.
+implicit_hasher = "allow"
+# Конфиг-структуры с флагами читаемее иерархии enum'ов.
+struct_excessive_bools = "allow"
 
 [profile.release]
 lto = "thin"

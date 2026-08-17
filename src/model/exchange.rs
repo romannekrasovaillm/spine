@@ -5,7 +5,7 @@
 //! Прочие типы (`CAP`/`NFR`/`REQ`/`AD`/`ADR`/`RISK`/`OWNER`) аналога в
 //! C4-форматах не имеют и не экспортируются.
 //!
-//! - Экспорт: Structurizr DSL (`workspace { model { … } }`), PlantUML
+//! - Экспорт: Structurizr DSL (`workspace { model { … } }`), `PlantUML`
 //!   (`@startuml`, component), drawio (минимально валидный mxfile XML).
 //!   Каждый элемент Structurizr-экспорта несёт `properties` со `spine.id`,
 //!   `spine.type`, `spine.status`, `spine.date` — носитель точного
@@ -38,7 +38,7 @@ use crate::model::{EntityKind, parse_id};
 pub enum ExportFormat {
     /// Structurizr DSL (`workspace { model { … } }`).
     Structurizr,
-    /// PlantUML component-диаграмма.
+    /// `PlantUML` component-диаграмма.
     Plantuml,
     /// drawio mxfile XML.
     Drawio,
@@ -125,7 +125,7 @@ fn dsl_str(s: &str) -> String {
     s.replace('"', "'").replace(['\n', '\r'], " ")
 }
 
-/// Метка для PlantUML: `[`/`]` ломают синтаксис компонента — заменяются.
+/// Метка для `PlantUML`: `[`/`]` ломают синтаксис компонента — заменяются.
 fn puml_str(s: &str) -> String {
     s.replace('[', "(")
         .replace(']', ")")
@@ -290,7 +290,7 @@ fn export_structurizr(entities: &[&Entity], links: &[(&str, LinkKind, &str)]) ->
     out
 }
 
-/// Экспорт в PlantUML component-диаграмму (ADR-009).
+/// Экспорт в `PlantUML` component-диаграмму (ADR-009).
 fn export_plantuml(entities: &[&Entity], links: &[(&str, LinkKind, &str)]) -> String {
     let systems: Vec<&Entity> = entities
         .iter()
@@ -329,10 +329,8 @@ fn export_plantuml(entities: &[&Entity], links: &[(&str, LinkKind, &str)]) -> St
                     alias_of(&e.id)
                 );
             }
-            EntityKind::Cmp => {
-                if !nest {
-                    let _ = writeln!(out, "[{}] as {}", puml_str(&label_of(e)), alias_of(&e.id));
-                }
+            EntityKind::Cmp if !nest => {
+                let _ = writeln!(out, "[{}] as {}", puml_str(&label_of(e)), alias_of(&e.id));
             }
             _ => {}
         }
@@ -620,14 +618,9 @@ fn is_element_keyword(kw: &str) -> bool {
 /// Разбирает позиционные строки вызова элемента до конца строки или `{`.
 fn read_positional_strings(ts: &mut Tokens) -> Vec<String> {
     let mut strings = Vec::new();
-    loop {
-        match ts.peek() {
-            Some(Tok::Str(_, _)) => {
-                if let Some(Tok::Str(s, _)) = ts.next() {
-                    strings.push(s);
-                }
-            }
-            _ => break,
+    while let Some(Tok::Str(_, _)) = ts.peek() {
+        if let Some(Tok::Str(s, _)) = ts.next() {
+            strings.push(s);
         }
     }
     strings
@@ -831,11 +824,10 @@ fn parse_statements(
                                         tags.push(s);
                                     }
                                 }
-                                Some(Tok::Newline) => break,
+                                Some(Tok::Newline) | None => break,
                                 Some(_) => {
                                     ts.next();
                                 }
-                                None => break,
                             }
                         }
                         if let Some(i) = current {
@@ -1042,7 +1034,7 @@ fn render_entity_file(d: &Draft) -> Result<String> {
         affects: &d.affects,
         verified_by: &d.verified_by,
     };
-    let yaml = serde_yaml::to_string(&fm)
+    let yaml = serde_yaml_ng::to_string(&fm)
         .map_err(|e| HarnessError::Model(format!("сериализация frontmatter {}: {e}", d.id)))?;
     let mut out = format!("---\n{yaml}---\n");
     if !d.body.is_empty() {

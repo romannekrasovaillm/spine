@@ -4,8 +4,8 @@
 //! TUI (ratatui), mermaid→ASCII рендер, якорные/динамические рубрики
 //! архитектурного контроля, специализированные бенчмарки, MCP-интеграции,
 //! веб-доступ к доменным знаниям, локальная база знаний, handoff-пакеты
-//! кодовым харнессам (Claude Code, Qwen Code, OpenClaw, Hermes, Theseus,
-//! CodeWhale), fitness functions и линтер architecture-spine, крон md-задач.
+//! кодовым харнессам (Claude Code, Qwen Code, `OpenClaw`, Hermes, Theseus,
+//! `CodeWhale`), fitness functions и линтер architecture-spine, крон md-задач.
 //!
 //! Происхождение идей — `docs/SOURCE_BRIEF.md` (разбор SDD-харнессов и
 //! корпоративных агентных фреймворков, август 2026).

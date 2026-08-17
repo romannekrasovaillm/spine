@@ -59,7 +59,7 @@ pub struct ExportRow {
 
 /// Блоки чата → плоские строки для экспорта.
 #[must_use]
-pub fn rows_of(blocks: &[ChatBlock]) -> Vec<ExportRow> {
+pub(crate) fn rows_of(blocks: &[ChatBlock]) -> Vec<ExportRow> {
     let mut rows = Vec::new();
     let mut push = |role: String, text: &str| {
         let mut first = true;
@@ -126,7 +126,7 @@ fn is_art(text: &str) -> bool {
 
 /// Человекочитаемая ошибка харнесса (zip-упаковка экспорта и т.п.).
 fn plain(msg: String) -> HarnessError {
-    HarnessError::IoBare(std::io::Error::new(std::io::ErrorKind::Other, msg))
+    HarnessError::IoBare(std::io::Error::other(msg))
 }
 
 /// Пишет ZIP-файл с заданными записями (имя → содержимое).
@@ -157,13 +157,10 @@ pub fn export_docx(rows: &[ExportRow], path: &Path) -> Result<()> {
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>"#,
     );
     for row in rows {
-        let (runs, text_rpr) = if is_art(&row.text) {
-            (
-                String::new(),
-                r#"<w:rPr><w:rFonts w:ascii="Courier New" w:hAnsi="Courier New"/><w:sz w:val="18"/></w:rPr>"#,
-            )
+        let text_rpr = if is_art(&row.text) {
+            r#"<w:rPr><w:rFonts w:ascii="Courier New" w:hAnsi="Courier New"/><w:sz w:val="18"/></w:rPr>"#
         } else {
-            (String::new(), "")
+            ""
         };
         body.push_str("<w:p>");
         if !row.role.is_empty() {
@@ -181,7 +178,7 @@ pub fn export_docx(rows: &[ExportRow], path: &Path) -> Result<()> {
         );
         body.push_str("</w:p>");
     }
-    body.push_str(r#"</w:body></w:document>"#);
+    body.push_str(r"</w:body></w:document>");
 
     write_zip(
         path,
@@ -260,7 +257,11 @@ pub fn export_xlsx(rows: &[ExportRow], path: &Path) -> Result<()> {
 ///
 /// # Errors
 /// См. [`export_docx`]/[`export_xlsx`].
-pub fn export_blocks(blocks: &[ChatBlock], format: ExportFormat, path: &Path) -> Result<usize> {
+pub(crate) fn export_blocks(
+    blocks: &[ChatBlock],
+    format: ExportFormat,
+    path: &Path,
+) -> Result<usize> {
     let rows = rows_of(blocks);
     match format {
         ExportFormat::Word => export_docx(&rows, path)?,
@@ -289,7 +290,10 @@ pub fn rows_of_journal(path: &Path) -> Result<Vec<ExportRow>> {
             "assistant" => "арх",
             "tool" => {
                 let name = v.get("name").and_then(|n| n.as_str()).unwrap_or("tool");
-                let is_err = v.get("is_error").and_then(|e| e.as_bool()).unwrap_or(false);
+                let is_err = v
+                    .get("is_error")
+                    .and_then(serde_json::Value::as_bool)
+                    .unwrap_or(false);
                 let head = content.lines().next().unwrap_or("");
                 rows.push(ExportRow {
                     role: format!("{} {name}", if is_err { "✗" } else { "✓" }),

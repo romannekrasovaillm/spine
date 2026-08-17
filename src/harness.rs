@@ -10,8 +10,8 @@
 //!   архитектором под spine), RUBRIC.yaml (якорная рубрика приёмки), MANIFEST.json
 //!   (мета: дата, модель, источники) + компактный epic-context (800–1500
 //!   токенов, по смыслу);
-//! - [`run_harness`] — запуск бинаря харнесса (PromptMode positional/flag/stdin)
-//!   в каталоге repo, таймаут, захват stdout/stderr → HarnessRun;
+//! - [`run_harness`] — запуск бинаря харнесса (`PromptMode` positional/flag/stdin)
+//!   в каталоге repo, таймаут, захват stdout/stderr → `HarnessRun`;
 //! - [`tools`] — инструменты `handoff_create` и `harness_run` для агентного
 //!   цикла (прогон пакета харнессом — только через `harness_run`, не bash).
 
@@ -49,7 +49,7 @@ const MIN_HARNESS_TIMEOUT_SECS: u64 = 600;
 const EPIC_CONTEXT_MAX_CHARS: usize = 6000;
 
 /// Целевой минимум epic-context, символов (~800 токенов — низ окна рубрики
-/// handoff_quality). Если на глубине «2 абзаца на секцию» контекст меньше,
+/// `handoff_quality`). Если на глубине «2 абзаца на секцию» контекст меньше,
 /// секции перерендериваются глубже ([`DEPTH_DEEP`]).
 const EPIC_CONTEXT_MIN_CHARS: usize = 3200;
 
@@ -171,6 +171,7 @@ fn default_constraints(repo: &Path) -> String {
 }
 
 /// Имена известных кодовых харнессов.
+#[must_use]
 pub fn known() -> Vec<&'static str> {
     vec![
         "claude-code",
@@ -257,9 +258,8 @@ pub fn generate_handoff(
         )));
     }
     let baseline = ensure_git_baseline(repo);
-    let rollback_text = rollback
-        .map(str::to_owned)
-        .unwrap_or_else(|| default_rollback(baseline.hash.as_deref()));
+    let rollback_text =
+        rollback.map_or_else(|| default_rollback(baseline.hash.as_deref()), str::to_owned);
     let timeout = recommended_timeout(route);
     let dir = repo.join(HANDOFF_DIR);
     let adr_dir = dir.join("adr");
@@ -550,6 +550,7 @@ fn ensure_git_baseline(repo: &Path) -> GitBaseline {
 
 /// Читает рекомендованный таймаут прогона из MANIFEST.json пакета
 /// (None — пакета нет или манифест старый, без поля).
+#[must_use]
 pub fn recommended_timeout_secs(repo: &Path) -> Option<u64> {
     #[derive(Deserialize)]
     struct ManifestMeta {
@@ -567,7 +568,7 @@ pub fn recommended_timeout_secs(repo: &Path) -> Option<u64> {
 ///
 /// Глубина адаптивная: прочие секции рендерятся по [`DEPTH_SHALLOW`] абзацев,
 /// но если контекст недобирает до [`EPIC_CONTEXT_MIN_CHARS`] (низ окна рубрики
-/// handoff_quality, ~800 токенов), спеки перерендериваются глубже
+/// `handoff_quality`, ~800 токенов), спеки перерендериваются глубже
 /// ([`DEPTH_DEEP`]) — «реализация без доступа к источникам» требует массы.
 ///
 /// # Errors
@@ -592,15 +593,15 @@ fn compile_epic_context(spec_files: &[PathBuf]) -> Result<String> {
 fn render_epic(spec_files: &[PathBuf], depth: usize) -> Result<String> {
     let mut out = String::with_capacity(EPIC_CONTEXT_MAX_CHARS);
     out.push_str("# Архитектурный контекст (epic-context)\n\n");
-    out.push_str(&format!("Собран: {}\n\n", Utc::now().to_rfc3339()));
+    let _ = write!(out, "Собран: {}\n\n", Utc::now().to_rfc3339());
     out.push_str("Источники:\n");
     for f in spec_files {
-        out.push_str(&format!("- {}\n", f.display()));
+        let _ = writeln!(out, "- {}", f.display());
     }
     out.push('\n');
     for f in spec_files {
         let text = std::fs::read_to_string(f).map_err(|e| HarnessError::io(f, e))?;
-        out.push_str(&format!("<!-- источник: {} -->\n\n", f.display()));
+        let _ = write!(out, "<!-- источник: {} -->\n\n", f.display());
         out.push_str(render_spec(&text, depth).trim_end());
         out.push_str("\n\n");
     }
@@ -818,6 +819,38 @@ pub async fn run_harness(
     use std::sync::Mutex;
     use tokio::io::AsyncReadExt;
 
+    // Читатели потоков: перекладывают в ограниченные буферы и трогают heartbeat.
+    fn spawn_reader<R>(
+        mut pipe: R,
+        buf: Arc<Mutex<Vec<u8>>>,
+        act: Arc<Mutex<Instant>>,
+    ) -> tokio::task::JoinHandle<()>
+    where
+        R: tokio::io::AsyncRead + Unpin + Send + 'static,
+    {
+        tokio::spawn(async move {
+            let mut chunk = [0u8; 8192];
+            loop {
+                match pipe.read(&mut chunk).await {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => {
+                        let mut b = buf
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner);
+                        b.extend_from_slice(&chunk[..n]);
+                        if b.len() > OUTPUT_CAP {
+                            let excess = b.len() - OUTPUT_CAP;
+                            b.drain(..excess);
+                        }
+                        drop(b);
+                        *act.lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner) = Instant::now();
+                    }
+                }
+            }
+        })
+    }
+
     let (argv, stdin_data) = build_argv(cfg, task);
     let mut cmd = Command::new(&cfg.binary);
     cmd.args(&argv).current_dir(repo);
@@ -861,34 +894,6 @@ pub async fn run_harness(
     let stdout_buf = Arc::new(Mutex::new(Vec::<u8>::new()));
     let stderr_buf = Arc::new(Mutex::new(Vec::<u8>::new()));
 
-    // Читатели потоков: перекладывают в ограниченные буферы и трогают heartbeat.
-    fn spawn_reader<R>(
-        mut pipe: R,
-        buf: Arc<Mutex<Vec<u8>>>,
-        act: Arc<Mutex<Instant>>,
-    ) -> tokio::task::JoinHandle<()>
-    where
-        R: tokio::io::AsyncRead + Unpin + Send + 'static,
-    {
-        tokio::spawn(async move {
-            let mut chunk = [0u8; 8192];
-            loop {
-                match pipe.read(&mut chunk).await {
-                    Ok(0) | Err(_) => break,
-                    Ok(n) => {
-                        let mut b = buf.lock().unwrap_or_else(|p| p.into_inner());
-                        b.extend_from_slice(&chunk[..n]);
-                        if b.len() > OUTPUT_CAP {
-                            let excess = b.len() - OUTPUT_CAP;
-                            b.drain(..excess);
-                        }
-                        drop(b);
-                        *act.lock().unwrap_or_else(|p| p.into_inner()) = Instant::now();
-                    }
-                }
-            }
-        })
-    }
     let mut readers = Vec::new();
     if let Some(out) = child.stdout.take() {
         readers.push(spawn_reader(out, stdout_buf.clone(), activity.clone()));
@@ -941,11 +946,16 @@ pub async fn run_harness(
                 scan_due = Instant::now() + scan_interval;
                 let scan_start = std::time::SystemTime::now();
                 if repo_changed_since(repo, last_scan) {
-                    *activity.lock().unwrap_or_else(|p| p.into_inner()) = Instant::now();
+                    *activity
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner) = Instant::now();
                 }
                 last_scan = scan_start;
             }
-            let silent_for = activity.lock().unwrap_or_else(|p| p.into_inner()).elapsed();
+            let silent_for = activity
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .elapsed();
             if silent_for >= idle {
                 kill_process_group(pid, &mut child).await;
                 break Termination::IdleTimeout;
@@ -963,7 +973,8 @@ pub async fn run_harness(
     }
 
     let take = |b: &Arc<Mutex<Vec<u8>>>| {
-        String::from_utf8_lossy(&b.lock().unwrap_or_else(|p| p.into_inner())).into_owned()
+        String::from_utf8_lossy(&b.lock().unwrap_or_else(std::sync::PoisonError::into_inner))
+            .into_owned()
     };
     // Страховка финализации: контракт TASK.md требует от исполнителя
     // финальный git-коммит; не сделал — фиксируем сами, иначе работа
@@ -1233,12 +1244,13 @@ impl Tool for HandoffCreateTool {
                 }
                 // Окно рубрики handoff_quality — 800–1500 токенов.
                 if packet.epic_context_tokens < EPIC_CONTEXT_MIN_CHARS / 4 {
-                    out.push_str(&format!(
+                    let _ = write!(
+                        out,
                         "\nВНИМАНИЕ: epic-context ~{} токенов — ниже окна рубрики (800–1500). \
                          Сценарий «реализация без доступа к источникам» не выполняется: \
                          добавьте спеки через 'spec' или расширьте источники.",
                         packet.epic_context_tokens
-                    ));
+                    );
                 }
                 out.push_str(
                     "\nНапоминание: CONSTRAINTS.yaml — стековая заготовка; перед передачей \
@@ -1276,6 +1288,7 @@ impl ContractStatus {
     }
 
     /// Строковое представление как в контракте.
+    #[must_use]
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Complete => "complete",
@@ -1341,14 +1354,15 @@ fn validate_contract(v: &Value) -> std::result::Result<ResultContract, String> {
 }
 
 /// Механический разбор контракта результата из stdout харнесса
-/// (замена текстовой эвристике «последний ```json с status»):
+/// (замена текстовой эвристике «последний `` ```json `` со `status`»):
 ///
-/// 1. fenced ```json-блоки с конца вывода (контракт обязан идти последним);
+/// 1. fenced `` ```json ``-блоки с конца вывода (контракт обязан идти последним);
 ///    блок со `status`, не парсящийся как JSON, — это Invalid, а не промах;
 /// 2. запасной путь: голый JSON-объект в хвосте вывода (модели иногда роняют
 ///    fence) — перебор `{`-позиций последних 4 КБ с конца.
 ///
 /// Найденный кандидат валидируется по схеме [`validate_contract`].
+#[must_use]
 pub fn parse_result_contract(stdout: &str) -> ContractParse {
     let mut invalid: Option<String> = None;
     let mut blocks = Vec::new();
@@ -1371,11 +1385,10 @@ pub fn parse_result_contract(stdout: &str) -> ContractParse {
                     Err(e) => ContractParse::Invalid(e),
                 };
             }
-            Ok(_) => {}
             Err(e) if block.contains("\"status\"") => {
                 invalid = Some(format!("невалидный JSON в ```json-блоке со status: {e}"));
             }
-            Err(_) => {}
+            Ok(_) | Err(_) => {}
         }
     }
     // Голый JSON в хвосте (fence уронен): перебираем `{` с конца хвоста.
@@ -1482,7 +1495,7 @@ impl Tool for HarnessRunTool {
     }
 
     /// Прогон кодового харнесса может идти до 7200 с (потолок аргумента
-    /// timeout_secs) плюс запас на групповое завершение и сбор вывода;
+    /// `timeout_secs`) плюс запас на групповое завершение и сбор вывода;
     /// берём максимум из адаптеров конфига — иначе агентный цикл обрывает
     /// длинный прогон раньше собственного таймаута адаптера (инцидент 11-24).
     fn timeout_secs(&self) -> u64 {
@@ -1518,19 +1531,18 @@ impl Tool for HarnessRunTool {
             )));
         };
         let repo = ctx.resolve(repo);
-        let task = match args.get("task").and_then(Value::as_str) {
-            Some(t) => t.to_string(),
-            None => {
-                let path = repo.join(HANDOFF_DIR).join("TASK.md");
-                match std::fs::read_to_string(&path) {
-                    Ok(t) => t,
-                    Err(e) => {
-                        return Ok(ToolOutput::err(format!(
-                            "harness_run: нет аргумента 'task' и не читается {}: {e}. \
-                             Сначала handoff_create или передайте task явно",
-                            path.display()
-                        )));
-                    }
+        let task = if let Some(t) = args.get("task").and_then(Value::as_str) {
+            t.to_string()
+        } else {
+            let path = repo.join(HANDOFF_DIR).join("TASK.md");
+            match std::fs::read_to_string(&path) {
+                Ok(t) => t,
+                Err(e) => {
+                    return Ok(ToolOutput::err(format!(
+                        "harness_run: нет аргумента 'task' и не читается {}: {e}. \
+                         Сначала handoff_create или передайте task явно",
+                        path.display()
+                    )));
                 }
             }
         };
@@ -1671,6 +1683,7 @@ impl Tool for HarnessRunTool {
 }
 
 /// Инструменты домена: `handoff_create`, `harness_run`.
+#[must_use]
 pub fn tools(cfg: &Config) -> Vec<Arc<dyn Tool>> {
     vec![
         Arc::new(HandoffCreateTool { cfg: cfg.clone() }),
@@ -1959,10 +1972,11 @@ mod tests {
         let cfg = cfg_in(tmp.path());
         let mut big_text = String::from("# Спека миграции\n\n");
         for i in 0..60 {
-            big_text.push_str(&format!(
+            let _ = write!(
+                big_text,
                 "## Блок {i}\n\nИнвариант: AD-{i} — дословное правило интеграции, \
                  проверяемое тестом; детали, стыки и запреты для полноты контекста.\n\n"
-            ));
+            );
         }
         let spec = tmp.path().join("spec-big.md");
         write_file(&spec, &big_text);
@@ -2040,9 +2054,10 @@ mod tests {
         let big = tmp.path().join("big.md");
         let mut text = String::from("# Большая спека\n\n");
         for i in 0..500 {
-            text.push_str(&format!(
+            let _ = write!(
+                text,
                 "## Секция {i}\n\nДостаточно длинный абзац, чтобы набрать объём контекста.\n\n"
-            ));
+            );
         }
         write_file(&big, &text);
 

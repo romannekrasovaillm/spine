@@ -5,6 +5,7 @@
 //! геометрия U+25A0–25FF) НИКОГДА не переносятся — разрыв box-линий убивает
 //! диаграмму; длинное клипается по ширине панели.
 
+use std::fmt::Write as _;
 use std::path::Path;
 
 use ratatui::Frame;
@@ -215,7 +216,7 @@ fn draw_fatal(f: &mut Frame, area: Rect, theme: &Theme, error: &str) {
 }
 
 /// Основной экран: диалог | вкладки; снизу ввод и статус-бар.
-/// Поверх — модалка выбора вариантов (propose_options), если она открыта.
+/// Поверх — модалка выбора вариантов (`propose_options`), если она открыта.
 fn draw_chat(f: &mut Frame, app: &mut App) {
     let theme = app.theme;
     // Поле ввода многострочное: высота растёт с текстом (перенос по ширине
@@ -367,7 +368,7 @@ fn hclip_line(line: &Line<'_>, offset: usize) -> Line<'static> {
     Line::from(spans)
 }
 
-/// Модальная панель выбора вариантов (инструмент propose_options):
+/// Модальная панель выбора вариантов (инструмент `propose_options)`:
 /// центрированное окно поверх чата — вопрос, варианты, курсор, подсказки.
 fn draw_ask(f: &mut Frame, area: Rect, app: &App, theme: &Theme) {
     let Some(ask) = &app.ask else {
@@ -696,7 +697,7 @@ fn draw_right(f: &mut Frame, area: Rect, app: &App, theme: &Theme) {
         .unwrap_or(0)
         > inner_w;
     let mut title_spans = Vec::new();
-    for tab in RightTab::ALL.iter() {
+    for tab in &RightTab::ALL {
         let style = if *tab == app.right_tab() {
             Style::default()
                 .fg(theme.bg)
@@ -843,7 +844,7 @@ fn draw_queue_overlay(f: &mut Frame, dialog: Rect, app: &App, theme: &Theme) {
 }
 
 /// Нижнее поле ввода: многострочное (перенос по ширине; перевод строки —
-/// Shift+Enter / Alt+Enter / Ctrl+J), растёт до MAX_INPUT_ROWS строк, дальше
+/// Shift+Enter / Alt+Enter / Ctrl+J), растёт до `MAX_INPUT_ROWS` строк, дальше
 /// видимое окно следует за курсором. Плюс ghost-подсказка автодополнения.
 fn draw_input(f: &mut Frame, area: Rect, app: &App, theme: &Theme) {
     let thinking = app.thinking();
@@ -852,10 +853,7 @@ fn draw_input(f: &mut Frame, area: Rect, app: &App, theme: &Theme) {
         if app.queue.is_empty() {
             t.push_str(" · Enter — в очередь · Alt+Enter — срочно ");
         } else {
-            t.push_str(&format!(
-                " · очередь: {} · Alt+Enter — срочно ",
-                app.queue.len()
-            ));
+            let _ = write!(t, " · очередь: {} · Alt+Enter — срочно ", app.queue.len());
         }
         t
     } else if !app.queue.is_empty() {
@@ -950,10 +948,11 @@ fn draw_status(f: &mut Frame, area: Rect, app: &App, theme: &Theme) {
 /// Цвет шкалы — по порогам компактификации из конфига: зелёный до L1,
 /// оранжевый до L3, дальше красный (авто-компактификация уже близко/идёт).
 fn context_spans(app: &App, theme: &Theme) -> Vec<Span<'static>> {
+    const WIDTH: usize = 8;
     let used = app.history_tokens();
     let budget = app.context_budget();
     if budget == 0 {
-        return vec![Span::styled(format!(" ◈ ~{} ток.", used), theme.muted())];
+        return vec![Span::styled(format!(" ◈ ~{used} ток."), theme.muted())];
     }
     let pct = used.saturating_mul(100) / budget;
     let agent_cfg = &app.tool_ctx.config.agent;
@@ -964,7 +963,6 @@ fn context_spans(app: &App, theme: &Theme) -> Vec<Span<'static>> {
     } else {
         theme.green
     };
-    const WIDTH: usize = 8;
     let filled = (used.saturating_mul(WIDTH) / budget).min(WIDTH);
     let bar = format!("{}{}", "▰".repeat(filled), "▱".repeat(WIDTH - filled));
     vec![
@@ -979,8 +977,8 @@ fn context_spans(app: &App, theme: &Theme) -> Vec<Span<'static>> {
     ]
 }
 
-/// Человекочитаемый размер токенов: 999 → «999», 12_345 → «12.3k»,
-/// 1_000_000 → «1.0M».
+/// Человекочитаемый размер токенов: 999 → «999», `12_345` → «12.3k»,
+/// `1_000_000` → «1.0M».
 #[allow(clippy::cast_precision_loss)]
 fn fmt_tokens(n: usize) -> String {
     if n >= 1_000_000 {
@@ -1011,7 +1009,7 @@ mod tests {
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
 
-    /// Текстовое содержимое буфера TestBackend (построчно).
+    /// Текстовое содержимое буфера `TestBackend` (построчно).
     fn buffer_text(term: &Terminal<TestBackend>) -> String {
         let buf = term.backend().buffer();
         let area = buf.area;
@@ -1119,7 +1117,6 @@ mod tests {
         );
     }
 
-    #[test]
     #[test]
     fn mermaid_tab_widens_to_fit_wide_art() {
         let mut app = test_app();

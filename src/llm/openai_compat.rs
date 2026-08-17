@@ -159,8 +159,7 @@ impl OpenAiCompat {
         if let Some(path) = &self.api_key_file {
             let expanded = match path.strip_prefix("~/") {
                 Some(rest) => dirs::home_dir()
-                    .map(|h| h.join(rest))
-                    .unwrap_or_else(|| std::path::PathBuf::from(path)),
+                    .map_or_else(|| std::path::PathBuf::from(path), |h| h.join(rest)),
                 None => std::path::PathBuf::from(path),
             };
             if let Ok(raw) = std::fs::read_to_string(&expanded) {
@@ -216,8 +215,7 @@ impl OpenAiCompat {
         let url = format!("{}/chat/completions", self.base_url);
         let seed = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| u64::from(d.subsec_nanos()))
-            .unwrap_or(0);
+            .map_or(0, |d| u64::from(d.subsec_nanos()));
         let mut delays: Option<(crate::retry::ErrorKind, crate::retry::Delays)> = None;
         loop {
             // Ok(None) — финальный ответ (успех или неретраибельная ошибка);
@@ -415,8 +413,7 @@ impl LlmProvider for OpenAiCompat {
         let body = self.build_body(&req, RequestMode::Stream);
         let seed = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| u64::from(d.subsec_nanos()))
-            .unwrap_or(0);
+            .map_or(0, |d| u64::from(d.subsec_nanos()));
         let mut delays = crate::retry::RetryPolicy::for_kind(crate::retry::ErrorKind::Network)
             .map(|p| p.delays(seed));
         loop {
@@ -495,7 +492,7 @@ struct StreamOptions {
 struct OutMessage<'a> {
     role: Role,
     content: &'a str,
-    /// Эхо цепочки рассуждений: DeepSeek thinking + `tools` требует возврата
+    /// Эхо цепочки рассуждений: `DeepSeek` thinking + `tools` требует возврата
     /// `reasoning_content` (иначе HTTP 400); прочие провайдеры его игнорируют.
     #[serde(skip_serializing_if = "Option::is_none")]
     reasoning_content: Option<&'a str>,
@@ -585,7 +582,7 @@ struct CompletionResponse {
 #[derive(Debug, Deserialize)]
 struct CompletionChoice {
     message: CompletionMessage,
-    /// `stop` | `length` | `tool_calls`… (`length` = усечение max_tokens).
+    /// `stop` | `length` | `tool_calls`… (`length` = усечение `max_tokens`).
     #[serde(default)]
     finish_reason: Option<String>,
 }
@@ -595,7 +592,7 @@ struct CompletionChoice {
 struct CompletionMessage {
     #[serde(default)]
     content: Option<String>,
-    /// Цепочка рассуждений ризонинг-модели (DeepSeek V4/Kimi/GLM).
+    /// Цепочка рассуждений ризонинг-модели (`DeepSeek` V4/Kimi/GLM).
     #[serde(default)]
     reasoning_content: Option<String>,
     #[serde(default)]
@@ -623,9 +620,9 @@ impl CompletionMessage {
 /// Нормализация исхода на границе API (defensive pattern: «контракт с обеих
 /// сторон»). GLM-4.7 quirk: на коротких ответах с thinking=on модель
 /// недетерминированно кладёт весь ответ в `reasoning_content`, оставляя
-/// `content` пустым (проверено прогонами: ~2/3 случаев, finish_reason=stop).
+/// `content` пустым (проверено прогонами: ~2/3 случаев, `finish_reason=stop`).
 /// Без нормализации ход возвращал бы пустую строку — подменяем пустой ответ
-/// цепочкой рассуждений (там и есть ответ). Сообщения с tool_calls не
+/// цепочкой рассуждений (там и есть ответ). Сообщения с `tool_calls` не
 /// трогаем: у них пустой content — норма.
 fn normalize_reply(mut msg: ChatMessage) -> ChatMessage {
     // Let-chains стабилизированы в 1.88 — выше MSRV 1.85: условия разнесены
@@ -667,7 +664,7 @@ struct StreamChoice {
     #[serde(default)]
     delta: StreamDelta,
     /// `stop` | `length` | `tool_calls`… в финальном чанке (`length` —
-    /// ответ усечён потолком max_tokens: аргументы tool-вызова обрезаны).
+    /// ответ усечён потолком `max_tokens`: аргументы tool-вызова обрезаны).
     #[serde(default)]
     finish_reason: Option<String>,
 }
@@ -678,7 +675,7 @@ struct StreamDelta {
     #[serde(default)]
     content: Option<String>,
     /// Кусок цепочки рассуждений (ризонинг-модели); копится, но не стримится
-    /// в чат — CoT не смешиваем с текстом ответа.
+    /// в чат — `CoT` не смешиваем с текстом ответа.
     #[serde(default)]
     reasoning_content: Option<String>,
     #[serde(default)]
@@ -729,7 +726,7 @@ struct StreamAcc {
     reasoning: String,
     tool_calls: Vec<ToolCallAcc>,
     usage: Usage,
-    /// finish_reason из финального чанка; признак «модель закончила сама»
+    /// `finish_reason` из финального чанка; признак «модель закончила сама»
     /// (без него и без [DONE] закрытие потока = усечение сетью/прокси).
     finish_reason: Option<String>,
 }

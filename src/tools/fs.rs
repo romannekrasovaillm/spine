@@ -10,6 +10,7 @@
 //!   ошибка, если `old_string` не найден или неуникален (без `replace_all`);
 //! - `glob`: `pattern` (globset-подобный, `**`), опц. `path`;
 //! - `grep`: `pattern` (regex), опц. `path`, `glob`, `context` (строки ±);
+//!
 //! Все выводы усечены разумно (файлы — ~50 КБ, списки — ~500 строк,
 //!   совпадения grep — ~200).
 //!
@@ -166,7 +167,7 @@ fn match_segments(pat: &[&str], path: &[&str]) -> bool {
 /// Сопоставляет glob-паттерн (разделитель `/`, `**` — любая глубина)
 /// с относительным путём.
 fn glob_match(pattern: &str, path: &Path) -> bool {
-    let pats: Vec<&str> = pattern
+    let pat_segs: Vec<&str> = pattern
         .split('/')
         .filter(|s| !s.is_empty() && *s != ".")
         .collect();
@@ -175,7 +176,7 @@ fn glob_match(pattern: &str, path: &Path) -> bool {
         .map(|c| c.to_string_lossy().into_owned())
         .collect();
     let names: Vec<&str> = name_storage.iter().map(String::as_str).collect();
-    match_segments(&pats, &names)
+    match_segments(&pat_segs, &names)
 }
 
 /// Усекает слишком длинную строку для вывода grep.
@@ -335,7 +336,7 @@ impl Tool for WriteFileTool {
                 .open(&path)
                 .await
             {
-                Ok(mut f) => f.write_all(content.as_bytes()).await.map(|_| ()),
+                Ok(mut f) => f.write_all(content.as_bytes()).await,
                 Err(e) => Err(e),
             }
         } else {

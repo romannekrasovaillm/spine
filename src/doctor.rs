@@ -8,7 +8,7 @@
 //! - [`run_checks`] — чистое ядро: список [`Check`] с вердиктами;
 //! - [`render`] — текстовый отчёт (иконки ✓/⚠/✗); [`exit_code`] — 1 при
 //!   хотя бы одном Fail (для CLI `arch doctor`);
-//! - проверки не мутируют состояние, кроме временного файла в sessions_dir
+//! - проверки не мутируют состояние, кроме временного файла в `sessions_dir`
 //!   (создаётся и тут же удаляется).
 
 use std::fmt::Write as _;
@@ -95,7 +95,7 @@ pub fn exit_code(checks: &[Check]) -> i32 {
     i32::from(checks.iter().any(|c| c.verdict == Verdict::Fail))
 }
 
-/// default_model присутствует в реестре моделей.
+/// `default_model` присутствует в реестре моделей.
 fn check_default_model(cfg: &Config) -> Check {
     let ok = cfg.models.contains_key(&cfg.default_model);
     Check {
@@ -125,14 +125,12 @@ fn check_api_keys(cfg: &Config) -> Check {
         }
         mc.api_key_file.as_deref().is_some_and(|path| {
             let expanded = match path.strip_prefix("~/") {
-                Some(rest) => dirs::home_dir()
-                    .map(|h| h.join(rest))
-                    .unwrap_or_else(|| PathBuf::from(path)),
+                Some(rest) => {
+                    dirs::home_dir().map_or_else(|| PathBuf::from(path), |h| h.join(rest))
+                }
                 None => PathBuf::from(path),
             };
-            std::fs::metadata(&expanded)
-                .map(|m| m.len() > 0)
-                .unwrap_or(false)
+            std::fs::metadata(&expanded).is_ok_and(|m| m.len() > 0)
         })
     };
     let mut missing = Vec::new();
@@ -327,7 +325,7 @@ fn check_mcp(cfg: &Config) -> Check {
     let servers = v
         .get("mcpServers")
         .and_then(|s| s.as_object())
-        .map_or(0, |m| m.len());
+        .map_or(0, serde_json::Map::len);
     let mut missing_cmds = Vec::new();
     if let Some(map) = v.get("mcpServers").and_then(|s| s.as_object()) {
         for (name, spec) in map {

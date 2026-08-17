@@ -1,10 +1,11 @@
 //! Операционные метрики харнесса из append-only журналов сессий и отчётов.
 //!
-//! Идеи из обзоров (§E.24 SOURCE_BRIEF): first-pass validation rate, доля
+//! Идеи из обзоров (§E.24 `SOURCE_BRIEF)`: first-pass validation rate, доля
 //! ошибок инструментов, стоимость в токенах, прохождение рубрик/бенчей.
 //! Всё считается локально из `sessions/*.jsonl` и `reports/`.
 
 use std::collections::BTreeMap;
+use std::fmt::Write as _;
 use std::path::Path;
 
 use serde::Serialize;
@@ -22,7 +23,7 @@ pub struct HarnessMetrics {
     pub assistant_messages: usize,
     /// Вызовов инструментов.
     pub tool_calls: usize,
-    /// Ошибок инструментов (is_error).
+    /// Ошибок инструментов (`is_error`).
     pub tool_errors: usize,
     /// Грубая оценка токенов (4 символа ≈ 1 токен).
     pub approx_tokens: u64,
@@ -53,6 +54,7 @@ pub struct HarnessMetrics {
 
 impl HarnessMetrics {
     /// Доля ошибок инструментов (0..1).
+    #[must_use]
     pub fn tool_error_rate(&self) -> f64 {
         if self.tool_calls == 0 {
             0.0
@@ -62,12 +64,14 @@ impl HarnessMetrics {
     }
 
     /// First-pass rate: сессии без ошибок инструментов / все сессии с инструментами.
+    #[must_use]
     pub fn first_pass_note(&self) -> String {
         format!("{:.1}%", (1.0 - self.tool_error_rate()) * 100.0)
     }
 
     /// Доля «бездумных согласий» (Esc + выбор рекомендации без изменений),
     /// % от всех интерактивных выборов. None — выборов ещё не было.
+    #[must_use]
     pub fn auto_approval_pct(&self) -> Option<f64> {
         if self.asks == 0 {
             None
@@ -81,6 +85,7 @@ impl HarnessMetrics {
 
     /// Флаг approval theater (обзоры `_24_августа`: >90–95% согласий без
     /// замечаний = театр одобрений) — при выборке от 5 вопросов.
+    #[must_use]
     pub fn approval_theater(&self) -> bool {
         self.asks >= 5 && self.auto_approval_pct().unwrap_or(0.0) >= 90.0
     }
@@ -88,6 +93,7 @@ impl HarnessMetrics {
     /// Стоимость одного проверенного результата (₽): оценка токенов × тариф
     /// / (рубричные отчёты + пройденные бенчи). Грубая прокси-метрика из
     /// обзоров (cost per validated outcome); None — результатов ещё нет.
+    #[must_use]
     pub fn cost_per_outcome(&self) -> Option<f64> {
         let outcomes = self.rubric_reports + self.bench_passed;
         if outcomes == 0 {
@@ -98,32 +104,37 @@ impl HarnessMetrics {
     }
 
     /// Markdown-отчёт.
+    #[must_use]
     pub fn to_markdown(&self) -> String {
         let mut out = String::from("# Метрики харнесса arch\n\n");
-        out.push_str(&format!(
-            "- Сессий: **{}** (user: {}, assistant: {})\n",
+        let _ = writeln!(
+            out,
+            "- Сессий: **{}** (user: {}, assistant: {})",
             self.sessions, self.user_messages, self.assistant_messages
-        ));
-        out.push_str(&format!(
-            "- Вызовов инструментов: **{}**, ошибок: {} ({:.1}%)\n",
+        );
+        let _ = writeln!(
+            out,
+            "- Вызовов инструментов: **{}**, ошибок: {} ({:.1}%)",
             self.tool_calls,
             self.tool_errors,
             self.tool_error_rate() * 100.0
-        ));
-        out.push_str(&format!(
-            "- Оценка токенов: ~{} (≈ {:.2}₽ при 0.1₽/1K)\n",
+        );
+        let _ = writeln!(
+            out,
+            "- Оценка токенов: ~{} (≈ {:.2}₽ при 0.1₽/1K)",
             self.approx_tokens,
             self.approx_tokens as f64 * 0.0001
-        ));
-        out.push_str(&format!(
-            "- Рубричных отчётов: {}, средний балл: {}\n",
+        );
+        let _ = writeln!(
+            out,
+            "- Рубричных отчётов: {}, средний балл: {}",
             self.rubric_reports,
             self.rubric_avg
-                .map(|a| format!("{a:.2}"))
-                .unwrap_or_else(|| "—".into())
-        ));
-        out.push_str(&format!(
-            "- Бенчей: {}, прошло: {} ({})\n",
+                .map_or_else(|| "—".into(), |a| format!("{a:.2}"))
+        );
+        let _ = writeln!(
+            out,
+            "- Бенчей: {}, прошло: {} ({})",
             self.bench_reports,
             self.bench_passed,
             if self.bench_reports > 0 {
@@ -134,38 +145,41 @@ impl HarnessMetrics {
             } else {
                 "—".into()
             }
-        ));
-        out.push_str(&format!("- Cron-отчётов: {}\n", self.cron_reports));
+        );
+        let _ = writeln!(out, "- Cron-отчётов: {}", self.cron_reports);
         out.push_str("\n## Трансформационные KPI (обзоры _24_августа)\n\n");
         match self.auto_approval_pct() {
             Some(pct) => {
-                out.push_str(&format!(
-                    "- Согласия без изменений (Esc + рекомендованное): **{pct:.0}%** из {} выборов{}\n",
+                let _ = writeln!(
+                    out,
+                    "- Согласия без изменений (Esc + рекомендованное): **{pct:.0}%** из {} выборов{}",
                     self.asks,
                     if self.approval_theater() {
                         " — ⚠ approval theater: решения фактически не проверяются человеком"
                     } else {
                         ""
                     }
-                ));
+                );
             }
             None => out.push_str("- Интерактивных выборов ещё не было (propose_options).\n"),
         }
         if self.agentsmd_total > 0 {
-            out.push_str(&format!(
-                "- Architecture drift: **{}/{}** репозиториев реестра с дрейфом AGENTS.md\n",
+            let _ = writeln!(
+                out,
+                "- Architecture drift: **{}/{}** репозиториев реестра с дрейфом AGENTS.md",
                 self.agentsmd_stale, self.agentsmd_total
-            ));
+            );
         }
         if let Some(cpo) = self.cost_per_outcome() {
-            out.push_str(&format!(
-                "- Cost per validated outcome: ≈ **{cpo:.2}₽** (токены × 0.1₽/1K / (рубрики + пройденные бенчи))\n"
-            ));
+            let _ = writeln!(
+                out,
+                "- Cost per validated outcome: ≈ **{cpo:.2}₽** (токены × 0.1₽/1K / (рубрики + пройденные бенчи))"
+            );
         }
         if !self.tools_by_name.is_empty() {
             out.push_str("\n## Инструменты по вызовам\n\n");
             for (name, count) in &self.tools_by_name {
-                out.push_str(&format!("- {name}: {count}\n"));
+                let _ = writeln!(out, "- {name}: {count}");
             }
         }
         out
@@ -181,13 +195,10 @@ pub fn collect(sessions_dir: &Path, reports_dir: &Path) -> Result<HarnessMetrics
     if let Ok(rd) = std::fs::read_dir(sessions_dir) {
         for entry in rd.flatten() {
             let path = entry.path();
-            let is_log = path
-                .file_name()
-                .map(|n| {
-                    let n = n.to_string_lossy();
-                    n.starts_with("session-") && n.ends_with(".jsonl")
-                })
-                .unwrap_or(false);
+            let is_log = path.file_name().is_some_and(|n| {
+                let n = n.to_string_lossy();
+                n.starts_with("session-") && n.ends_with(".jsonl")
+            });
             if !is_log {
                 continue;
             }
@@ -227,23 +238,27 @@ fn parse_journal(text: &str, m: &mut HarnessMetrics) {
                 }
             }
             "tool" => {
-                let is_err = v.get("is_error").and_then(|e| e.as_bool()).unwrap_or(false);
+                let is_err = v
+                    .get("is_error")
+                    .and_then(serde_json::Value::as_bool)
+                    .unwrap_or(false);
                 if is_err {
                     m.tool_errors += 1;
                 }
             }
-            "event" => {
-                if v.get("event").and_then(|e| e.as_str()) == Some("ask") {
-                    m.asks += 1;
-                    if v.get("declined").and_then(|d| d.as_bool()).unwrap_or(false) {
-                        m.asks_declined += 1;
-                    }
-                    if v.get("chose_recommended")
-                        .and_then(|c| c.as_bool())
-                        .unwrap_or(false)
-                    {
-                        m.asks_chose_recommended += 1;
-                    }
+            "event" if v.get("event").and_then(|e| e.as_str()) == Some("ask") => {
+                m.asks += 1;
+                if v.get("declined")
+                    .and_then(serde_json::Value::as_bool)
+                    .unwrap_or(false)
+                {
+                    m.asks_declined += 1;
+                }
+                if v.get("chose_recommended")
+                    .and_then(serde_json::Value::as_bool)
+                    .unwrap_or(false)
+                {
+                    m.asks_chose_recommended += 1;
                 }
             }
             _ => {}
@@ -260,7 +275,11 @@ fn collect_reports(dir: &Path, m: &mut HarnessMetrics) {
     for entry in rd.flatten() {
         let path = entry.path();
         let name = entry.file_name().to_string_lossy().to_string();
-        if name.starts_with("rubric-") && name.ends_with(".md") {
+        if name.starts_with("rubric-")
+            && path
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("md"))
+        {
             if let Ok(text) = std::fs::read_to_string(&path) {
                 m.rubric_reports += 1;
                 // Ищем «X.XX/5» в строке итога.
@@ -283,11 +302,18 @@ fn collect_reports(dir: &Path, m: &mut HarnessMetrics) {
                     }
                 }
             }
-        } else if name.starts_with("bench-") && name.ends_with(".json") {
+        } else if name.starts_with("bench-")
+            && path
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("json"))
+        {
             if let Ok(text) = std::fs::read_to_string(&path) {
                 if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
                     m.bench_reports += 1;
-                    if v.get("passed").and_then(|p| p.as_bool()).unwrap_or(false) {
+                    if v.get("passed")
+                        .and_then(serde_json::Value::as_bool)
+                        .unwrap_or(false)
+                    {
                         m.bench_passed += 1;
                     }
                 }

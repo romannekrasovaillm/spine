@@ -46,7 +46,7 @@ enum Cmd {
         /// Для скриптов и пайпов: `arch run -q "…" > answer.md`.
         #[arg(long, short = 'q')]
         quiet: bool,
-        /// Ризонинг-режим: on|off (в запросы сливается карта thinking_on/off
+        /// Ризонинг-режим: on|off (в запросы сливается карта `thinking_on/off`
         /// из конфига модели; без флага — дефолт провайдера).
         #[arg(long, value_name = "on|off")]
         think: Option<String>,
@@ -308,7 +308,7 @@ enum BenchCmd {
         #[arg(long)]
         model: Option<String>,
         /// Прогон судьи по golden-set (assets/benchmarks/golden): метрика
-        /// согласия с эталоном MAE; выше порога judge.golden_max_mae — exit 1.
+        /// согласия с эталоном MAE; выше порога `judge.golden_max_mae` — exit 1.
         #[arg(long)]
         golden: bool,
     },
@@ -339,7 +339,7 @@ enum McpCmd {
     List,
     /// Вызвать MCP-инструмент.
     Call {
-        /// Составное имя server__tool.
+        /// Составное имя `server__tool`.
         name: String,
         /// Аргументы JSON.
         #[arg(default_value = "{}")]
@@ -421,7 +421,7 @@ enum ModelCmd {
         dir: PathBuf,
     },
     /// Экспорт модели (SYS/CMP/INT + связи) в отраслевой формат (ADR-009):
-    /// Structurizr DSL, PlantUML или drawio — на stdout.
+    /// Structurizr DSL, `PlantUML` или drawio — на stdout.
     Export {
         /// Каталог модели.
         dir: PathBuf,
@@ -471,12 +471,12 @@ enum NfrCmd {
         dir: PathBuf,
     },
     /// Пропускная способность: RPS-цель против ёмкости компонентов
-    /// (instances × rps_per_instance); дефицит — error (exit code 1).
+    /// (instances × `rps_per_instance`); дефицит — error (exit code 1).
     Capacity {
         /// Корень кейса (каталог с model/).
         dir: PathBuf,
     },
-    /// Стоимость: TCO (инстансы × тариф) и цена выхода (Σ exit_cost)
+    /// Стоимость: TCO (инстансы × тариф) и цена выхода (Σ `exit_cost`)
     /// по тарифным данным сущностей.
     Cost {
         /// Корень кейса (каталог с model/).
@@ -690,6 +690,7 @@ async fn main() -> Result<()> {
             repo,
             task,
         }) => {
+            use arch_harness::harness::Termination;
             let hcfg = cfg
                 .harnesses
                 .get(&harness)
@@ -706,7 +707,6 @@ async fn main() -> Result<()> {
             }
             let run = arch_harness::harness::run_harness(&harness, &hcfg_owned, &repo, &task_text)
                 .await?;
-            use arch_harness::harness::Termination;
             if let Some(ac) = &run.auto_commit {
                 println!(
                     "⚑ авто-коммит: исполнитель не зафиксировал результат — {} путей → {} «{}»",
@@ -770,12 +770,7 @@ async fn main() -> Result<()> {
                     Some(h) => format!("{} ({:?})", h.binary, h.prompt_mode),
                     None => "не настроен".into(),
                 };
-                let installed = which(
-                    &cfg.harnesses
-                        .get(name)
-                        .map(|h| h.binary.as_str())
-                        .unwrap_or(name),
-                );
+                let installed = which(cfg.harnesses.get(name).map_or(name, |h| h.binary.as_str()));
                 println!("  {name:<14} {status:<40} {installed}");
             }
         }
@@ -891,7 +886,7 @@ fn cmd_init(cfg: &Config) -> Result<()> {
 
 /// `arch run`: headless агент.
 ///
-/// Строгий режим (`--quiet`, как `dsh --profile headless` у DeepSeek
+/// Строгий режим (`--quiet`, как `dsh --profile headless` у `DeepSeek`
 /// Harness) = без стриминга: stdout несёт ТОЛЬКО финальный ответ ассистента
 /// (пригоден для пайпов), события хода молчат; пустая задача отклоняется
 /// до запуска; сбой — причина в stderr и ненулевой код выхода.
@@ -1051,21 +1046,14 @@ async fn cmd_rubric(cfg: &Arc<Config>, cmd: RubricCmd) -> Result<()> {
             };
             let text = std::fs::read_to_string(&target)
                 .with_context(|| format!("чтение {}", target.display()))?;
-            let rub = match dynamic_subject {
-                Some(subject) => {
-                    let anchor_path = resolve_asset(&cfg.paths.rubrics_dir(), &rubric, "yaml");
-                    let anchor = arch_harness::rubric::load(&anchor_path).ok();
-                    arch_harness::rubric::generate_dynamic(
-                        &subject,
-                        anchor.as_ref(),
-                        judge.as_ref(),
-                    )
+            let rub = if let Some(subject) = dynamic_subject {
+                let anchor_path = resolve_asset(&cfg.paths.rubrics_dir(), &rubric, "yaml");
+                let anchor = arch_harness::rubric::load(&anchor_path).ok();
+                arch_harness::rubric::generate_dynamic(&subject, anchor.as_ref(), judge.as_ref())
                     .await?
-                }
-                None => {
-                    let path = resolve_asset(&cfg.paths.rubrics_dir(), &rubric, "yaml");
-                    arch_harness::rubric::load(&path)?
-                }
+            } else {
+                let path = resolve_asset(&cfg.paths.rubrics_dir(), &rubric, "yaml");
+                arch_harness::rubric::load(&path)?
             };
             let report = arch_harness::rubric::evaluate(&rub, &text, judge.as_ref()).await?;
             println!("{}", report.to_markdown());
@@ -1380,7 +1368,7 @@ fn cmd_model(cmd: ModelCmd) -> Result<()> {
             print!("{text}");
         }
         ModelCmd::Import { file, format, dir } => {
-            if format.trim().to_ascii_lowercase() != "structurizr" {
+            if !format.trim().eq_ignore_ascii_case("structurizr") {
                 anyhow::bail!(
                     "импорт поддерживает только --format structurizr (получено: '{format}')"
                 );
@@ -1594,9 +1582,9 @@ fn cmd_policy(cfg: &Config, check: Option<String>) -> Result<()> {
             );
             match &decision {
                 PolicyDecision::RequireConfirm(m) | PolicyDecision::Deny(m) => {
-                    println!("причина: {m}")
+                    println!("причина: {m}");
                 }
-                _ => {}
+                PolicyDecision::Allow => {}
             }
         }
     }
@@ -1864,8 +1852,10 @@ fn which(binary: &str) -> String {
         .output()
         .ok()
         .filter(|o| o.status.success())
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-        .unwrap_or_else(|| "MISSING".into())
+        .map_or_else(
+            || "MISSING".into(),
+            |o| String::from_utf8_lossy(&o.stdout).trim().to_string(),
+        )
 }
 
 /// Метка времени для имён отчётов.

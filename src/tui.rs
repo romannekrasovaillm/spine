@@ -5,11 +5,11 @@
 //!   чат с агентом (стриминг дельт, markdown-lite подсветка, статус вызовов
 //!   инструментов), правая колонка с вкладками (Mermaid / Рубрика / Знания),
 //!   статус-бар (модель, токены, cwd); ASCII-баннер при старте
-//!   (assets::BANNER);
+//!   (`assets::BANNER`);
 //! - палитра Tokyo Night: bg #1a1b26, fg #c0caf5, cyan #7dcfff,
 //!   purple #bb9af7, green #9ece6a, orange #ff9e64, red #f7768e, muted #565f89;
-//! - событийная модель: crossterm EventStream + mpsc-каналы (агентные
-//!   события AgentEvent), bounded-каналы, graceful shutdown по Ctrl-C/q/Esc,
+//! - событийная модель: crossterm `EventStream` + mpsc-каналы (агентные
+//!   события `AgentEvent`), bounded-каналы, graceful shutdown по Ctrl-C/q/Esc,
 //!   восстановление терминала при панике (RAII-гард + panic hook);
 //! - ввод: история команд (Up/Down), автодополнение слэш-команд по Tab.
 //!

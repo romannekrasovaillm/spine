@@ -455,6 +455,7 @@ impl McpManager {
     }
 
     /// Имена подключённых серверов.
+    #[must_use]
     pub fn server_names(&self) -> Vec<String> {
         self.servers.iter().map(|s| s.config.name.clone()).collect()
     }

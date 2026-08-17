@@ -34,7 +34,7 @@ pub enum HarnessError {
     Json(#[from] serde_json::Error),
     /// Ошибка YAML-сериализации.
     #[error(transparent)]
-    Yaml(#[from] serde_yaml::Error),
+    Yaml(#[from] serde_yaml_ng::Error),
     /// Ошибка разбора TOML.
     #[error(transparent)]
     Toml(#[from] toml::de::Error),

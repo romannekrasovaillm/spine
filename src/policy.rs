@@ -53,7 +53,7 @@ impl Policy {
     /// # Errors
     /// Неизвестный уровень.
     pub fn parse(s: &str) -> Result<Self, crate::error::HarnessError> {
-        let digits: String = s.chars().filter(|c| c.is_ascii_digit()).collect();
+        let digits: String = s.chars().filter(char::is_ascii_digit).collect();
         let level: u8 = digits.parse().map_err(|_| {
             crate::error::HarnessError::Config(format!(
                 "некорректный уровень автономии '{s}' (R0–R5)"
@@ -68,6 +68,7 @@ impl Policy {
     }
 
     /// Решение по инструменту и его аргументам.
+    #[must_use]
     pub fn check(&self, tool: &str, args: &serde_json::Value) -> PolicyDecision {
         let class = classify_tool(tool, args);
         match class {
@@ -101,6 +102,7 @@ impl Policy {
 }
 
 /// Классификация инструмента по риску; bash — по тексту команды.
+#[must_use]
 pub fn classify_tool(tool: &str, args: &serde_json::Value) -> RiskClass {
     match tool {
         "bash" => {
@@ -181,6 +183,7 @@ const MUTATING_PATTERNS: &[&str] = &[
 ];
 
 /// Классификация bash-команды по тексту.
+#[must_use]
 pub fn classify_bash(command: &str) -> RiskClass {
     let cmd = command.trim();
     for pat in DESTRUCTIVE_PATTERNS {

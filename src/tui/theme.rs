@@ -69,7 +69,7 @@ impl Theme {
         Style::default().fg(self.purple).bg(self.bg)
     }
 
-    /// Код-блок markdown: мягкая панель Tokyo Night (bg_highlight #24283b,
+    /// Код-блок markdown: мягкая панель Tokyo Night (`bg_highlight` #24283b,
     /// текст #a9b1d6) — читается как редактор, без жёсткой инверсии.
     pub(crate) fn code(&self) -> Style {
         Style::default()

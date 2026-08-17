@@ -343,7 +343,7 @@ fn nfr_budget_converging_exits_0() {
 }
 
 /// `arch nfr budget`: сумма hop'ов выше цели p99 → error с виновными hop'ами,
-/// exit 1 (DoD P1-1, скриптовый гейт).
+/// exit 1 (`DoD` P1-1, скриптовый гейт).
 #[test]
 fn nfr_budget_exceeded_exits_1_with_guilty_hops() {
     let tmp = tempfile::tempdir().expect("tempdir");
