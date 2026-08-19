@@ -244,6 +244,12 @@ CI-джобой `dogfood` (`arch control spine` + `arch control check .` + ск�
   Claude Code, бэкенд deepseek-v4-pro): десять эпиков за ~3,2 мин стены —
   10/10 complete, 42/42 тестов, 60/60 fitness; флот сам закоммитил работу
   (контракт «Финализация»); цветные кадры в `screenshots/`.
+  Кейс 006 — [`drift-control`](кейсы/drift-control/) (дрейф-эксперимент,
+  две руки; Claude Code): одна задача платёжного ядра — голая vs с
+  handoff-пакетом; механический гейт: FAIL 2/6 exit 1 (нет thiserror, нет
+  идемпотентности — дрейф при зелёных тестах) против PASS 6/6; обе руки
+  воспроизводимо перепроверяются из репозитория; цветные кадры в
+  `screenshots/`.
 
 #### Прочее
 
@@ -635,7 +641,14 @@ parallel Claude Code executors, ten epics of the bankcalc library) — ~3.2
 min wall clock, 10/10 complete, 42/42 tests, 60/60 fitness rules,
 first-build integration; every executor committed its own work (the
 "Finalization" contract) — the auto-commit safety net never fired; color
-frames in `screenshots/`.
+frames in `screenshots/`. Case 006: [`drift-control`](кейсы/drift-control/)
+(a controlled drift experiment, two arms; Claude Code) — the same
+payment-core task bare vs with a handoff package (3 spine invariants + 6
+fitness rules); the mechanical gate fails the bare arm 2/6 with exit 1
+(no thiserror, no idempotency — drift with all tests green) and passes
+the spine arm 6/6 with a real idempotency inbox; both solutions ship in
+the case and are re-checkable from the repo with one `arch control check`
+command; color frames in `screenshots/`.
 
 **Plus**: beautiful Tokyo Night TUI (markdown chat, mermaid→Unicode diagrams —
 the side panel auto-widens up to 60% of the screen so renders are never

@@ -711,4 +711,122 @@ mod tests {
             &snap(&mut app, 150, 30, "arch — флот коммитит сам (кейс 005)"),
         );
     }
+
+    /// Кадры кейса 006 (кейсы/drift-control/screenshots): дрейф-эксперимент —
+    /// одна задача двум рукам (голая vs спайн+CONSTRAINTS), один гейт судит обе.
+    #[test]
+    fn gen_case06_screenshots() {
+        if std::env::var("ARCH_GEN_SHOTS").is_err() {
+            return; // генерация — только по явному запросу
+        }
+        let out = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("кейсы/drift-control/screenshots");
+        std::fs::create_dir_all(&out).expect("mkdir");
+
+        // A. Две руки: одна и та же задача платёжного ядра — голая и с пакетом;
+        //    механический гейт судит обе одними правилами.
+        let mut app = test_app();
+        app.screen = Screen::Chat;
+        app.model_name = "deepseek:deepseek-v4-flash".into();
+        app.tool_ctx.cwd = std::path::PathBuf::from("/home/user/drift-lab");
+        app.push_block(ChatBlock::User(
+            "дрейф-эксперимент: одна задача «платёжное ядро» двум рукам — \
+             A голая, B с handoff-пакетом (AD-1…3 + C-01…06); судит control check"
+                .into(),
+        ));
+        app.push_block(ChatBlock::Tool {
+            name: "handoff_create".into(),
+            state: ToolState::Ok,
+            summary: "рука B: TASK.md · ARCHITECTURE-SPINE.md (AD-1…3) · \
+                 CONSTRAINTS.yaml (6 правил critical)"
+                .into(),
+        });
+        app.push_block(ChatBlock::Tool {
+            name: "harness_run".into(),
+            state: ToolState::Ok,
+            summary: "рука A: claude-code · код 0 · 371.9 с · cargo test 32/32 · \
+                 коммит c185a69"
+                .into(),
+        });
+        app.push_block(ChatBlock::Tool {
+            name: "harness_run".into(),
+            state: ToolState::Ok,
+            summary: "рука B: claude-code · код 0 · 360.4 с · cargo test 19/19 · \
+                 коммит 6a0ee75"
+                .into(),
+        });
+        app.push_block(ChatBlock::Tool {
+            name: "control_check".into(),
+            state: ToolState::Error,
+            summary: "рука A: FAIL · 2 error — C-02 thiserror не найден в Cargo.toml · \
+                 C-05 идемпотентность не найдена · exit 1"
+                .into(),
+        });
+        app.push_block(ChatBlock::Tool {
+            name: "control_check".into(),
+            state: ToolState::Ok,
+            summary: "рука B: PASS · 6/6 правил · нарушений нет · exit 0".into(),
+        });
+        app.push_block(ChatBlock::Assistant(
+            "**Дрейф пойман механически.** Рука A сдала добротный код: 6 модулей,\n\
+             32 зелёных теста, f64 не выбрала сама — но ошибки оформила рукописным\n\
+             enum вместо thiserror и вообще без идемпотентности. Дрейф ровно по\n\
+             орг-инвариантам: модель их не угадывает, они должны доезжать в пакете."
+                .into(),
+        ));
+        app.panels.mermaid = crate::mermaid::render(
+            "flowchart TD\n  T[задача: платёжное ядро] --> A[рука A: голая]\n  \
+             T --> B[рука B: + спайн AD-1…3]\n  A --> GA[гейт: FAIL 2/6]\n  \
+             B --> GB[гейт: PASS 6/6]",
+        )
+        .expect("рендер mermaid");
+        set_context_usage(&mut app, 64_300, 1_000_000);
+        write(
+            &out,
+            "run.svg",
+            &snap(&mut app, 150, 38, "arch — дрейф-эксперимент (кейс 006)"),
+        );
+
+        // B. Спайн удержал: рука B прошла не формально — настоящий inbox
+        //    идемпотентности, исполнитель сам сверился с критериями приёмки.
+        let mut app = test_app();
+        app.screen = Screen::Chat;
+        app.model_name = "deepseek:deepseek-v4-flash".into();
+        app.tool_ctx.cwd = std::path::PathBuf::from("/home/user/drift-lab");
+        app.push_block(ChatBlock::User(
+            "рука B прошла 6/6 — проверь, что это не строки под линтер".into(),
+        ));
+        app.push_block(ChatBlock::Tool {
+            name: "bash".into(),
+            state: ToolState::Ok,
+            summary: "Cargo.lock: thiserror 2.0.20 — реальная зависимость; \
+                 PaymentProcessor::authorize — inbox по ключу"
+                .into(),
+        });
+        app.push_block(ChatBlock::Tool {
+            name: "control_check".into(),
+            state: ToolState::Ok,
+            summary: "armB-solution: PASS · 6/6 · повторный authorize по ключу \
+                 возвращает первый результат без повторного эффекта"
+                .into(),
+        });
+        app.push_block(ChatBlock::Assistant(
+            "**Не формальность.** Идемпотентность — настоящий inbox: повтор с тем же\n\
+             ключом клонирует первый платёж, ошибка возвращается та же. Цена спайна\n\
+             по стене — нулевая: 360 с против 372 с у голой руки. Гейт воспроизводим:\n\
+             `arch control check кейсы/drift-control/armB-solution -c …` → exit 0."
+                .into(),
+        ));
+        app.panels.mermaid = crate::mermaid::render(
+            "flowchart TD\n  S[спайн AD-1…3 + C-01…06] --> H[рука B]\n  \
+             H --> I[inbox идемпотентности]\n  I --> P[PASS 6/6]",
+        )
+        .expect("рендер mermaid");
+        set_context_usage(&mut app, 41_900, 1_000_000);
+        write(
+            &out,
+            "gate.svg",
+            &snap(&mut app, 150, 32, "arch — спайн удержал (кейс 006)"),
+        );
+    }
 }
