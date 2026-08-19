@@ -4,6 +4,10 @@
 //!
 //! Каталог изменений — `changes/` в репозитории: предложенные на верхнем
 //! уровне, заархивированные — в `changes/archive/`.
+//!
+//! [`guard`] — CI-гейт прямых правок спайна мимо дельты: изменённые файлы под
+//! защищёнными путями (по умолчанию `model/`, `ARCHITECTURE-SPINE.md`,
+//! `CONSTRAINTS.yaml`) обязаны упоминаться в активной дельте, иначе FAIL.
 
 use std::path::{Path, PathBuf};
 
@@ -225,6 +229,173 @@ fn find_delta(repo: &Path, name: &str) -> Result<PathBuf> {
     )))
 }
 
+/// Защищаемые пути по умолчанию гейта прямых правок спайна (`delta guard`):
+/// модель архитектуры и корневые spine-артефакты. Любой явный `--protect`
+/// заменяет этот список целиком.
+pub const DEFAULT_PROTECTED: [&str; 3] = ["model/", "ARCHITECTURE-SPINE.md", "CONSTRAINTS.yaml"];
+
+/// Отчёт гейта прямых правок спайна.
+#[derive(Debug, Clone)]
+pub struct GuardReport {
+    /// База diff, как передана в git.
+    pub base: String,
+    /// Всего изменённых файлов по diff.
+    pub changed: usize,
+    /// Изменённые защищённые файлы.
+    pub protected_changed: Vec<String>,
+    /// Покрытые правки: (файл, имя активной дельты).
+    pub covered: Vec<(String, String)>,
+    /// Нарушения: защищённые файлы без упоминания в активных дельтах.
+    pub violations: Vec<String>,
+    /// Гейт пройден (нет непокрытых правок защищённых путей).
+    pub passed: bool,
+}
+
+/// Защищён ли путь: совпадение с записью-файлом или вхождение в каталог-префикс
+/// (`model/` матчит `model/adr/ADR-003.md`; запись без слэша трактуется и как
+/// каталог: `model` тоже матчит).
+fn is_protected(path: &str, protected: &[String]) -> bool {
+    protected.iter().any(|entry| {
+        let e = entry.trim_end_matches('/');
+        path == e || path.starts_with(&format!("{e}/"))
+    })
+}
+
+/// Упоминает ли текст дельты файл: полным относительным путём, именем файла
+/// или стемом (от 4 символов — короткие стемы вроде `a` не матчим).
+fn delta_mentions(body: &str, path: &str) -> bool {
+    if body.contains(path) {
+        return true;
+    }
+    let name = Path::new(path)
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    if !name.is_empty() && body.contains(&name) {
+        return true;
+    }
+    let stem = Path::new(path)
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    stem.chars().count() >= 4 && body.contains(&stem)
+}
+
+/// Гейт прямых правок спайна мимо дельты (CI-запрет «прямых коммитов в model/
+/// мимо changes/»): каждый изменённый защищённый файл обязан упоминаться
+/// (путём или именем) в теле хотя бы одной АКТИВНОЙ дельты
+/// `changes/<name>/DELTA.md`; архивные дельты не засчитываются.
+///
+/// Изменённые файлы — `git diff --name-only <base>` (дефолт `HEAD`: staged +
+/// unstaged рабочего дерева; untracked-файлы git-diff не показывает — для CI
+/// передавайте базу вида `origin/main...HEAD`).
+///
+/// # Errors
+/// `git` недоступен или вернул ненулевой код (не репозиторий, плохая база).
+pub fn guard(repo: &Path, base: Option<&str>, protect: &[String]) -> Result<GuardReport> {
+    let protected: Vec<String> = if protect.is_empty() {
+        DEFAULT_PROTECTED.iter().map(|s| (*s).to_string()).collect()
+    } else {
+        protect.to_vec()
+    };
+    let base = base.unwrap_or("HEAD").to_string();
+    let out = std::process::Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(["diff", "--name-only", &base])
+        .output()
+        .map_err(|e| HarnessError::Control(format!("git не запустился: {e}")))?;
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        return Err(HarnessError::Control(format!(
+            "git diff --name-only {base}: {}",
+            stderr.trim().chars().take(300).collect::<String>()
+        )));
+    }
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let changed: Vec<String> = stdout
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .map(str::to_owned)
+        .collect();
+
+    // Тела активных дельт (архив — уже влитая истина, покрытием не считается).
+    let mut active: Vec<(String, String)> = Vec::new();
+    for d in list(repo) {
+        if d.status != DeltaStatus::Proposed {
+            continue;
+        }
+        let body = std::fs::read_to_string(&d.path).map_err(|e| HarnessError::io(&d.path, e))?;
+        active.push((d.name, body));
+    }
+
+    let mut protected_changed = Vec::new();
+    let mut covered = Vec::new();
+    let mut violations = Vec::new();
+    for file in changed.iter().filter(|f| is_protected(f, &protected)) {
+        protected_changed.push(file.clone());
+        match active.iter().find(|(_, body)| delta_mentions(body, file)) {
+            Some((name, _)) => covered.push((file.clone(), name.clone())),
+            None => violations.push(file.clone()),
+        }
+    }
+    let passed = violations.is_empty();
+    Ok(GuardReport {
+        base,
+        changed: changed.len(),
+        protected_changed,
+        covered,
+        violations,
+        passed,
+    })
+}
+
+/// Текстовый рендер отчёта гейта (в стиле остальных delta-команд).
+#[must_use]
+pub fn render_guard(report: &GuardReport) -> String {
+    use std::fmt::Write as _;
+    let mut out = String::new();
+    let _ = writeln!(out, "Гейт прямых правок спайна (база: {})", report.base);
+    let _ = writeln!(
+        out,
+        "Изменённых файлов: {}, защищённых среди них: {}",
+        report.changed,
+        report.protected_changed.len()
+    );
+    if !report.protected_changed.is_empty() {
+        out.push('\n');
+        for (file, delta) in &report.covered {
+            let _ = writeln!(out, "[ok] {file} — покрыт активной дельтой '{delta}'");
+        }
+        for file in &report.violations {
+            let _ = writeln!(
+                out,
+                "[error] {file} — не упоминается ни в одной активной дельте"
+            );
+            let _ = writeln!(
+                out,
+                "  → оформите правку дельтой: arch delta new <name>, опишите изменение \
+                 в changes/<name>/DELTA.md (архивные дельты не засчитываются)"
+            );
+        }
+    }
+    let _ = writeln!(
+        out,
+        "\nИтог: {}",
+        if report.passed {
+            if report.protected_changed.is_empty() {
+                "PASS — защищённые пути не затронуты"
+            } else {
+                "PASS — все правки спайна покрыты активными дельтами"
+            }
+        } else {
+            "FAIL — правки спайна мимо дельты (exit 1)"
+        }
+    );
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -280,5 +451,118 @@ mod tests {
         assert!(archive(repo, "saga-pilot").is_err());
         // Несуществующая дельта — внятная ошибка.
         assert!(validate(repo, "ghost").is_err());
+    }
+
+    /// git в каталоге с тестовой идентичностью коммиттера.
+    fn git(dir: &Path, args: &[&str]) {
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(args)
+            .env("GIT_AUTHOR_NAME", "t")
+            .env("GIT_AUTHOR_EMAIL", "t@t")
+            .env("GIT_COMMITTER_NAME", "t")
+            .env("GIT_COMMITTER_EMAIL", "t@t")
+            .output()
+            .expect("git");
+        assert!(
+            out.status.success(),
+            "git {}: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    /// Репо-фикстура гейта: git init + защищённые файлы и код, один коммит.
+    fn make_guard_repo(dir: &Path) {
+        std::fs::create_dir_all(dir).expect("mkdir");
+        git(dir, &["init", "-q"]);
+        std::fs::create_dir_all(dir.join("model/adr")).expect("mkdir model");
+        std::fs::write(dir.join("model/adr/ADR-003.md"), "# ADR-003\n").expect("adr");
+        std::fs::write(dir.join("ARCHITECTURE-SPINE.md"), "# Spine\n").expect("spine");
+        std::fs::create_dir_all(dir.join("src")).expect("mkdir src");
+        std::fs::write(dir.join("src/main.rs"), "fn main() {}\n").expect("src");
+        git(dir, &["add", "."]);
+        git(dir, &["commit", "-q", "-m", "init"]);
+    }
+
+    #[test]
+    fn guard_flags_protected_change_without_delta() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let repo = tmp.path().join("repo");
+        make_guard_repo(&repo);
+        // Прямая правка model/ без дельты (незакоммиченная — база HEAD ловит).
+        std::fs::write(repo.join("model/adr/ADR-003.md"), "# ADR-003 v2\n").expect("edit");
+        let report = guard(&repo, None, &[]).expect("guard");
+        assert!(!report.passed);
+        assert_eq!(report.violations, vec!["model/adr/ADR-003.md".to_string()]);
+        assert!(report.covered.is_empty());
+        let text = render_guard(&report);
+        assert!(text.contains("arch delta new"), "{text}");
+        assert!(text.contains("FAIL"), "{text}");
+    }
+
+    #[test]
+    fn guard_passes_when_active_delta_mentions_file() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let repo = tmp.path().join("repo");
+        make_guard_repo(&repo);
+        std::fs::write(repo.join("model/adr/ADR-003.md"), "# ADR-003 v2\n").expect("edit");
+        // Активная дельта упоминает файл стемом (ADR-003) — засчитывается.
+        let path = new(&repo, "update-adr-003").expect("new");
+        let body = std::fs::read_to_string(&path).expect("read");
+        std::fs::write(&path, format!("{body}\nЗатронут ADR-003 (таймауты).\n")).expect("mention");
+        let report = guard(&repo, None, &[]).expect("guard");
+        assert!(report.passed, "{report:?}");
+        assert_eq!(
+            report.covered,
+            vec![(
+                "model/adr/ADR-003.md".to_string(),
+                "update-adr-003".to_string()
+            )]
+        );
+        assert!(render_guard(&report).contains("PASS"));
+    }
+
+    #[test]
+    fn guard_ignores_archived_delta() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let repo = tmp.path().join("repo");
+        make_guard_repo(&repo);
+        std::fs::write(repo.join("model/adr/ADR-003.md"), "# ADR-003 v2\n").expect("edit");
+        let path = new(&repo, "update-adr-003").expect("new");
+        fill_delta(&path);
+        let body = std::fs::read_to_string(&path).expect("read");
+        std::fs::write(&path, format!("{body}\nПравка model/adr/ADR-003.md.\n")).expect("mention");
+        archive(&repo, "update-adr-003").expect("archive");
+        // Архивная дельта — уже влитая истина, покрытием не считается.
+        let report = guard(&repo, None, &[]).expect("guard");
+        assert!(!report.passed, "архив не покрывает: {report:?}");
+        assert_eq!(report.violations.len(), 1);
+    }
+
+    #[test]
+    fn guard_passes_on_unprotected_change_and_protect_override() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let repo = tmp.path().join("repo");
+        make_guard_repo(&repo);
+        // Правка незащищённого файла — гейт молчит.
+        std::fs::write(repo.join("src/main.rs"), "fn main() { println!(\"x\"); }\n").expect("edit");
+        let report = guard(&repo, None, &[]).expect("guard");
+        assert!(report.passed, "{report:?}");
+        assert!(report.protected_changed.is_empty());
+        assert!(render_guard(&report).contains("не затронуты"));
+        // Явный --protect заменяет дефолт: теперь src/ под защитой → нарушение.
+        let report = guard(&repo, None, &["src/".to_string()]).expect("guard override");
+        assert!(!report.passed);
+        assert_eq!(report.violations, vec!["src/main.rs".to_string()]);
+    }
+
+    #[test]
+    fn guard_reports_git_errors() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        // Не репозиторий — внятная ошибка, не паника.
+        let err = guard(tmp.path(), None, &[]).expect_err("не git");
+        assert!(err.to_string().contains("git diff"), "{err}");
     }
 }

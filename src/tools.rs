@@ -7,7 +7,7 @@
 //! - [`core_registry`] — реестр ядерных инструментов;
 //! - [`full_registry`] — ядро + доменные инструменты (`mermaid::tools()`,
 //!   `rubric::tools()`, `web::tools()`, `kb::tools()`, `control::tools()`,
-//!   `model::tools()`, `trace::tools()`, `harness::tools()`).
+//!   `model::tools()`, `trace::tools()`, `harness::tools()`, `fleet`).
 
 use std::sync::Arc;
 
@@ -58,6 +58,7 @@ fn domain_tools(cfg: &Config) -> Vec<Arc<dyn Tool>> {
     out.extend(crate::subagent::tools(cfg));
     out.extend(crate::ralph::tools(cfg));
     out.push(Arc::new(crate::worktree::WorktreeNewTool));
+    out.push(Arc::new(crate::fleet::FleetAuditTool));
     out.extend(crate::distill::tools(cfg));
     out
 }
@@ -79,6 +80,7 @@ mod tests {
             "subagent_result",
             "ralph_run",
             "worktree_new",
+            "fleet_audit",
             "skill_distill",
             "skill_search",
             "mermaid_render",

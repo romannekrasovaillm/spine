@@ -62,6 +62,7 @@
 | `skill_search` / `skill_load` / `plugin_list` | Библиотека методик (плагины) — поиск и подгрузка в контекст |
 | `skill_distill` | Дистилляция статьи/конспекта в новый скилл библиотеки |
 | `handoff_create` / `harness_run` | Передача контекста кодовому харнессу и прогон исполнителя |
+| `fleet_audit` | SSOT-аудит флота worktree: точные дубли и дрейф копий спайна (модель 5.2) |
 | `agentsmd_generate` / `agentsmd_lint` | AGENTS.md для репозиториев команд + дрейф-контроль |
 
 Ниже — полные таблицы с параметрами и правилами.
@@ -183,12 +184,13 @@ ER — атрибуты и кардинальности связей; C4 — Per
 | `adr_new` | ADR по шаблону AI-DLC в `docs/adr/` (очередной номер, kebab-title) | `title`* |
 | `spine_lint` | Линтер ARCHITECTURE-SPINE.md: дубли AD-id, пустые Binds/Prevents/Rule, заглушки, непиннутые версии | `path`* |
 | `fitness_check` | Fitness functions из CONSTRAINTS.yaml по репозиторию → PASS/FAIL с находками `file:line` | `repo`*; `constraints` (путь к YAML, иначе `<repo>/.arch-handoff/CONSTRAINTS.yaml`) |
+| `fleet_audit` | SSOT-аудит флота worktree (модель «5.2 + дельта-протокол»): точные дубли документации, файлы-ядро, дрейф копий спайна с поимёнными отступниками (канон — majority-версия); вердикт DRIFT — сигнал нарушения SSOT, CLI `arch fleet audit` на дрейфе даёт exit 1 (гейт CI) | `paths` — массив каталогов-worktree; `repo` (перечисление из `git worktree list`); `include` — glob'ы сужения; `format` (`text`/`json`) |
 
 ## Передача кодовым харнессам
 
 | Инструмент | Назначение | Параметры |
 |---|---|---|
-| `handoff_create` | Handoff-пакет `.arch-handoff/` (TASK.md, ARCHITECTURE.md, CONSTRAINTS.yaml, MANIFEST.json, adr/) для кодового харнесса; предгейт: гарантирует git-репозиторий и baseline-коммит (якорь отката); TASK.md включает план отката и требование финального коммита | `repo`*, `task`*; `spec` — массив путей к спекам/ADR; `rollback` — явный план отката; `route` (`fast`/`standard`/`critical`) — рекомендованный таймаут прогона 1800/3600/7200 с (в MANIFEST, подхватывает `harness_run`) |
+| `handoff_create` | Handoff-пакет `.arch-handoff/` (TASK.md, ARCHITECTURE.md, CONSTRAINTS.yaml, SPEC.md — шаблон верифицируемых контрактов интерфейсов, MANIFEST.json, adr/) для кодового харнесса; предгейт: гарантирует git-репозиторий и baseline-коммит (якорь отката); TASK.md включает план отката и требование финального коммита | `repo`*, `task`*; `spec` — массив путей к спекам/ADR; `rollback` — явный план отката; `route` (`fast`/`standard`/`critical`) — рекомендованный таймаут прогона 1800/3600/7200 с (в MANIFEST, подхватывает `harness_run`) |
 | `harness_run` | Прогон пакета кодовым харнессом через настроенный адаптер (stdin/flag/positional, env): абсолютный потолок 30 мин + таймаут тишины 10 мин (heartbeat по mtime репо), прерывание убивает всю процессную группу, частичный вывод возвращается; JSON-контракт результата разбирается механически (валидация схемы, эскалация blocked/conflicts/open_questions); авто-коммит незакоммиченного хвоста исполнителя. Не путать с bash — там квотинг ломает промпт, потолок 1800 с и нет heartbeat | `harness`* (claude-code, qwen-code, openclaw, hermes, theseus, codewhale, kimi-code), `repo`*; `task` (иначе `<repo>/.arch-handoff/TASK.md`); `timeout_secs` |
 
 Харнессы: Claude Code, Qwen Code, OpenClaw, Hermes, Theseus, CodeWhale —

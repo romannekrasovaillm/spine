@@ -161,6 +161,28 @@ BMAD, Spec Kit, OpenSpec и др.):
 - `worktree_new` + `arch worktree new|list|diff|accept|drop` — изоляция
   агентной работы в git worktree; review/accept — человеком.
 
+#### Слоистая модель 5.2 + дельта-протокол
+
+Инструментарий для флотов worktree БЕЗ полных копий спайна (по разбору
+реального кейса: 15 worktree × полная копия → 90% дублей, дрейф копий):
+спайн — в одной копии (SSOT), компонент несёт lean-дельту, изменения спайна —
+только дельтами `changes/<id>`.
+
+- `arch fleet audit <paths…>|--repo <path>` — SSOT-аудит флота: точные дубли
+  документации, файлы-ядро, дрейф копий с поимёнными отступниками
+  (канон — majority-версия); дрейф → **exit 1**, порог дублей —
+  `--fail-on-dupes <pct>` (гейты для CI). Агенту — инструмент `fleet_audit`.
+- `arch delta guard [--base origin/main...HEAD] [--protect <префикс>]` —
+  CI-запрет прямых правок спайна мимо дельты: изменённые файлы под
+  `model/`, `ARCHITECTURE-SPINE.md`, `CONSTRAINTS.yaml` обязаны упоминаться
+  в активной дельте `changes/*/DELTA.md`, иначе **exit 1**.
+- **SPEC.md в handoff-пакете** — шаблон верифицируемых контрактов интерфейсов
+  (входы/выходы, структуры данных, границы ошибок, критерии верификации;
+  EARS-стиль) вместо прозаического ARCHITECTURE.md компонента; как и
+  CONSTRAINTS.yaml, не затирается повторной генерацией.
+
+Живой мини-кейс: [`кейсы/fleet-spine-drift`](кейсы/fleet-spine-drift/) (007).
+
 #### AGENTS.md для команд репозиториев
 
 - `arch agents-md refresh <repo>` — компилирует AGENTS.md из spine-инвариантов,
@@ -181,7 +203,9 @@ BMAD, Spec Kit, OpenSpec и др.):
   рубрик, pass rate бенчей + трансформационные KPI: approval theater (доля
   бездумных согласий), architecture drift (дрейф AGENTS.md по флоту),
   cost per validated outcome.
-- **Дельта-спеки**: `arch delta new|validate|archive` — state machine OpenSpec.
+- **Дельта-спеки**: `arch delta new|validate|archive` — state machine OpenSpec;
+  `arch delta guard` — гейт прямых правок спайна мимо дельты (см. выше блок
+  про модель 5.2).
 
 **Как переключить уровень автономии (R0–R5).** Уровень задаётся в конфиге:
 
@@ -250,6 +274,11 @@ CI-джобой `dogfood` (`arch control spine` + `arch control check .` + ск�
   идемпотентности — дрейф при зелёных тестах) против PASS 6/6; обе руки
   воспроизводимо перепроверяются из репозитория; цветные кадры в
   `screenshots/`.
+  Кейс 007 — [`fleet-spine-drift`](кейсы/fleet-spine-drift/) (механический,
+  без LLM): флот из трёх worktree с полными копиями спайна — `arch fleet
+  audit` измеряет дубли (66.7%) и дрейф `CONSTRAINTS.yaml` (отступник wt-c,
+  exit 1), `arch delta guard` запрещает прямые правки спайна мимо дельты;
+  воспроизводится голым бинарём.
 
 #### Прочее
 
@@ -440,7 +469,8 @@ arch [--config <path>] <command>   # без команды — TUI
 | `agents-md refresh/lint/lint-all <repo>` | AGENTS.md для репозиториев команд |
 | `evidence pack/verify` | Evidence Bundle как гейт выпуска |
 | `metrics` | Операционные и трансформационные KPI |
-| `delta new/validate/archive` | Дельта-спецификации (OpenSpec) |
+| `delta new/list/validate/archive/guard` | Дельта-спецификации (OpenSpec); `guard` — гейт прямых правок спайна мимо дельты (exit 1) |
+| `fleet audit [paths…] [--repo] [--include] [--fail-on-dupes]` | SSOT-аудит флота worktree: дубли и дрейф копий спайна (дрейф → exit 1) |
 | `skills list/search/show` / `plugins list/show` | Библиотека скиллов и плагинов |
 | `policy [--check "<cmd>"]` | Политика автономии R0–R5 |
 | `doctor` | Диагностика окружения |
@@ -543,12 +573,36 @@ BMAD, Spec Kit, OpenSpec, and more):
 - `worktree_new` + `arch worktree …` — isolated git worktrees for risky or
   parallel agent work; review/accept stays with the human.
 
+**Layered model 5.2 + delta protocol**
+
+Tooling for worktree fleets WITHOUT full spine copies (from a real-case
+review: 15 worktrees × full spine copy → 90% duplicate docs, measurable
+copy drift): the spine lives in one root copy (SSOT), a component carries a
+lean delta, and spine changes travel only via `changes/<id>` deltas.
+
+- `arch fleet audit <paths…>|--repo <path>` — fleet SSOT audit: exact
+  documentation duplicates, core files present in every worktree, and content
+  drift with named deviants (canon = majority version); drift → **exit 1**,
+  plus a `--fail-on-dupes <pct>` threshold — both are CI gates. For the
+  agent, the same audit is exposed as the `fleet_audit` tool.
+- `arch delta guard [--base origin/main...HEAD] [--protect <prefix>]` —
+  CI ban on direct spine edits bypassing a delta: changed files under
+  `model/`, `ARCHITECTURE-SPINE.md`, `CONSTRAINTS.yaml` must be mentioned in
+  an active `changes/*/DELTA.md`, otherwise **exit 1**.
+- **SPEC.md in the handoff package** — a verifiable interface-contracts
+  template (inputs/outputs, data structures, error boundaries, verification
+  criteria; EARS style) replacing the component's prose ARCHITECTURE.md;
+  like CONSTRAINTS.yaml, it survives regeneration untouched.
+
+Live mini-case: [`кейсы/fleet-spine-drift`](кейсы/fleet-spine-drift/) (007).
+
 **Governance & control**
 
 - **R0–R5 autonomy levels** (`[policy] autonomy`): every tool call is risk-classified
   (`rm -rf` → DENY at R2), attempts journaled.
 - **Evidence Bundle** (`arch evidence pack/verify`), **delta-specs**
-  (OpenSpec state machine), **AGENTS.md generator + drift linter** for team repos.
+  (OpenSpec state machine + `delta guard` CI gate, see "Layered model 5.2"
+  above), **AGENTS.md generator + drift linter** for team repos.
 - **Metrics** (`arch metrics`): operational counters plus transformation KPIs —
   approval-theater detection, architecture drift rate, cost per validated outcome.
 - **Anchor & dynamic rubrics** with an evidence-bound LLM judge (k-sample
@@ -688,7 +742,12 @@ fitness rules); the mechanical gate fails the bare arm 2/6 with exit 1
 (no thiserror, no idempotency — drift with all tests green) and passes
 the spine arm 6/6 with a real idempotency inbox; both solutions ship in
 the case and are re-checkable from the repo with one `arch control check`
-command; color frames in `screenshots/`.
+command; color frames in `screenshots/`. Case 007:
+[`fleet-spine-drift`](кейсы/fleet-spine-drift/) (mechanical, no LLM) — a
+three-worktree fleet carrying full spine copies: `arch fleet audit` measures
+duplicates (66.7%) and `CONSTRAINTS.yaml` drift (deviant wt-c, exit 1),
+`arch delta guard` bans direct spine edits bypassing a delta; reproducible
+with the bare `arch` binary.
 
 **Plus**: beautiful Tokyo Night TUI (markdown chat, mermaid→Unicode diagrams —
 the side panel auto-widens up to 60% of the screen so renders are never

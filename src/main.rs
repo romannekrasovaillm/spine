@@ -199,6 +199,37 @@ enum Cmd {
         #[command(subcommand)]
         cmd: WorktreeCmd,
     },
+    /// Аудит флота worktree: дубли и дрейф копий спайна (модель 5.2, SSOT).
+    Fleet {
+        #[command(subcommand)]
+        cmd: FleetCmd,
+    },
+}
+
+/// Подкоманды `arch fleet`.
+#[derive(Subcommand)]
+enum FleetCmd {
+    /// SSOT-аудит флота: точные дубли документации и дрейф копий спайна.
+    /// Дрейф хотя бы одного файла (разное содержимое у владельцев одного
+    /// пути; канон — majority-версия) — exit code 1 (гейт для CI).
+    Audit {
+        /// Каталоги-worktree (каждый с копией архитектурных файлов).
+        paths: Vec<PathBuf>,
+        /// Репозиторий: worktree перечисляются из `git worktree list`
+        /// (добавляются к позиционным путям).
+        #[arg(long)]
+        repo: Option<PathBuf>,
+        /// Сузить сканирование glob'ом (повторяемый), напр. --include 'model/**'.
+        /// По умолчанию — **/*.md|yaml|yml|json без .git/target/node_modules/.arch-handoff.
+        #[arg(long)]
+        include: Vec<String>,
+        /// Формат вывода: text (таблица + топ расхождений) или json.
+        #[arg(long, default_value = "text")]
+        format: String,
+        /// Exit 1, если доля точных дублей выше порога (проценты, напр. 50).
+        #[arg(long)]
+        fail_on_dupes: Option<f64>,
+    },
 }
 
 /// Подкоманды `arch worktree`.
@@ -533,6 +564,23 @@ enum DeltaCmd {
         #[arg(long)]
         repo: Option<PathBuf>,
     },
+    /// Гейт прямых правок спайна: изменённые защищённые файлы обязаны
+    /// упоминаться в активной дельте changes/<name>/DELTA.md, иначе exit 1.
+    /// Новые untracked-файлы git-diff не видит — для CI используйте --base.
+    Guard {
+        /// Репозиторий (по умолчанию — текущий каталог).
+        #[arg(long)]
+        repo: Option<PathBuf>,
+        /// База diff (по умолчанию HEAD — staged+unstaged рабочего дерева;
+        /// для CI — напр. origin/main...HEAD: трёхточечную форму разбирает
+        /// сам git).
+        #[arg(long)]
+        base: Option<String>,
+        /// Защищаемый путь/префикс (повторяемый). Если задан хотя бы один —
+        /// заменяет дефолт: model/, ARCHITECTURE-SPINE.md, CONSTRAINTS.yaml.
+        #[arg(long)]
+        protect: Vec<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -826,6 +874,45 @@ async fn main() -> Result<()> {
         Some(Cmd::AgentsMd { cmd }) => cmd_agents_md(&cfg, cmd)?,
         Some(Cmd::Cron { cmd }) => cmd_cron(&cfg, cmd).await?,
         Some(Cmd::Worktree { cmd }) => cmd_worktree(&cfg, cmd).await?,
+        Some(Cmd::Fleet { cmd }) => cmd_fleet(cmd)?,
+    }
+    Ok(())
+}
+
+/// `arch fleet`: аудит флота worktree (дубли и дрейф копий спайна).
+fn cmd_fleet(cmd: FleetCmd) -> Result<()> {
+    match cmd {
+        FleetCmd::Audit {
+            paths,
+            repo,
+            include,
+            format,
+            fail_on_dupes,
+        } => {
+            let mut roots = paths;
+            if let Some(repo) = repo {
+                roots.extend(arch_harness::fleet::worktrees_from_git(&repo)?);
+            }
+            let report = arch_harness::fleet::audit(&roots, &include)?;
+            match format.as_str() {
+                "json" => println!("{}", serde_json::to_string_pretty(&report)?),
+                "text" => print!("{}", arch_harness::fleet::render_text(&report)),
+                other => anyhow::bail!("неизвестный формат '{other}' (допустимы: text, json)"),
+            }
+            // Независимые триггеры гейта: дрейф копий и порог доли дублей.
+            let dupes_failed = fail_on_dupes.is_some_and(|pct| report.dup_pct > pct);
+            if let Some(pct) = fail_on_dupes {
+                if dupes_failed {
+                    println!(
+                        "Порог дублей превышен: {:.1}% > {pct:.1}% — exit 1",
+                        report.dup_pct
+                    );
+                }
+            }
+            if report.has_drift || dupes_failed {
+                std::process::exit(1);
+            }
+        }
     }
     Ok(())
 }
@@ -1679,6 +1766,18 @@ fn cmd_delta(cmd: DeltaCmd) -> Result<()> {
         DeltaCmd::Archive { name, repo } => {
             let path = arch_harness::delta::archive(&repo.unwrap_or_else(cwd), &name)?;
             println!("Дельта заархивирована: {}", path.display());
+        }
+        DeltaCmd::Guard {
+            repo,
+            base,
+            protect,
+        } => {
+            let report =
+                arch_harness::delta::guard(&repo.unwrap_or_else(cwd), base.as_deref(), &protect)?;
+            print!("{}", arch_harness::delta::render_guard(&report));
+            if !report.passed {
+                std::process::exit(1);
+            }
         }
     }
     Ok(())

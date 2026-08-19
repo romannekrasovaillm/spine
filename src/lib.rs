@@ -31,6 +31,7 @@ pub mod doctor;
 pub mod error;
 pub mod evidence;
 pub mod export;
+pub mod fleet;
 pub mod harness;
 pub mod hooks;
 pub mod kb;

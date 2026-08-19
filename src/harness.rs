@@ -7,7 +7,9 @@
 //!   критерии приёмки из QAS-сущностей `<repo>/model/`, ADR-007),
 //!   ARCHITECTURE.md (свод спек/спайна), adr/ (копии ADR), CONSTRAINTS.yaml
 //!   (fitness-правила под стек репозитория — заготовка, переписывается
-//!   архитектором под spine), RUBRIC.yaml (якорная рубрика приёмки), MANIFEST.json
+//!   архитектором под spine), SPEC.md (шаблон верифицируемых контрактов
+//!   интерфейсов: входы/выходы, структуры данных, границы ошибок, критерии
+//!   верификации), RUBRIC.yaml (якорная рубрика приёмки), MANIFEST.json
 //!   (мета: дата, модель, источники) + компактный epic-context (800–1500
 //!   токенов, по смыслу);
 //! - [`run_harness`] — запуск бинаря харнесса (`PromptMode` positional/flag/stdin)
@@ -57,6 +59,37 @@ const EPIC_CONTEXT_MIN_CHARS: usize = 3200;
 const DEPTH_SHALLOW: usize = 2;
 /// Глубина рендера прочих секций при недоборе epic-context (абзацев).
 const DEPTH_DEEP: usize = 8;
+
+/// Шаблон SPEC.md — верифицируемые контракты интерфейсов компонента
+/// (модель «5.2»: прозаический ARCHITECTURE.md компонента заменяется spec'ом
+/// с контрактами, проверяемыми тестами). Пишется только при отсутствии —
+/// заполненный архитектором файл повторная генерация не затирает.
+const SPEC_TEMPLATE: &str = "# SPEC — контракты интерфейсов компонента\n\
+\n\
+> Шаблон handoff-пакета (НЕ затирается при повторной генерации). Заполняется\n\
+> архитектором ДО передачи: верифицируемые контракты вместо прозы. Требования\n\
+> — в духе EARS: When <событие>, the <система> shall <реакция>.\n\
+\n\
+## Входы (контракты соседей)\n\
+\n\
+- <что компонент потребляет: API/события/файлы, от кого, формат и инварианты>\n\
+\n\
+## Выходы (публикуемые контракты)\n\
+\n\
+- <что компонент публикует: API/события/модели данных, гарантии (идемпотентность, порядок, версии)>\n\
+\n\
+## Структуры данных\n\
+\n\
+- <ключевые типы/схемы на границах: поля, единицы, ограничения>\n\
+\n\
+## Границы ошибок\n\
+\n\
+- <какие ошибки возвращаются/маппятся, какие эскалируются; коды и семантика повторов>\n\
+\n\
+## Критерии верификации (тесты)\n\
+\n\
+- [ ] When <событие>, the <система> shall <реакция> — <каким тестом проверяется>\n\
+";
 
 /// Дефолтные fitness-правила под стек репозитория (по маркерным файлам):
 /// Cargo.toml → Rust; pyproject.toml/requirements.txt/setup.py → Python;
@@ -189,7 +222,7 @@ pub fn known() -> Vec<&'static str> {
 pub struct HandoffPacket {
     /// Каталог `.arch-handoff/`.
     pub dir: PathBuf,
-    /// Файлы пакета (включая сохранённые пользовательские CONSTRAINTS.yaml/RUBRIC.yaml).
+    /// Файлы пакета (включая сохранённые пользовательские CONSTRAINTS.yaml/SPEC.md/RUBRIC.yaml).
     pub files: Vec<PathBuf>,
     /// Оценка размера epic-context в токенах.
     pub epic_context_tokens: usize,
@@ -232,9 +265,9 @@ struct Manifest<'a> {
 /// Генерирует handoff-пакет в репозиторий.
 ///
 /// Создаёт `<repo>/.arch-handoff/` с TASK.md, ARCHITECTURE.md, MANIFEST.json,
-/// adr/ (копии ADR) и, при отсутствии, CONSTRAINTS.yaml и RUBRIC.yaml.
+/// adr/ (копии ADR) и, при отсутствии, CONSTRAINTS.yaml, SPEC.md и RUBRIC.yaml.
 /// Перезаписываются только TASK.md, ARCHITECTURE.md и MANIFEST.json —
-/// пользовательские правки CONSTRAINTS.yaml/RUBRIC.yaml сохраняются.
+/// пользовательские правки CONSTRAINTS.yaml/SPEC.md/RUBRIC.yaml сохраняются.
 ///
 /// Предгейт: гарантирует git-репозиторий и baseline-коммит-якорь отката
 /// ([`ensure_git_baseline`]); `rollback` — явный план отката в TASK.md
@@ -306,6 +339,13 @@ pub fn generate_handoff(
             .map_err(|e| HarnessError::io(&constraints_path, e))?;
     }
 
+    // SPEC.md — только при отсутствии: шаблон контрактов интерфейсов
+    // заполняется архитектором и не затирается повторной генерацией.
+    let spec_path = dir.join("SPEC.md");
+    if !spec_path.exists() {
+        std::fs::write(&spec_path, SPEC_TEMPLATE).map_err(|e| HarnessError::io(&spec_path, e))?;
+    }
+
     // RUBRIC.yaml — только при отсутствии и только если есть якорная рубрика.
     let rubric_path = dir.join("RUBRIC.yaml");
     if !rubric_path.exists() {
@@ -349,6 +389,9 @@ pub fn generate_handoff(
     let mut files = vec![task_path, arch_path, manifest_path];
     if constraints_path.exists() {
         files.push(constraints_path);
+    }
+    if spec_path.exists() {
+        files.push(spec_path);
     }
     if rubric_path.exists() {
         files.push(rubric_path);
@@ -398,7 +441,9 @@ fn render_task_md(task: &str, rollback: &str, acceptance: Option<&str>) -> Strin
     s.push_str(
         "- `conflicts_with_prior_decisions`: расхождения с принятыми ранее решениями (ADR, spine).\n\n",
     );
-    s.push_str("Архитектурный контекст — `ARCHITECTURE.md`, ограничения — `CONSTRAINTS.yaml`, рубрика приёмки — `RUBRIC.yaml` (при наличии).\n");
+    s.push_str("Архитектурный контекст — `ARCHITECTURE.md`, ограничения — `CONSTRAINTS.yaml`, рубрика приёмки — `RUBRIC.yaml` (при наличии).\n\n");
+    s.push_str("## Чеклист перед финальным ответом\n\n");
+    s.push_str("- [ ] `SPEC.md` (контракты интерфейсов: входы/выходы, структуры данных, границы ошибок, критерии верификации) заполнен архитектором — сверь реализацию с ним; расхождения фиксируй в `conflicts_with_prior_decisions`, а не молчаливым отступлением.\n");
     s
 }
 
@@ -1154,7 +1199,7 @@ impl Tool for HandoffCreateTool {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
             name: "handoff_create".into(),
-            description: "Сгенерировать handoff-пакет (.arch-handoff/: TASK.md, ARCHITECTURE.md, CONSTRAINTS.yaml, MANIFEST.json, adr/) для передачи задачи кодовому харнессу. Предгейт: гарантирует git-репозиторий и baseline-коммит (якорь отката); TASK.md включает план отката и требование финального git-коммита; MANIFEST несёт рекомендованный таймаут прогона по маршруту значимости (подхватывает harness_run)".into(),
+            description: "Сгенерировать handoff-пакет (.arch-handoff/: TASK.md, ARCHITECTURE.md, CONSTRAINTS.yaml, SPEC.md — шаблон верифицируемых контрактов интерфейсов, MANIFEST.json, adr/) для передачи задачи кодовому харнессу. Предгейт: гарантирует git-репозиторий и baseline-коммит (якорь отката); TASK.md включает план отката и требование финального git-коммита; MANIFEST несёт рекомендованный таймаут прогона по маршруту значимости (подхватывает harness_run)".into(),
             parameters: json!({
                 "type": "object",
                 "properties": {
@@ -1857,6 +1902,50 @@ mod tests {
                 .contains("другая задача")
         );
         assert!(packet2.files.contains(&constraints));
+    }
+
+    #[test]
+    fn handoff_includes_spec_template_and_preserves_filled_spec() {
+        // SPEC.md — шаблон верифицируемых контрактов интерфейсов (модель
+        // «5.2»: контракты вместо прозы ARCHITECTURE.md компонента); пишется
+        // один раз и не затирается повторной генерацией, как CONSTRAINTS.yaml.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let repo = tmp.path().join("repo");
+        std::fs::create_dir_all(&repo).expect("mkdir repo");
+        let cfg = cfg_in(tmp.path());
+
+        let packet =
+            generate_handoff(&repo, "задача", &[], &cfg, None, Route::Fast).expect("handoff");
+        let spec_path = packet.dir.join("SPEC.md");
+        assert!(packet.files.contains(&spec_path), "{:?}", packet.files);
+        let spec = std::fs::read_to_string(&spec_path).expect("SPEC.md");
+        for section in [
+            "## Входы (контракты соседей)",
+            "## Выходы (публикуемые контракты)",
+            "## Структуры данных",
+            "## Границы ошибок",
+            "## Критерии верификации (тесты)",
+        ] {
+            assert!(spec.contains(section), "нет секции «{section}»:\n{spec}");
+        }
+        // EARS-подсказка на месте.
+        assert!(
+            spec.contains("When <событие>, the <система> shall"),
+            "{spec}"
+        );
+        // TASK.md несёт пункт чеклиста про SPEC.md.
+        let task_md = std::fs::read_to_string(packet.dir.join("TASK.md")).expect("TASK.md");
+        assert!(task_md.contains("SPEC.md"), "{task_md}");
+
+        // Заполненный SPEC.md повторная генерация не затирает.
+        std::fs::write(&spec_path, "# SPEC\n\nЗаполнено архитектором.\n").expect("fill spec");
+        let packet2 =
+            generate_handoff(&repo, "задача 2", &[], &cfg, None, Route::Fast).expect("handoff 2");
+        assert_eq!(
+            std::fs::read_to_string(&spec_path).expect("SPEC.md after"),
+            "# SPEC\n\nЗаполнено архитектором.\n"
+        );
+        assert!(packet2.files.contains(&spec_path));
     }
 
     /// Модель с QAS в `<repo>/model/` для тестов критериев приёмки (ADR-007).

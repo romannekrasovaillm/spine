@@ -780,7 +780,9 @@ fn segment_matches(pattern: &str, name: &str) -> bool {
 
 /// Матч относительного пути по glob-шаблону с поддержкой `**` (любая глубина,
 /// включая ноль сегментов: `**/*.rs` матчит и `main.rs`).
-fn glob_matches(pattern: &str, path: &str) -> bool {
+///
+/// `pub(crate)`: разделяется с аудитом флота (`crate::fleet`, флаг `--include`).
+pub(crate) fn glob_matches(pattern: &str, path: &str) -> bool {
     let pat: Vec<&str> = pattern.split('/').collect();
     let parts: Vec<&str> = path.split('/').collect();
     match_glob_segments(&pat, &parts)
