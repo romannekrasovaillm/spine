@@ -300,7 +300,7 @@ pub enum PromptMode {
     Stdin,
 }
 
-/// Адаптер кодового харнесса (Claude Code, Qwen Code, `OpenClaw`, Hermes, Theseus, `CodeWhale`).
+/// Адаптер кодового харнесса (Claude Code, Qwen Code, `OpenClaw`, Hermes, Theseus, `CodeWhale`, Kimi Code).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct CodingHarnessConfig {
@@ -673,6 +673,16 @@ impl Default for Config {
             "codewhale".into(),
             harness("codewhale", &["-p", "{prompt}"], PromptMode::Flag),
         );
+        // Kimi Code: headless — `kimi -p PROMPT`. Permission-флаг НЕ нужен и
+        // недопустим: в `-p`-режиме regular-инструменты всегда исполняются под
+        // auto-политикой (без интерактивных промптов), а `--yolo`/`--auto` с
+        // `--prompt` несовместимы — запуск отклоняется (документация
+        // kimi-command, 2026-08). Модель — `-m <alias>` (по умолчанию
+        // `default_model` из конфига kimi).
+        harnesses.insert(
+            "kimi-code".into(),
+            harness("kimi", &["-p", "{prompt}"], PromptMode::Flag),
+        );
 
         Self {
             default_model: "deepseek".into(),
@@ -793,6 +803,7 @@ mod tests {
         }
         assert!(cfg.harnesses.contains_key("claude-code"));
         assert!(cfg.harnesses.contains_key("codewhale"));
+        assert!(cfg.harnesses.contains_key("kimi-code"));
         assert!(cfg.web.arch_sites.len() >= 8);
     }
 
@@ -824,6 +835,16 @@ mod tests {
                 PromptMode::Flag
             )
         );
+        // kimi-code: flag-режим `-p {prompt}`; permission-флагов нет осознанно —
+        // `--yolo`/`--auto` несовместимы с `-p` (headless сам под auto-политикой).
+        assert_eq!(
+            flags("kimi-code"),
+            (
+                vec!["-p".to_string(), "{prompt}".to_string()],
+                PromptMode::Flag
+            )
+        );
+        assert!(!h["kimi-code"].args.iter().any(|a| a.contains("yolo")));
         assert_eq!(
             flags("openclaw"),
             (

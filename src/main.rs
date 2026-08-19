@@ -93,7 +93,7 @@ enum Cmd {
     },
     /// Сформировать handoff-пакет для кодового харнесса.
     Handoff {
-        /// Имя харнесса (claude-code, qwen-code, openclaw, hermes, theseus, codewhale).
+        /// Имя харнесса (claude-code, qwen-code, openclaw, hermes, theseus, codewhale, kimi-code).
         harness: String,
         /// Путь к репозиторию.
         #[arg(long)]

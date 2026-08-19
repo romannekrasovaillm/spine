@@ -2,7 +2,7 @@
 //!
 //! КОНТРАКТ (владелец: агент `harness`):
 //! - известные харнессы: claude-code, qwen-code, openclaw, hermes, theseus,
-//!   codewhale ([`known`]); конфиги — из `Config::harnesses`;
+//!   codewhale, kimi-code ([`known`]); конфиги — из `Config::harnesses`;
 //! - [`generate_handoff`] — каталог `<repo>/.arch-handoff/`: TASK.md (задача +
 //!   критерии приёмки из QAS-сущностей `<repo>/model/`, ADR-007),
 //!   ARCHITECTURE.md (свод спек/спайна), adr/ (копии ADR), CONSTRAINTS.yaml
@@ -180,6 +180,7 @@ pub fn known() -> Vec<&'static str> {
         "hermes",
         "theseus",
         "codewhale",
+        "kimi-code",
     ]
 }
 
@@ -1472,7 +1473,7 @@ impl Tool for HarnessRunTool {
                 "properties": {
                     "harness": {
                         "type": "string",
-                        "description": "Имя харнесса: claude-code, qwen-code, openclaw, hermes, theseus, codewhale"
+                        "description": "Имя харнесса: claude-code, qwen-code, openclaw, hermes, theseus, codewhale, kimi-code"
                     },
                     "repo": {
                         "type": "string",

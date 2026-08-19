@@ -297,6 +297,18 @@ timeout_secs = 1800
 idle_timeout_secs = 600
 auto_commit = true
 
+[harnesses.kimi-code]
+binary = "kimi"
+# kimi: -p PROMPT (flag-режим). Permission-флаг НЕ нужен и недопустим:
+# в `-p`-режиме regular-инструменты всегда под auto-политикой, а
+# --yolo/--auto с --prompt несовместимы (запуск отклоняется). Модель
+# исполнителя — добавьте в args: "-m", "<alias>".
+args = ["-p", "{prompt}"]
+prompt_mode = "flag"
+timeout_secs = 1800
+idle_timeout_secs = 600
+auto_commit = true
+
 # -----------------------------------------------------------------------------
 # MCP: файл серверов в формате Claude Code (см. examples/mcp.example.json).
 # `arch init` кладёт образец в ~/.arch-harness/mcp.json.

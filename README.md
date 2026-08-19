@@ -269,7 +269,7 @@ CI-джобой `dogfood` (`arch control spine` + `arch control check .` + ск�
 - **Архитектурный контроль**: score, spine-линтер, сенсоры спек, fitness,
   генератор ADR (`docs/control.md`).
 - **Handoff кодовым харнессам**: Claude Code, Qwen Code, OpenClaw, Hermes,
-  Theseus, CodeWhale — пакеты `.arch-handoff/` + прогон инструментом
+  Theseus, CodeWhale, Kimi Code — пакеты `.arch-handoff/` + прогон инструментом
   `harness_run` прямо из диалога (адаптер знает режим промпта, флаги
   разрешений; JSON-контракт результата разбирается **механически** —
   валидация схемы `Valid`/`Invalid`/`Missing`, эскалация blocked/conflicts,
@@ -616,7 +616,7 @@ rules), enforced by the `dogfood` CI job (`arch control spine` +
 pipeline, not on paper.
 
 **Handoff to coding harnesses**: Claude Code, Qwen Code, OpenClaw, Hermes,
-Theseus, CodeWhale — `.arch-handoff/` packages with invariants, acceptance
+Theseus, CodeWhale, Kimi Code — `.arch-handoff/` packages with invariants, acceptance
 criteria, and a headless JSON contract, plus in-chat execution via the
 `harness_run` tool (the adapter knows the prompt mode and permission flags;
 the JSON result contract is **parsed mechanically** — schema validation

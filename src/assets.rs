@@ -819,7 +819,8 @@ mod tests {
         for name in ["deepseek", "deepseek-pro", "kimi", "glm"] {
             assert!(cfg.models.contains_key(name), "нет модели {name}");
         }
-        assert_eq!(cfg.harnesses.len(), 6, "харнессов не 6");
+        assert_eq!(cfg.harnesses.len(), 7, "харнессов не 7");
+        assert!(cfg.harnesses.contains_key("kimi-code"), "нет kimi-code");
         assert_eq!(cfg.knowledge.dirs.len(), 3, "knowledge dirs");
         assert_eq!(cfg.web.arch_sites.len(), 11, "arch_sites");
         assert!(cfg.mcp.servers_file.ends_with("mcp.json"));
