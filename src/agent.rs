@@ -917,7 +917,9 @@ impl AgentSession {
                 ChatMessage::user(dump),
             ],
             tools: Vec::new(),
-            temperature: Some(0.2),
+            // Как в distill: temperature не шлём — Kimi k3 принимает только 1
+            // (400 «invalid temperature»); default берётся из ModelConfig.
+            temperature: None,
             max_tokens: Some(1200),
             thinking: None,
         };

@@ -110,7 +110,10 @@ pub async fn distill_to_skill(
             ChatMessage::user(format!("Имя скилла: {slug}\n\nМатериал:\n{material}")),
         ],
         tools: Vec::new(),
-        temperature: Some(0.3),
+        // temperature не хардкодим: Kimi k3 принимает только 1 (HTTP 400
+        // «invalid temperature») — подставится default из ModelConfig
+        // (`req.temperature.or(default_temperature)` в openai_compat).
+        temperature: None,
         max_tokens: Some(4000),
         thinking: None,
     };
