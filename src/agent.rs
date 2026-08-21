@@ -5,6 +5,9 @@
 //! - [`AgentSession`] — цикл: user → (LLM → `tool_calls` → `ToolRegistry::dispatch`
 //!   → `tool_result`)* → финальный текст; лимит итераций из `AgentConfig`,
 //!   при исчерпании — финальный ответ без инструментов (не ошибка);
+//!   отмена хода по [`CancellationToken`] (TUI: Esc/Alt+Enter) — LLM-запрос
+//!   или вызов инструмента обрывается, висячие tool-вызовы получают
+//!   результат «прервано» (контракт tool-пар не нарушается);
 //!   бюджет контекста: грубая оценка токенов ([`ChatMessage::rough_tokens`]),
 //!   при переполнении — склейка старых tool-результатов (усечение) с пометкой;
 //! - события [`AgentEvent`] через mpsc для TUI/стриминга в CLI;
@@ -19,6 +22,7 @@ use std::time::Duration;
 
 use serde_json::Value;
 use tokio::sync::mpsc;
+use tokio_util::sync::CancellationToken;
 
 use crate::config::Config;
 use crate::error::{HarnessError, Result};
@@ -106,6 +110,9 @@ pub struct AgentSession {
     l3_futile: bool,
     /// Переключатель ризонинга (`/think on|off`): None — дефолт провайдера.
     thinking: Option<bool>,
+    /// Токен отмены текущего хода (TUI: Esc/Alt+Enter — «прервать и
+    /// вклиниться»). None вне TUI (CLI, субагенты, ralph) — ход неотменяем.
+    cancel: Option<CancellationToken>,
 }
 
 impl AgentSession {
@@ -153,6 +160,7 @@ impl AgentSession {
             hooks,
             l3_futile: false,
             thinking: None,
+            cancel: None,
         };
         let prompt = session.system_prompt.clone();
         session.log_event("system", serde_json::json!({ "content": prompt }));
@@ -191,13 +199,24 @@ impl AgentSession {
 
         let max_turns = self.config.agent.max_tool_turns;
         for _turn in 0..max_turns {
+            // Отмена могла прийти между итерациями (пока шли tool-вызовы).
+            if self.cancelled() {
+                return self.finish_cancelled(&events).await;
+            }
             self.compact_history(&events).await;
             // Компактификация могла существенно срезать историю — обновим UI.
             self.emit_context_usage(&events);
             let request = self.build_request();
             let first = match (&events, self.config.agent.stream) {
-                (Some(tx), true) => self.stream_request(request, tx).await,
-                _ => self.provider.complete(request).await,
+                (Some(tx), true) => {
+                    race_cancel(self.cancel.clone(), self.stream_request(request, tx)).await
+                }
+                _ => race_cancel(self.cancel.clone(), self.provider.complete(request)).await,
+            };
+            // Отмена во время запроса к модели: история консистентна
+            // (висячих tool-вызовов нет) — просто завершаем ход.
+            let Some(first) = first else {
+                return self.finish_cancelled(&events).await;
             };
             // On-error compact & resubmit (Grok/Theseus): «контекст не влез»
             // (HTTP 413, context length) — принудительная L3-саммаризация
@@ -214,10 +233,26 @@ impl AgentSession {
                         match self.l3_summarize().await {
                             Ok(_) => {
                                 let request = self.build_request();
-                                match (&events, self.config.agent.stream) {
-                                    (Some(tx), true) => self.stream_request(request, tx).await?,
-                                    _ => self.provider.complete(request).await?,
-                                }
+                                let retry = match (&events, self.config.agent.stream) {
+                                    (Some(tx), true) => {
+                                        race_cancel(
+                                            self.cancel.clone(),
+                                            self.stream_request(request, tx),
+                                        )
+                                        .await
+                                    }
+                                    _ => {
+                                        race_cancel(
+                                            self.cancel.clone(),
+                                            self.provider.complete(request),
+                                        )
+                                        .await
+                                    }
+                                };
+                                let Some(retried) = retry else {
+                                    return self.finish_cancelled(&events).await;
+                                };
+                                retried?
                             }
                             Err(_) => return Err(e),
                         }
@@ -281,7 +316,7 @@ impl AgentSession {
             self.history.push(reply.clone());
             self.emit_context_usage(&events);
 
-            for call in &reply.tool_calls {
+            for (call_idx, call) in reply.tool_calls.iter().enumerate() {
                 if let Some(tx) = &events {
                     let _ = tx
                         .send(AgentEvent::ToolStart {
@@ -333,15 +368,25 @@ impl AgentSession {
                     } else {
                         self.tools.timeout_secs(&call.name)
                     };
-                    match tokio::time::timeout(
+                    let dispatched = tokio::time::timeout(
                         Duration::from_secs(wait),
                         self.tools
                             .dispatch(&call.name, call.arguments.clone(), &self.tool_ctx),
-                    )
-                    .await
-                    {
-                        Ok(out) => out,
-                        Err(_) => ToolOutput::err(format!("{}: таймаут {}с", call.name, wait)),
+                    );
+                    match race_cancel(self.cancel.clone(), dispatched).await {
+                        Some(Ok(out)) => out,
+                        Some(Err(_)) => {
+                            ToolOutput::err(format!("{}: таймаут {}с", call.name, wait))
+                        }
+                        // Отмена посреди пачки вызовов: текущему и всем
+                        // незапущенным даём результат «прервано» — иначе
+                        // контракт tool-пар сломается и следующий ход
+                        // упадёт с HTTP 400 от API.
+                        None => {
+                            self.cancel_pending_tools(&reply, call_idx, &events)
+                                .await;
+                            return self.finish_cancelled(&events).await;
+                        }
                     }
                 };
                 // Редакция секретов до событий/истории/журнала: вывод
@@ -485,6 +530,78 @@ impl AgentSession {
     #[must_use]
     pub fn messages(&self) -> &[ChatMessage] {
         &self.history
+    }
+
+    /// Устанавливает/снимает токен отмены текущего хода (см. поле `cancel`).
+    /// TUI ставит свежий токен на каждый ход; CLI/субагенты не ставят ничего.
+    pub fn set_cancel_token(&mut self, token: Option<CancellationToken>) {
+        self.cancel = token;
+    }
+
+    /// Установлен ли флаг отмены текущего хода.
+    fn cancelled(&self) -> bool {
+        self.cancel
+            .as_ref()
+            .is_some_and(CancellationToken::is_cancelled)
+    }
+
+    /// Завершение хода по отмене пользователя: заметка в UI, событие
+    /// `turn_cancelled` в журнал, `TurnDone`. Текст пуст — TUI не рисует
+    /// пустой assistant-блок, заметка уже показана событием.
+    async fn finish_cancelled(
+        &mut self,
+        events: &Option<mpsc::Sender<AgentEvent>>,
+    ) -> Result<String> {
+        self.emit_note(
+            events,
+            "⛔ ход прерван пользователем; история сессии цела — продолжайте диалог".into(),
+        );
+        self.log_event("event", serde_json::json!({ "event": "turn_cancelled" }));
+        self.emit_context_usage(events);
+        if let Some(tx) = events {
+            let _ = tx.send(AgentEvent::TurnDone).await;
+        }
+        Ok(String::new())
+    }
+
+    /// Отмена посреди пачки tool-вызовов: вызову `from` (его `ToolStart` уже
+    /// показан в UI — закрываем `ToolEnd`) и всем незапущенным рассылаем
+    /// результат «прервано», чтобы каждый `call.id` получил ровно один
+    /// `tool_result` (контракт tool-пар API).
+    async fn cancel_pending_tools(
+        &mut self,
+        reply: &ChatMessage,
+        from: usize,
+        events: &Option<mpsc::Sender<AgentEvent>>,
+    ) {
+        /// Текст результата отменённого вызова (в историю, журнал и UI).
+        const CANCELLED: &str = "⛔ вызов прерван пользователем (Esc/Alt+Enter)";
+        for (idx, call) in reply.tool_calls.iter().enumerate().skip(from) {
+            if idx == from {
+                if let Some(tx) = events {
+                    let _ = tx
+                        .send(AgentEvent::ToolEnd {
+                            name: call.name.clone(),
+                            is_error: true,
+                            summary: CANCELLED.into(),
+                            content: CANCELLED.into(),
+                        })
+                        .await;
+                }
+            }
+            self.log_event(
+                "tool",
+                serde_json::json!({
+                    "name": call.name,
+                    "tool_call_id": call.id,
+                    "is_error": true,
+                    "cancelled": true,
+                    "content": CANCELLED,
+                }),
+            );
+            self.history
+                .push(ChatMessage::tool_result(call.id.clone(), CANCELLED.to_string()));
+        }
     }
 
     /// Сменить модель на лету (и в контексте инструментов — для субагентов).
@@ -1027,6 +1144,24 @@ fn now_iso() -> String {
     chrono::Local::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
 }
 
+/// Гонка «работа против токена отмены»: `None` — отмена победила и работа
+/// дропнута (HTTP-запрос оборвётся; ребёнок `harness_run` убит через
+/// `kill_on_drop`). Без токена (CLI, субагенты) — просто `.await`.
+async fn race_cancel<F: std::future::Future>(
+    cancel: Option<CancellationToken>,
+    fut: F,
+) -> Option<F::Output> {
+    match cancel {
+        None => Some(fut.await),
+        Some(token) => {
+            tokio::select! {
+                out = fut => Some(out),
+                () = token.cancelled() => None,
+            }
+        }
+    }
+}
+
 /// Усекает текст до `max` символов (char-safe) с пометкой об усечении.
 fn truncate_chars(text: &str, max: usize) -> String {
     let out: String = text.chars().take(max).collect();
@@ -1286,6 +1421,22 @@ mod tests {
         provider: Arc<dyn LlmProvider>,
         configure: impl FnOnce(&mut Config),
     ) -> AgentSession {
+        make_session_with_tools(
+            dir,
+            provider,
+            ToolRegistry::new().with(Arc::new(EchoTool)),
+            configure,
+        )
+    }
+
+    /// Сессия в tempdir с произвольным реестром инструментов (тесты отмены
+    /// хода: «вечный» `pend`).
+    fn make_session_with_tools(
+        dir: &Path,
+        provider: Arc<dyn LlmProvider>,
+        tools: ToolRegistry,
+        configure: impl FnOnce(&mut Config),
+    ) -> AgentSession {
         let mut cfg = Config::default();
         cfg.paths.sessions_dir = dir.join("sessions");
         cfg.agent.stream = false;
@@ -1293,7 +1444,6 @@ mod tests {
         cfg.plugins.include_hooks = false;
         configure(&mut cfg);
         let config = Arc::new(cfg);
-        let tools = ToolRegistry::new().with(Arc::new(EchoTool));
         let tool_ctx = ToolContext::new(dir.to_path_buf(), config.clone());
         AgentSession::new(config, provider, tools, tool_ctx, "системный промпт".into())
     }
@@ -1314,6 +1464,103 @@ mod tests {
         assert_eq!(s.messages()[2].tool_call_id.as_deref(), Some("call-1"));
         assert!(s.messages()[2].content.contains("echo: привет"));
         assert_eq!(s.model_name(), "fake-1");
+    }
+
+    /// Провайдер, зовущий «вечный» инструмент `pend` (тест отмены во время
+    /// dispatch); после tool-результата отвечает финальным текстом.
+    #[derive(Debug)]
+    struct PendLlm;
+
+    #[async_trait::async_trait]
+    impl LlmProvider for PendLlm {
+        fn name(&self) -> &'static str {
+            "pend-llm"
+        }
+        fn model(&self) -> &'static str {
+            "pend-1"
+        }
+        async fn complete(&self, req: ChatRequest) -> Result<ChatMessage> {
+            if req.messages.iter().any(|m| m.role == Role::Tool) {
+                return Ok(ChatMessage::assistant("дождался", Vec::new()));
+            }
+            Ok(ChatMessage::assistant(
+                "",
+                vec![ToolCall {
+                    id: "p1".into(),
+                    name: "pend".into(),
+                    arguments: serde_json::json!({}),
+                }],
+            ))
+        }
+    }
+
+    /// Инструмент, который не завершается никогда (ждёт отмены хода).
+    #[derive(Debug)]
+    struct PendTool;
+
+    #[async_trait::async_trait]
+    impl Tool for PendTool {
+        fn spec(&self) -> ToolSpec {
+            ToolSpec {
+                name: "pend".into(),
+                description: "висит вечно".into(),
+                parameters: serde_json::json!({ "type": "object" }),
+            }
+        }
+        async fn call(&self, _args: Value, _ctx: &ToolContext) -> Result<ToolOutput> {
+            std::future::pending::<()>().await;
+            // Недостижимо: future дропается отменой (или таймаутом) раньше.
+            Ok(ToolOutput::err("pend: не должен был завершиться"))
+        }
+    }
+
+    #[tokio::test]
+    async fn pre_cancelled_token_shortcircuits_turn() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let mut s = make_session(tmp.path(), Arc::new(FakeLlm::new()), |_| {});
+        let token = CancellationToken::new();
+        token.cancel();
+        s.set_cancel_token(Some(token));
+        let reply = s.send("привет", None).await.expect("send при отмене не падает");
+        assert!(reply.is_empty(), "прерванный ход без текста ответа");
+        let roles: Vec<Role> = s.messages().iter().map(|m| m.role).collect();
+        assert_eq!(roles, vec![Role::User], "модель не вызывалась — только ввод");
+        let journal =
+            std::fs::read_to_string(s.log_path().expect("журнал")).expect("прочитать журнал");
+        assert!(journal.contains("turn_cancelled"), "в журнале отмена: {journal}");
+    }
+
+    #[tokio::test]
+    async fn cancel_during_tool_call_keeps_tool_pair_contract() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let tools = ToolRegistry::new().with(Arc::new(PendTool));
+        let mut s = make_session_with_tools(tmp.path(), Arc::new(PendLlm), tools, |_| {});
+        let token = CancellationToken::new();
+        s.set_cancel_token(Some(token.clone()));
+        let (tx, mut rx) = mpsc::channel(16);
+        // Как только «вечный» инструмент стартовал — отменяем ход.
+        let driver = tokio::spawn(async move {
+            while let Some(ev) = rx.recv().await {
+                if matches!(&ev, AgentEvent::ToolStart { name, .. } if name == "pend") {
+                    token.cancel();
+                }
+            }
+        });
+        let reply = s
+            .send("жди", Some(tx))
+            .await
+            .expect("send при отмене не падает");
+        driver.await.expect("драйвер событий дочитал канал");
+        assert!(reply.is_empty(), "прерванный ход без текста ответа");
+        // Контракт tool-пар не нарушен: висячий вызов получил tool_result.
+        let roles: Vec<Role> = s.messages().iter().map(|m| m.role).collect();
+        assert_eq!(roles, vec![Role::User, Role::Assistant, Role::Tool]);
+        assert_eq!(s.messages()[2].tool_call_id.as_deref(), Some("p1"));
+        assert!(
+            s.messages()[2].content.contains("прерван"),
+            "результат-заглушка: {}",
+            s.messages()[2].content
+        );
     }
 
     /// Провайдер с обрезанным ответом: tool-вызов с битыми аргументами

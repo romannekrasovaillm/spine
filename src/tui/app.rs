@@ -10,6 +10,7 @@ use std::sync::Arc;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::Frame;
 use tokio::sync::mpsc;
+use tokio_util::sync::CancellationToken;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::agent::{AgentEvent, AgentSession, prompts, slash};
@@ -495,8 +496,12 @@ pub(crate) struct App {
     status_extra: Option<String>,
     /// Идёт фоновый ход (модель/команда) — ввод складывается в очередь.
     thinking: bool,
+    /// Токен отмены текущего хода (Esc — прервать, Alt+Enter — прервать и
+    /// вклинить набранное). None, пока ход не запущен или идёт слэш-команда.
+    turn_cancel: Option<CancellationToken>,
     /// Очередь сообщений, набранных во время хода агента (FIFO;
-    /// срочные — в начало через Alt+Enter или префикс «!!»).
+    /// срочные — в начало через Alt+Enter или префикс «!!»; Alt+Enter также
+    /// прерывает текущий ход, чтобы срочное стартовало немедленно).
     pub(crate) queue: VecDeque<String>,
     /// Кадр спиннера.
     spinner: usize,
@@ -623,6 +628,7 @@ impl App {
             panels: Panels::default(),
             status_extra,
             thinking: false,
+            turn_cancel: None,
             queue: VecDeque::new(),
             spinner: 0,
             pending_slash: None,
@@ -879,7 +885,14 @@ impl App {
 
     fn handle_chat_key(&mut self, key: KeyEvent) {
         if key.code == KeyCode::Esc {
-            self.should_quit = true;
+            // Во время хода Esc — прерывание хода (очередь стартует сразу
+            // после возврата сессии), а не выход из приложения; выход —
+            // повторный Esc в простое (Ctrl-C/q работают всегда).
+            if self.thinking {
+                self.interrupt_turn();
+            } else {
+                self.should_quit = true;
+            }
             return;
         }
         match key.code {
@@ -891,9 +904,11 @@ impl App {
             KeyCode::F(3) => self.right_tab = RightTab::Knowledge,
             KeyCode::F(4) => self.toggle_viewer(),
             // Во время хода ввод НЕ блокируется: Enter — сообщение в очередь
-            // (FIFO), Alt+Enter — срочно в начало (выполнится следующим).
+            // (FIFO), Alt+Enter — срочно: прерывает текущий ход и вклинивает
+            // набранное первым (иначе, пока агент ждёт harness_run/модель,
+            // срочное лежало бы в очереди до конца хода).
             KeyCode::Enter if self.thinking && key.modifiers.contains(KeyModifiers::ALT) => {
-                self.enqueue_typed(true);
+                self.interrupt_and_inject();
             }
             // Перевод строки в поле ввода: Shift+Enter (kitty-протокол),
             // Alt+Enter (вне хода) или Ctrl+J (работает в любом терминале).
@@ -960,7 +975,7 @@ impl App {
         }
         if self.queue.len() >= MAX_QUEUE {
             self.push_block(ChatBlock::Error(format!(
-                "очередь полна ({MAX_QUEUE}) — дождитесь завершения хода"
+                "очередь полна ({MAX_QUEUE}) — дождитесь завершения хода или прервите его (Esc)"
             )));
             return;
         }
@@ -968,6 +983,25 @@ impl App {
             self.queue.push_front(input);
         } else {
             self.queue.push_back(input);
+        }
+    }
+
+    /// Alt+Enter во время хода — «срочно»: набранное (если есть) в начало
+    /// очереди и немедленное прерывание текущего хода. По возврате сессии
+    /// очередь стартует сама (см. [`App::maybe_start_queued`]).
+    fn interrupt_and_inject(&mut self) {
+        self.enqueue_typed(true);
+        self.interrupt_turn();
+    }
+
+    /// Прерывает текущий ход (Esc/Alt+Enter во время хода): агентный цикл
+    /// обрывает LLM-запрос или вызов инструмента (включая ожидание
+    /// `harness_run`), история сессии остаётся консистентной — висячие
+    /// tool-вызовы получают результат «прервано» (см.
+    /// [`AgentSession::set_cancel_token`]). Без активного хода — тихий no-op.
+    fn interrupt_turn(&mut self) {
+        if let Some(token) = &self.turn_cancel {
+            token.cancel();
         }
     }
 
@@ -1287,6 +1321,12 @@ impl App {
         };
         self.thinking = true;
         self.turn_got_output = false;
+        // Токен отмены хода: Esc/Alt+Enter прерывают LLM-запрос или вызов
+        // инструмента (см. AgentSession::set_cancel_token).
+        let cancel = CancellationToken::new();
+        let mut session = session;
+        session.set_cancel_token(Some(cancel.clone()));
+        self.turn_cancel = Some(cancel);
         // Fire-and-forget: JoinHandle не храним — результат и ошибки приходят
         // сообщением TurnFinished; при выходе runtime отменит задачу.
         tokio::spawn(async move {
@@ -1338,6 +1378,7 @@ impl App {
             AppMessage::AskUser(req) => self.open_ask(req),
             AppMessage::TurnFinished { session, result } => {
                 self.thinking = false;
+                self.turn_cancel = None;
                 self.assistant_open = false;
                 self.on_session_back(session);
                 match result {
@@ -1521,6 +1562,10 @@ impl App {
 
     /// Возвращает сессию из фоновой задачи; обновляет модель и токены.
     fn on_session_back(&mut self, session: AgentSession) {
+        let mut session = session;
+        // Токен отмены одноразовый (ставится на каждый ход в start_turn) —
+        // не таскаем отработанный/отменённый в следующий ход.
+        session.set_cancel_token(None);
         let mut name = session.model_name();
         // Индикатор ризонинга в бейдже модели: 🧠 — on, 🧠off — выключен явно.
         match session.thinking() {
@@ -2065,6 +2110,59 @@ mod tests {
             vec!["ещё срочнее", "срочное", "обычное"],
             "срочные — в начало очереди (Alt+Enter и «!!»)"
         );
+    }
+
+    #[test]
+    fn alt_enter_during_turn_cancels_turn_and_injects_urgent() {
+        let mut app = test_app();
+        app.screen = Screen::Chat;
+        testing::set_thinking(&mut app, true);
+        let token = CancellationToken::new();
+        app.turn_cancel = Some(token.clone());
+        app.input.set_text("готово".into());
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT));
+        assert!(token.is_cancelled(), "текущий ход получил отмену");
+        assert_eq!(
+            app.queue.front().map(String::as_str),
+            Some("готово"),
+            "набранное — первым в очереди (старт сразу после возврата сессии)"
+        );
+        assert!(app.input.text().is_empty(), "строка ввода очищена");
+        assert!(app.thinking, "ждём возврата сессии из прерванного хода");
+    }
+
+    #[test]
+    fn esc_during_turn_interrupts_instead_of_quitting() {
+        let mut app = test_app();
+        app.screen = Screen::Chat;
+        testing::set_thinking(&mut app, true);
+        let token = CancellationToken::new();
+        app.turn_cancel = Some(token.clone());
+        app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert!(token.is_cancelled(), "ход прерван");
+        assert!(
+            !app.should_quit,
+            "Esc во время хода прерывает ход, а не приложение"
+        );
+        // В простое — выход, как раньше.
+        testing::set_thinking(&mut app, false);
+        app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert!(app.should_quit, "Esc в простое — выход");
+    }
+
+    #[test]
+    fn turn_finished_clears_cancel_token() {
+        let mut app = test_app();
+        app.screen = Screen::Chat;
+        testing::set_thinking(&mut app, true);
+        app.turn_cancel = Some(CancellationToken::new());
+        let session = app.session.take().expect("сессия в тестовом app");
+        app.handle_message(AppMessage::TurnFinished {
+            session,
+            result: Ok(String::new()),
+        });
+        assert!(app.turn_cancel.is_none(), "токен сброшен вместе с ходом");
+        assert!(!app.thinking);
     }
 
     #[test]

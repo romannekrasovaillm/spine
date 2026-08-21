@@ -116,6 +116,14 @@ pub trait LlmProvider: Send + Sync + fmt::Debug {
    и служебной репликой (только в запрос) «дай ответ по собранному»;
    заметка в UI, событие `tool_turn_limit` в журнале.
 
+Отмена хода (TUI ставит `CancellationToken` через `set_cancel_token` на
+каждый ход): проверка между итерациями + гонка `race_cancel` против
+LLM-запроса и каждого `dispatch`. Отмена во время вызова инструмента
+дорасылает результат «прервано» текущему и незапущенным вызовам пачки
+(контракт tool-пар не нарушается); в журнал — `turn_cancelled`, в UI —
+заметка, возврат пустого текста. Дропнутый future `harness_run` убивает
+дочерний процесс кодового харнесса (`kill_on_drop`).
+
 Журнал: append-only JSONL `sessions/session-<yyyymmdd-hhmmss>.jsonl`,
 события `system`/`user`/`assistant`/`tool`/`event` с ISO-метками; каждая
 запись флашится (журнал переживает падение). Недоступность журнала — не
@@ -132,7 +140,11 @@ pub trait LlmProvider: Send + Sync + fmt::Debug {
   `EventStream` (клавиши), `AppMessage`, `Ctrl-C`, тикер спиннера 120 мс.
 - Терминал: RAII-гард `TerminalGuard` (raw mode + alternate screen, Drop
   восстанавливает) + panic hook, восстанавливающий терминал перед печатью
-  паники. Выход: `q` / `Ctrl-C` / `Esc`.
+  паники. Выход: `q` / `Ctrl-C` / `Esc` (в простое).
+- Очередь ввода во время хода: `Enter` — в конец (FIFO), `Alt+Enter` или
+  префикс `!!` — в начало; `Esc`/`Alt+Enter` во время хода отменяют его
+  через `CancellationToken` — срочное сообщение стартует немедленно после
+  возврата сессии (`maybe_start_queued` на `TurnFinished`).
 - Экраны: `Splash` (ASCII-баннер из `assets::BANNER`) → `Chat`; фатальная
   ошибка инициализации → экран `Fatal`.
 

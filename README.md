@@ -291,6 +291,10 @@ CI-джобой `dogfood` (`arch control spine` + `arch control check .` + ск�
   Shift+Enter, Alt+Enter или Ctrl+J; поле растёт до 8 строк, Up/Down — по строкам,
   на крайней — история), **очередь сообщений во время хода** карточкой в окне
   логов (Enter — в очередь, Alt+Enter или префикс «!!» — срочно первым),
+  **прерывание хода**: Esc или Alt+Enter во время хода отменяют текущий запрос
+  к модели или вызов инструмента (включая ожидание `harness_run`) — срочное
+  сообщение из очереди стартует немедленно, история сессии остаётся
+  консистентной (висячие tool-вызовы получают результат «прервано»),
   полноэкранный просмотр `F4` с горизонтальной панорамой, экспорт экрана в
   Word/Excel (`/export`), модалки выбора (`propose_options`).
 - **Диагностика** `arch doctor` — 10 проверок окружения с ✓/⚠/✗.
@@ -758,7 +762,11 @@ fallbacks: wl-copy/xclip/xsel, OSC 52),
 **multi-line input** — newline via Shift+Enter, Alt+Enter or Ctrl+J, the field
 grows up to 8 lines, Up/Down move across lines and fall back to history,
 **message queue while the agent works** shown as a card in the log pane —
-Enter queues, Alt+Enter or a "!!" prefix jumps to the front, fullscreen viewer
+Enter queues, Alt+Enter or a "!!" prefix jumps to the front, **turn
+interrupt**: Esc or Alt+Enter during a turn cancels the in-flight LLM request
+or tool call (including a `harness_run` wait), so an urgent queued message
+starts immediately — the session history stays consistent (pending tool calls
+get a "cancelled" result), fullscreen viewer
 with horizontal pan, docx/xlsx export, option-picker modals), MCP client,
 curated architecture websites + local knowledge base, markdown-task cron,
 `arch doctor` diagnostics.

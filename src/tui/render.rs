@@ -851,9 +851,13 @@ fn draw_input(f: &mut Frame, area: Rect, app: &App, theme: &Theme) {
     let title = if thinking {
         let mut t = format!(" {} модель думает…", SPINNER[app.spinner_frame()]);
         if app.queue.is_empty() {
-            t.push_str(" · Enter — в очередь · Alt+Enter — срочно ");
+            t.push_str(" · Enter — в очередь · Alt+Enter — срочно · Esc — прервать ");
         } else {
-            let _ = write!(t, " · очередь: {} · Alt+Enter — срочно ", app.queue.len());
+            let _ = write!(
+                t,
+                " · очередь: {} · Alt+Enter — срочно · Esc — прервать ",
+                app.queue.len()
+            );
         }
         t
     } else if !app.queue.is_empty() {
