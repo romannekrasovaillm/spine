@@ -15,7 +15,10 @@
 //! - [`run_harness`] — запуск бинаря харнесса (`PromptMode` positional/flag/stdin)
 //!   в каталоге repo, таймаут, захват stdout/stderr → `HarnessRun`;
 //! - [`tools`] — инструменты `handoff_create` и `harness_run` для агентного
-//!   цикла (прогон пакета харнессом — только через `harness_run`, не bash).
+//!   цикла (прогон пакета харнессом — только через `harness_run`, не bash);
+//!   `harness_run(background=true)` — фоновый прогон: инструмент возвращается
+//!   сразу (задача `hr-*` в общем реестре фоновых задач), агент остаётся
+//!   доступным пользователю, результат — через `subagent_result`.
 
 use std::fmt::Write as _;
 use std::io::ErrorKind;
@@ -1488,6 +1491,88 @@ impl HarnessRunTool {
             None => self.cfg.clone(),
         }
     }
+
+    /// Фоновый прогон: задача регистрируется в общем реестре фоновых задач
+    /// (префикс `hr-`, видна в `subagent_list`), исполнение — в отдельной
+    /// tokio-задаче; инструмент возвращается немедленно. Полный лог пишется
+    /// файлом (`reports_dir/harness/<id>.log`), в реестр — усечённый отчёт
+    /// (лимит [`crate::subagent::REPORT_MAX_CHARS`], как у субагентов).
+    /// Прерывание хода (Esc/Alt+Enter) фоновый прогон НЕ затрагивает —
+    /// задача не привязана к токену отмены сессии.
+    fn launch_background(
+        &self,
+        name: &str,
+        hcfg: CodingHarnessConfig,
+        repo: PathBuf,
+        task: String,
+        note: &str,
+        ctx: &ToolContext,
+    ) -> ToolOutput {
+        let Some(registry) = &ctx.subagents else {
+            return ToolOutput::err(
+                "harness_run background: реестр фоновых задач не подключён \
+                 (headless-режим без TUI/раннера) — запустите без background",
+            );
+        };
+        if registry.running() >= registry.capacity() {
+            return ToolOutput::err(format!(
+                "все слоты фоновых задач заняты ({}); дождитесь завершения — subagent_list",
+                registry.capacity()
+            ));
+        }
+        let id = registry.next_id("hr");
+        registry.insert(crate::subagent::SubagentTask {
+            id: id.clone(),
+            agent: format!("harness:{name}"),
+            task: task.chars().take(2000).collect(),
+            status: crate::subagent::TaskStatus::Running,
+            report: String::new(),
+            started_at: crate::subagent::now_iso(),
+            finished_at: None,
+        });
+        let report_path = ctx
+            .config
+            .paths
+            .reports_dir
+            .join("harness")
+            .join(format!("{id}.log"));
+        let registry = registry.clone();
+        let run_id = id.clone();
+        let run_name = name.to_string();
+        let note_run = note.to_string();
+        let report_path_run = report_path.clone();
+        tokio::spawn(async move {
+            let out = execute_run(&run_name, &hcfg, &repo, &task, note_run).await;
+            let status = if out.is_error {
+                crate::subagent::TaskStatus::Failed
+            } else {
+                crate::subagent::TaskStatus::Done
+            };
+            // Полный лог — файлом (best effort: отчёт живёт и в реестре).
+            if let Some(dir) = report_path_run.parent() {
+                let _ = std::fs::create_dir_all(dir);
+            }
+            if let Err(e) = std::fs::write(&report_path_run, &out.content) {
+                tracing::warn!(
+                    "лог фонового прогона не записан {}: {e}",
+                    report_path_run.display()
+                );
+            }
+            let report: String = out
+                .content
+                .chars()
+                .take(crate::subagent::REPORT_MAX_CHARS)
+                .collect();
+            registry.finish(&run_id, status, report);
+        });
+        ToolOutput::ok(format!(
+            "{note}Прогон харнесса '{name}' запущен в ФОНЕ: {id}. Этот ход агента НЕ ждёт \
+             завершения — агент остаётся доступен пользователю. Статус — subagent_list, \
+             результат — subagent_result(id=\"{id}\"), полный лог — {}. \
+             Сообщи пользователю, что прогон идёт в фоне, и продолжай диалог.",
+            report_path.display()
+        ))
+    }
 }
 
 #[async_trait]
@@ -1511,7 +1596,11 @@ impl Tool for HarnessRunTool {
                 (валидация схемы, эскалация blocked/conflicts). \
                 НЕ запускать харнесс через bash — там промпт ломается о квотинг, таймаут \
                 слишком короткий, а env-scrub прячет от команды переменные *_KEY/*_TOKEN, \
-                через которые харнесс может авторизовываться."
+                через которые харнесс может авторизовываться. \
+                background=true — прогон в фоне: инструмент возвращается сразу (id задачи \
+                hr-*), агент остаётся доступным пользователю; статус — subagent_list, \
+                результат — subagent_result(id). Используй background для длинных прогонов \
+                и когда пользователь продолжает диалог во время работы харнесса."
                 .into(),
             parameters: json!({
                 "type": "object",
@@ -1533,6 +1622,10 @@ impl Tool for HarnessRunTool {
                         "description": "Переопределить АБСОЛЮТНЫЙ таймаут адаптера, секунды (минимум 600 — меньшие значения поднимаются; максимум 7200). Тишина контролируется отдельно (idle_timeout_secs адаптера, по умолчанию 600)",
                         "minimum": 600,
                         "maximum": 7200
+                    },
+                    "background": {
+                        "type": "boolean",
+                        "description": "true — прогон в фоне (немедленный возврат, задача hr-* в реестре фоновых задач; результат забирается через subagent_result). false/отсутствует — синхронно: ход агента ждёт завершения прогона"
                     }
                 },
                 "required": ["harness", "repo"]
@@ -1617,114 +1710,132 @@ impl Tool for HarnessRunTool {
                 hcfg.timeout_secs
             );
         }
-        match run_harness(name, &hcfg, &repo, &task).await {
-            Ok(run) => {
-                let code = run.exit_code.map_or("сигнал".into(), |c| c.to_string());
-                let mut content = note;
-                match run.termination {
-                    Termination::Completed => {
-                        let _ = writeln!(
-                            content,
-                            "Харнесс '{name}' завершился: код {code}, {:.1} с.",
-                            run.duration_secs
-                        );
-                    }
-                    Termination::AbsoluteTimeout => {
-                        let _ = writeln!(
-                            content,
-                            "Харнесс '{name}' ПРЕРВАН по абсолютному таймауту {} с \
+        // Фоновый прогон: инструмент возвращается немедленно, агент остаётся
+        // доступным пользователю (длинные handoff-прогоны не блокируют диалог).
+        if args.get("background").and_then(Value::as_bool) == Some(true) {
+            return Ok(self.launch_background(name, hcfg, repo, task, &note, ctx));
+        }
+        Ok(execute_run(name, &hcfg, &repo, &task, note).await)
+    }
+}
+
+/// Синхронный прогон харнесса и форматирование результата: итог (код
+/// возврата/прерывание/авто-коммит), механический разбор JSON-контракта,
+/// stdout/stderr. Общий код синхронного пути (`harness_run`) и фонового
+/// (`background=true` — вызывается из spawned-задачи).
+async fn execute_run(
+    name: &str,
+    hcfg: &CodingHarnessConfig,
+    repo: &Path,
+    task: &str,
+    note: String,
+) -> ToolOutput {
+    match run_harness(name, hcfg, repo, task).await {
+        Ok(run) => {
+            let code = run.exit_code.map_or("сигнал".into(), |c| c.to_string());
+            let mut content = note;
+            match run.termination {
+                Termination::Completed => {
+                    let _ = writeln!(
+                        content,
+                        "Харнесс '{name}' завершился: код {code}, {:.1} с.",
+                        run.duration_secs
+                    );
+                }
+                Termination::AbsoluteTimeout => {
+                    let _ = writeln!(
+                        content,
+                        "Харнесс '{name}' ПРЕРВАН по абсолютному таймауту {} с \
                              (проработал {:.1} с). Процессная группа завершена \
                              (TERM→KILL), осиротевших процессов нет. Вывод ниже — \
                              частичный. Репозиторий может быть в промежуточном \
                              состоянии: перед повторным запуском проверьте git status/diff. \
                              Если задача объективно длинная — перезапустите с большим \
                              timeout_secs (до 7200) или разбейте её.",
-                            hcfg.timeout_secs, run.duration_secs
-                        );
-                    }
-                    Termination::IdleTimeout => {
-                        let _ = writeln!(
-                            content,
-                            "Харнесс '{name}' ПРЕРВАН по таймауту тишины {} с: нет вывода и \
+                        hcfg.timeout_secs, run.duration_secs
+                    );
+                }
+                Termination::IdleTimeout => {
+                    let _ = writeln!(
+                        content,
+                        "Харнесс '{name}' ПРЕРВАН по таймауту тишины {} с: нет вывода и \
                              изменений файлов репозитория — процесс, вероятно, завис \
                              (например, ждал интерактивного ввода; для claude-code обязателен \
                              --dangerously-skip-permissions). Процессная группа завершена \
                              (TERM→KILL), сирот нет. Вывод ниже — частичный; перед \
                              повторным запуском проверьте git status/diff.",
-                            hcfg.idle_timeout_secs
-                        );
-                    }
+                        hcfg.idle_timeout_secs
+                    );
                 }
-                if let Some(ac) = &run.auto_commit {
-                    let _ = writeln!(
-                        content,
-                        "АВТО-КОММИТ: исполнитель не зафиксировал результат — \
+            }
+            if let Some(ac) = &run.auto_commit {
+                let _ = writeln!(
+                    content,
+                    "АВТО-КОММИТ: исполнитель не зафиксировал результат — \
                          харнесс закоммитил {} путей: {} «{}». \
                          Контракт TASK.md требует финального коммита от самого \
                          исполнителя; при повторении проверьте задачу/доступ к git.",
-                        ac.files, ac.hash, ac.message
-                    );
-                }
-                match &run.contract {
-                    ContractParse::Valid(c) => {
-                        let _ = writeln!(
-                            content,
-                            "Контракт результата: status={}; assumptions: {}; \
+                    ac.files, ac.hash, ac.message
+                );
+            }
+            match &run.contract {
+                ContractParse::Valid(c) => {
+                    let _ = writeln!(
+                        content,
+                        "Контракт результата: status={}; assumptions: {}; \
                              open_questions: {}; conflicts: {}.",
-                            c.status.as_str(),
-                            c.assumptions.len(),
-                            c.open_questions.len(),
-                            c.conflicts.len(),
-                        );
-                        if c.status == ContractStatus::Blocked {
-                            content.push_str(
-                                "СТАТУС blocked: интеграция невозможна — сначала разберите \
+                        c.status.as_str(),
+                        c.assumptions.len(),
+                        c.open_questions.len(),
+                        c.conflicts.len(),
+                    );
+                    if c.status == ContractStatus::Blocked {
+                        content.push_str(
+                            "СТАТУС blocked: интеграция невозможна — сначала разберите \
                                  причины (open_questions/assumptions ниже) с архитектором.\n",
-                            );
-                        }
-                        if !c.conflicts.is_empty() {
-                            content.push_str(
+                        );
+                    }
+                    if !c.conflicts.is_empty() {
+                        content.push_str(
                                 "КОНФЛИКТЫ со spine/ADR (ОСТАНАВЛИВАЮТ интеграцию до решения архитектора):\n",
                             );
-                            for conflict in &c.conflicts {
-                                let _ = writeln!(content, "- {conflict}");
-                            }
-                        }
-                        if !c.open_questions.is_empty() {
-                            content.push_str("Открытые вопросы к архитектору:\n");
-                            for q in &c.open_questions {
-                                let _ = writeln!(content, "- {q}");
-                            }
+                        for conflict in &c.conflicts {
+                            let _ = writeln!(content, "- {conflict}");
                         }
                     }
-                    ContractParse::Invalid(reason) => {
-                        let _ = writeln!(
-                            content,
-                            "ВНИМАНИЕ: JSON-контракт найден, но НЕВАЛИДЕН по схеме: {reason}. \
+                    if !c.open_questions.is_empty() {
+                        content.push_str("Открытые вопросы к архитектору:\n");
+                        for q in &c.open_questions {
+                            let _ = writeln!(content, "- {q}");
+                        }
+                    }
+                }
+                ContractParse::Invalid(reason) => {
+                    let _ = writeln!(
+                        content,
+                        "ВНИМАНИЕ: JSON-контракт найден, но НЕВАЛИДЕН по схеме: {reason}. \
                              Машинная приёмка невозможна — перезапустите с напоминанием \
                              о схеме контракта (status из complete|partial|blocked, списки — массивы)."
-                        );
-                    }
-                    ContractParse::Missing => {
-                        content.push_str(
-                            "ВНИМАНИЕ: JSON-контракт результата (```json с полем status) \
+                    );
+                }
+                ContractParse::Missing => {
+                    content.push_str(
+                        "ВНИМАНИЕ: JSON-контракт результата (```json с полем status) \
                              в stdout не найден — ответ может быть неполным; при необходимости \
                              перезапустите с напоминанием о контракте.\n",
-                        );
-                    }
+                    );
                 }
-                content.push_str("--- stdout ---\n");
-                content.push_str(run.stdout.trim_end());
-                if !run.stderr.trim().is_empty() {
-                    content.push_str("\n--- stderr ---\n");
-                    content.push_str(run.stderr.trim_end());
-                }
-                let is_error =
-                    run.exit_code != Some(0) || run.termination != Termination::Completed;
-                Ok(ToolOutput { content, is_error }.truncated(HARNESS_RUN_MAX_CHARS))
             }
-            Err(e) => Ok(ToolOutput::err(format!("harness_run: {e}"))),
+            content.push_str("--- stdout ---\n");
+            content.push_str(run.stdout.trim_end());
+            if !run.stderr.trim().is_empty() {
+                content.push_str("\n--- stderr ---\n");
+                content.push_str(run.stderr.trim_end());
+            }
+            let is_error = run.exit_code != Some(0) || run.termination != Termination::Completed;
+            ToolOutput { content, is_error }.truncated(HARNESS_RUN_MAX_CHARS)
         }
+        Err(e) => ToolOutput::err(format!("harness_run: {e}")),
     }
 }
 
@@ -2732,6 +2843,76 @@ mod tests {
             .expect("call");
         assert!(out.is_error, "{}", out.content);
         assert!(out.content.contains("handoff_create"), "{}", out.content);
+    }
+
+    #[tokio::test]
+    async fn harness_run_background_registers_and_completes() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let mut cfg = cfg_with_fake_harness(tmp.path());
+        cfg.paths.reports_dir = tmp.path().join("reports");
+        let tool = HarnessRunTool { cfg: cfg.clone() };
+        let registry = crate::subagent::SubagentRegistry::new();
+        let ctx = ToolContext::new(tmp.path().to_path_buf(), Arc::new(cfg))
+            .with_subagents(registry.clone());
+
+        // Фон: инструмент возвращается сразу, задача hr-* в реестре.
+        let out = tool
+            .call(
+                json!({"harness": "fake", "repo": ".", "task": "фон", "background": true}),
+                &ctx,
+            )
+            .await
+            .expect("call");
+        assert!(!out.is_error, "{}", out.content);
+        assert!(out.content.contains("hr-"), "id задачи: {}", out.content);
+        assert_eq!(registry.running(), 1, "прогон числится запущенным");
+
+        // cat завершается мгновенно — дожидаемся финиша задачи.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            let task = registry
+                .list()
+                .into_iter()
+                .find(|t| t.id.starts_with("hr-"))
+                .expect("задача hr-* в реестре");
+            if task.status != crate::subagent::TaskStatus::Running {
+                assert_eq!(
+                    task.status,
+                    crate::subagent::TaskStatus::Done,
+                    "отчёт: {}",
+                    task.report
+                );
+                assert!(task.report.contains("завершился"), "отчёт: {}", task.report);
+                assert!(task.finished_at.is_some());
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "фоновый прогон не завершился за 10 с"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        // Полный лог лежит файлом reports/harness/<id>.log.
+        let logs = std::fs::read_dir(tmp.path().join("reports/harness")).expect("logs dir");
+        assert_eq!(logs.count(), 1, "один лог-файл фонового прогона");
+    }
+
+    #[tokio::test]
+    async fn harness_run_background_without_registry_is_clear_error() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let cfg = cfg_with_fake_harness(tmp.path());
+        let tool = HarnessRunTool { cfg: cfg.clone() };
+        // Без with_subagents — реестр не подключён (headless).
+        let ctx = ToolContext::new(tmp.path().to_path_buf(), Arc::new(cfg));
+        let out = tool
+            .call(
+                json!({"harness": "fake", "repo": ".", "task": "фон", "background": true}),
+                &ctx,
+            )
+            .await
+            .expect("call");
+        assert!(out.is_error, "{}", out.content);
+        assert!(out.content.contains("реестр"), "{}", out.content);
     }
 
     #[tokio::test]

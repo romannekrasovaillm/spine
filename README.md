@@ -307,6 +307,10 @@ CI-джобой `dogfood` (`arch control spine` + `arch control check .` + ск�
   разрешений; JSON-контракт результата разбирается **механически** —
   валидация схемы `Valid`/`Invalid`/`Missing`, эскалация blocked/conflicts,
   в CLI `status=blocked` даёт код выхода 2, непустые conflicts — 3).
+  `background=true` — **фоновый прогон**: инструмент возвращается сразу
+  (задача `hr-*` в общем реестре фоновых задач), агент остаётся доступным
+  пользователю во время работы харнесса; статус — `subagent_list`, результат —
+  `subagent_result`, полный лог — `reports/harness/<id>.log`.
   Окружение хоста в процесс харнесса протекает по умолчанию; whitelist
   `env_allow` в адаптере стартует его с чистым окружением. Предгейт
   пакета: git-репозиторий гарантирован (`git init` + baseline-коммит — якорь
@@ -679,7 +683,12 @@ criteria, and a headless JSON contract, plus in-chat execution via the
 `harness_run` tool (the adapter knows the prompt mode and permission flags;
 the JSON result contract is **parsed mechanically** — schema validation
 `Valid`/`Invalid`/`Missing`, blocked/conflicts escalation, and the CLI
-exits with code 2 on `status=blocked` and 3 on non-empty conflicts). The
+exits with code 2 on `status=blocked` and 3 on non-empty conflicts).
+`background=true` runs the harness **in the background**: the tool returns
+immediately (an `hr-*` task in the shared background-task registry), so the
+agent stays responsive while the harness works; check `subagent_list` for
+status and `subagent_result` for the report, full log at
+`reports/harness/<id>.log`. The
 host environment leaks into the harness process by default; the adapter
 `env_allow` whitelist starts it with a clean environment. Package pre-gate:
 a git repository is guaranteed (`git init` + a baseline commit — the anchor

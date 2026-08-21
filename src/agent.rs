@@ -383,8 +383,7 @@ impl AgentSession {
                         // контракт tool-пар сломается и следующий ход
                         // упадёт с HTTP 400 от API.
                         None => {
-                            self.cancel_pending_tools(&reply, call_idx, &events)
-                                .await;
+                            self.cancel_pending_tools(&reply, call_idx, &events).await;
                             return self.finish_cancelled(&events).await;
                         }
                     }
@@ -599,8 +598,10 @@ impl AgentSession {
                     "content": CANCELLED,
                 }),
             );
-            self.history
-                .push(ChatMessage::tool_result(call.id.clone(), CANCELLED.to_string()));
+            self.history.push(ChatMessage::tool_result(
+                call.id.clone(),
+                CANCELLED.to_string(),
+            ));
         }
     }
 
@@ -1521,13 +1522,23 @@ mod tests {
         let token = CancellationToken::new();
         token.cancel();
         s.set_cancel_token(Some(token));
-        let reply = s.send("привет", None).await.expect("send при отмене не падает");
+        let reply = s
+            .send("привет", None)
+            .await
+            .expect("send при отмене не падает");
         assert!(reply.is_empty(), "прерванный ход без текста ответа");
         let roles: Vec<Role> = s.messages().iter().map(|m| m.role).collect();
-        assert_eq!(roles, vec![Role::User], "модель не вызывалась — только ввод");
+        assert_eq!(
+            roles,
+            vec![Role::User],
+            "модель не вызывалась — только ввод"
+        );
         let journal =
             std::fs::read_to_string(s.log_path().expect("журнал")).expect("прочитать журнал");
-        assert!(journal.contains("turn_cancelled"), "в журнале отмена: {journal}");
+        assert!(
+            journal.contains("turn_cancelled"),
+            "в журнале отмена: {journal}"
+        );
     }
 
     #[tokio::test]

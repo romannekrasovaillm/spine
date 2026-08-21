@@ -40,7 +40,7 @@ use crate::tool::{Tool, ToolContext, ToolOutput};
 /// rate-limit провайдера (429 покрываются терпеливыми ретраями), а не слоты.
 pub(crate) const MAX_RUNNING: usize = 400;
 /// Лимит длины отчёта субагента в реестре (символов).
-const REPORT_MAX_CHARS: usize = 6000;
+pub(crate) const REPORT_MAX_CHARS: usize = 6000;
 /// Имена инструментов оркестрации (не выдаются субагентам и ralph-раундам —
 /// антирекурсия: дети не запускают собственных детей и циклов).
 pub(crate) const SUBAGENT_TOOLS: [&str; 4] = [
