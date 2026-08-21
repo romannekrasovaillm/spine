@@ -516,6 +516,13 @@ impl McpManager {
     // Сигнатура заморожена контрактом (async), хотя ожидания внутри нет:
     // start_kill синхронен, reaping делает reaper tokio.
     #[expect(clippy::unused_async, reason = "сигнатура заморожена контрактом")]
+    // Clippy 1.98: новый линт unused_async_trait_impl срабатывает и на
+    // inherent-методы (false positive, см. rust-lang/rust-clippy#16244);
+    // снять expect при починке линта апстримом.
+    #[expect(
+        clippy::unused_async_trait_impl,
+        reason = "сигнатура заморожена контрактом; линт — false positive на inherent-методе"
+    )]
     pub async fn shutdown(&self) {
         for server in &self.servers {
             server.kill();
