@@ -2,10 +2,11 @@
 //!
 //! Память — обычный markdown-файл в домашнем каталоге харнесса
 //! (по умолчанию `~/.arch-harness/MEMORY.md`, переопределяется
-//! `paths.memory_file`). Её содержимое дописывается в конец системного
-//! промпта при старте каждой сессии (TUI и `arch run`), а агент
-//! поддерживает файл сам — своими fs-инструментами или командой
-//! `/memory add` (`arch memory add`).
+//! `paths.memory_file`). Секция памяти дописывается в конец системного
+//! промпта при старте каждой сессии (TUI и `arch run`) — всегда, даже
+//! когда файла ещё нет: агент знает путь и правило «дописывать факт по
+//! явной просьбе пользователя» («запомни …»). Пополнение — fs-инструментами
+//! агента или командой `/memory add` (`arch memory add`).
 //!
 //! Отсутствие файла или пустая память — не ошибка: харнесс работает без неё.
 
@@ -32,19 +33,20 @@ pub fn load(path: &Path) -> Result<Option<String>> {
     }
 }
 
-/// Дописывает секцию памяти в конец системного промпта. Без памяти
-/// возвращает базовый промпт без изменений.
+/// Дописывает секцию памяти в конец системного промпта. Секция инжектится
+/// всегда, даже когда памяти ещё нет: агент должен знать путь к файлу и
+/// правило — пополнять память по явной просьбе пользователя («запомни …»).
 #[must_use]
 pub fn augment_system_prompt(base: &str, memory: Option<&str>, path: &Path) -> String {
-    let Some(memory) = memory else {
-        return base.to_string();
-    };
+    let content = memory.unwrap_or("(пока пуста)");
     format!(
-        "{base}\n\n{SECTION_HEADER}\n\n{memory}\n\n\
-         Это твоя персистентная память между сессиями (файл `{}`). \
-         Обновляй её по мере новых фактов о пользователе и его среде — \
-         fs-инструментами или командой `/memory add`.",
-        path.display()
+        "{base}\n\n{SECTION_HEADER}\n\n{content}\n\n\
+         Это твоя персистентная память между сессиями (файл `{path}`). \
+         Когда пользователь просит что-то запомнить («запомни …», «добавь в память …») — \
+         сразу дописывай факт в конец этого файла fs-инструментами (режим append; \
+         файла нет — создай) и подтверждай запись. \
+         Без явной просьбы пользователя память не пополняй.",
+        path = path.display()
     )
 }
 
@@ -98,10 +100,16 @@ mod tests {
     }
 
     #[test]
-    fn augment_without_memory_returns_base_unchanged() {
+    fn augment_without_memory_appends_empty_marker_and_rule() {
         let base = "Ты — solution-архитектор.";
-        let got = augment_system_prompt(base, None, Path::new("/tmp/MEMORY.md"));
-        assert_eq!(got, base);
+        let path = Path::new("/tmp/MEMORY.md");
+        let got = augment_system_prompt(base, None, path);
+        assert!(got.starts_with(base), "база сохранена в начале: {got}");
+        assert!(got.contains(SECTION_HEADER), "заголовок секции: {got}");
+        assert!(got.contains("(пока пуста)"), "маркер пустой памяти: {got}");
+        assert!(got.contains("/tmp/MEMORY.md"), "путь к файлу: {got}");
+        assert!(got.contains("запомни"), "правило дописки по просьбе: {got}");
+        assert!(got.contains("не пополняй"), "запрет самопополнения: {got}");
     }
 
     #[test]
@@ -114,6 +122,7 @@ mod tests {
         assert!(got.contains("любит саги"), "содержимое памяти: {got}");
         assert!(got.contains("/tmp/MEMORY.md"), "путь к файлу: {got}");
         assert!(got.contains("персистентная память"), "инструкция: {got}");
+        assert!(got.contains("запомни"), "правило дописки по просьбе: {got}");
     }
 
     #[test]

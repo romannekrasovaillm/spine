@@ -356,8 +356,9 @@ CI-джобой `dogfood` (`arch control spine` + `arch control check .` + ск�
 - **Планировщик md-задач** «md + cron + LLM + баш-пайпы» (`docs/cron_and_md_pipes.md`).
 - **Библиотека промптов** (`assets/prompts/`, `arch prompts`).
 - **Глобальная md-память** (`MEMORY.md` в `~/.arch-harness`, в стиле Kimi Code):
-  содержимое дописывается в системный промпт каждой сессии (TUI и `arch run`);
-  агент пополняет её сам — fs-инструментами, `/memory add` или
+  секция памяти инжектится в системный промпт каждой сессии (TUI и `arch run`);
+  агент дописывает в неё факты по просьбе пользователя («запомни …») —
+  fs-инструментами, а вручную — `/memory add` или
   `arch memory add` (путь настраивается: `paths.memory_file`).
 
 ### Разработка в цифрах: токены и где окупилась архитектура
@@ -784,9 +785,10 @@ get a "cancelled" result), fullscreen viewer
 with horizontal pan, docx/xlsx export, option-picker modals), MCP client,
 curated architecture websites + local knowledge base, markdown-task cron,
 `arch doctor` diagnostics, **global markdown memory** (`MEMORY.md` in
-`~/.arch-harness`, Kimi Code style: injected into every session's system
-prompt — TUI and `arch run`; the agent maintains it itself via fs tools,
-`/memory add` or `arch memory add`; path configurable as
+`~/.arch-harness`, Kimi Code style: a memory section is injected into every
+session's system prompt — TUI and `arch run`; the agent appends facts on the
+user's request ("remember …") via fs tools, or manually with
+`/memory add` / `arch memory add`; path configurable as
 `paths.memory_file`).
 
 ### Development in numbers: tokens and where architecture paid off
