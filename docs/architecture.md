@@ -25,6 +25,7 @@ function calling), ошибки инструментов — данные для
 | `agent.rs` | Агентный цикл `AgentSession`, события `AgentEvent`, JSONL-журнал сессии. |
 | `agent/slash.rs` | Слэш-команды TUI (`docs/slash_commands.md`). |
 | `agent/prompts.rs` | Библиотека промптов `assets/prompts/*.md`; плейсхолдеры `{{var}}`. |
+| `memory.rs` | Глобальная md-память (`paths.memory_file`, дефолт `~/.arch-harness/MEMORY.md`): загрузка, дописка заметок, секция в системном промпте. |
 | `mermaid.rs`, `mermaid/{parse,model,layout,draw}.rs` | Подмножество mermaid (flowchart, sequenceDiagram, erDiagram, C4Context/C4Container/C4Component) → символьная сетка; ER/C4 понижаются к flowchart-AST (многострочные метки узлов); layered layout (Sugiyama-lite). |
 | `rubric.rs` | Движок рубрик: якорные/динамические, LLM-судья (k сэмплов → медиана, метки `unstable`/`evidence_not_found`, механическая проверка цитат, лимит длины — явная ошибка, изоляция текста — ADR-004), `RubricReport`. |
 | `bench.rs` | Бенчмарки: YAML-сценарий → ответ модели → оценка рубрикой → отчёты md+json; golden-set судьи (`assets/benchmarks/golden/`, `run_golden`, метрика MAE, гейт по `judge.golden_max_mae`). |
@@ -106,6 +107,10 @@ pub trait LlmProvider: Send + Sync + fmt::Debug {
    - `build_request()` — системный промпт + история + `tools.specs()`;
      `temperature`/`max_tokens` из `ModelConfig` активного провайдера;
      `thinking` — из сессионного переключателя `/think`.
+     Системный промпт собирается при старте сессии (TUI и `arch run`) из
+     шаблона `architect` библиотеки промптов и дополняется глобальной
+     md-памятью: содержимое `paths.memory_file` (`memory::augment_system_prompt`);
+     отсутствие/ошибка чтения файла не фатальны — сессия идёт без памяти.
    - Запрос: стриминг (`stream` + канал событий) или `complete`.
    - Ответ без `tool_calls` → пуш в историю/журнал, `AgentEvent::TurnDone`,
      возврат текста.

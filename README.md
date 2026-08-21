@@ -355,6 +355,10 @@ CI-джобой `dogfood` (`arch control spine` + `arch control check .` + ск�
   кода; read-only, пути аргументами вызова (`docs/mcp.md`).
 - **Планировщик md-задач** «md + cron + LLM + баш-пайпы» (`docs/cron_and_md_pipes.md`).
 - **Библиотека промптов** (`assets/prompts/`, `arch prompts`).
+- **Глобальная md-память** (`MEMORY.md` в `~/.arch-harness`, в стиле Kimi Code):
+  содержимое дописывается в системный промпт каждой сессии (TUI и `arch run`);
+  агент пополняет её сам — fs-инструментами, `/memory add` или
+  `arch memory add` (путь настраивается: `paths.memory_file`).
 
 ### Разработка в цифрах: токены и где окупилась архитектура
 
@@ -460,6 +464,7 @@ arch [--config <path>] <command>   # без команды — TUI
 | `run [prompt] [--model] [--no-stream] [--quiet] [--think on\|off]` | Headless-прогон агента; `-` или пайп — stdin; `-q`: stdout только финальный ответ (для скриптов) |
 | `models` | Список настроенных моделей |
 | `prompts [name]` | Библиотека промптов |
+| `memory [add <текст>]` | Глобальная md-память (`MEMORY.md`): показать / дописать заметку |
 | `mermaid <file>` | Рендер mermaid в Unicode/ASCII-арт (flowchart, sequenceDiagram, erDiagram, C4Context/C4Container/C4Component) |
 | `rubric list` / `rubric run <rubric> <target>` | Рубрики: список / оценка LLM-судьёй |
 | `bench list` / `bench run <name>` / `bench run --golden` | Архитектурные бенчмарки; `--golden` — калибровка LLM-судьи по golden-set (MAE против эталона; выше `judge.golden_max_mae` — exit 1) |
@@ -778,7 +783,11 @@ starts immediately — the session history stays consistent (pending tool calls
 get a "cancelled" result), fullscreen viewer
 with horizontal pan, docx/xlsx export, option-picker modals), MCP client,
 curated architecture websites + local knowledge base, markdown-task cron,
-`arch doctor` diagnostics.
+`arch doctor` diagnostics, **global markdown memory** (`MEMORY.md` in
+`~/.arch-harness`, Kimi Code style: injected into every session's system
+prompt — TUI and `arch run`; the agent maintains it itself via fs tools,
+`/memory add` or `arch memory add`; path configurable as
+`paths.memory_file`).
 
 ### Development in numbers: tokens and where architecture paid off
 

@@ -330,7 +330,7 @@ mod tests {
 
     #[test]
     fn completion_finds_mermaid() {
-        assert_eq!(completion_candidates("/me"), vec!["/mermaid"]);
+        assert_eq!(completion_candidates("/me"), vec!["/mermaid", "/memory"]);
     }
 
     #[test]

@@ -58,6 +58,11 @@ enum Cmd {
         /// Имя шаблона (без — список).
         name: Option<String>,
     },
+    /// Глобальная md-память (MEMORY.md): показать путь и содержимое.
+    Memory {
+        #[command(subcommand)]
+        cmd: Option<MemoryCmd>,
+    },
     /// Рендер mermaid-файла в Unicode/ASCII-арт.
     Mermaid {
         /// Файл с диаграммой (`-` — stdin).
@@ -203,6 +208,16 @@ enum Cmd {
     Fleet {
         #[command(subcommand)]
         cmd: FleetCmd,
+    },
+}
+
+/// Подкоманды `arch memory`.
+#[derive(Subcommand)]
+enum MemoryCmd {
+    /// Дописать заметку в конец файла памяти.
+    Add {
+        /// Текст заметки.
+        text: String,
     },
 }
 
@@ -648,6 +663,7 @@ async fn main() -> Result<()> {
             }
         }
         Some(Cmd::Prompts { name }) => cmd_prompts(&cfg, name)?,
+        Some(Cmd::Memory { cmd }) => cmd_memory(&cfg, cmd)?,
         Some(Cmd::Mermaid { file }) => {
             // Каталог — понятная подсказка со списком *.mmd, а не «os error 21».
             let input = if file != "-" && std::path::Path::new(&file).is_dir() {
@@ -1071,14 +1087,26 @@ async fn cmd_run(
     Ok(())
 }
 
-/// Системный промпт по умолчанию: из библиотеки промптов или встроенный.
+/// Системный промпт по умолчанию: из библиотеки промптов или встроенный,
+/// дополненный глобальной md-памятью (`paths.memory_file`, см. `memory`).
 fn default_system_prompt(cfg: &Config) -> String {
     let dir = cfg.paths.prompts_dir();
-    if let Ok(lib) = arch_harness::agent::prompts::load_library(&dir) {
-        if let Some(tpl) = lib.iter().find(|t| t.name == "architect") {
-            return tpl.body.clone();
-        }
-    }
+    let base = match arch_harness::agent::prompts::load_library(&dir) {
+        Ok(lib) => match lib.iter().find(|t| t.name == "architect") {
+            Some(tpl) => tpl.body.clone(),
+            None => fallback_system_prompt(),
+        },
+        Err(_) => fallback_system_prompt(),
+    };
+    // Ошибка чтения памяти не фатальна: сессия работает без неё.
+    let memory = arch_harness::memory::load(&cfg.paths.memory_file)
+        .ok()
+        .flatten();
+    arch_harness::memory::augment_system_prompt(&base, memory.as_deref(), &cfg.paths.memory_file)
+}
+
+/// Встроенный системный промпт (fallback, когда библиотека недоступна).
+fn fallback_system_prompt() -> String {
     "Ты — solution-архитектор в корпоративном контуре банка. Помогаешь проектировать \
      решения, ведёшь ADR и architecture-spine, оцениваешь архитектуру по рубрикам, \
      готовишь handoff-пакеты кодовым агентам. Отвечай по-русски, точно и по делу."
@@ -1104,6 +1132,26 @@ fn cmd_prompts(cfg: &Config, name: Option<String>) -> Result<()> {
                 .find(|t| t.name == n)
                 .with_context(|| format!("шаблон '{n}' не найден"))?;
             println!("{}", tpl.body);
+        }
+    }
+    Ok(())
+}
+
+/// `arch memory [add <текст>]`: путь и содержимое глобальной md-памяти
+/// либо дописка заметки в конец файла.
+fn cmd_memory(cfg: &Config, cmd: Option<MemoryCmd>) -> Result<()> {
+    let path = &cfg.paths.memory_file;
+    match cmd {
+        None => match arch_harness::memory::load(path)? {
+            Some(content) => println!("Память ({}):\n{content}", path.display()),
+            None => println!(
+                "память пустая, файл: {} (дописать — arch memory add <текст>)",
+                path.display()
+            ),
+        },
+        Some(MemoryCmd::Add { text }) => {
+            arch_harness::memory::append(path, &text)?;
+            println!("заметка дописана в память: {}", path.display());
         }
     }
     Ok(())

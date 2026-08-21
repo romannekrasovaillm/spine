@@ -39,6 +39,7 @@ pub mod llm;
 pub mod matchers;
 pub mod mcp;
 pub mod mcp_server;
+pub mod memory;
 pub mod mermaid;
 pub mod metrics;
 pub mod model;

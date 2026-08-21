@@ -513,6 +513,9 @@ pub struct PathsConfig {
     pub reports_dir: PathBuf,
     /// Каталог сессий (append-only журналы агента).
     pub sessions_dir: PathBuf,
+    /// Глобальная md-память харнесса: содержимое дописывается в системный
+    /// промпт каждой сессии (см. модуль `memory`).
+    pub memory_file: PathBuf,
 }
 
 impl Default for PathsConfig {
@@ -522,6 +525,7 @@ impl Default for PathsConfig {
             assets_dir: home.join("assets"),
             reports_dir: home.join("reports"),
             sessions_dir: home.join("sessions"),
+            memory_file: home.join("MEMORY.md"),
         }
     }
 }
@@ -788,6 +792,7 @@ impl Config {
         expand(&mut self.paths.assets_dir);
         expand(&mut self.paths.reports_dir);
         expand(&mut self.paths.sessions_dir);
+        expand(&mut self.paths.memory_file);
     }
 }
 

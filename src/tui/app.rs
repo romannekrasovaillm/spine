@@ -1653,15 +1653,20 @@ fn answer(reply: Option<tokio::sync::oneshot::Sender<String>>, text: String) {
     }
 }
 
-/// Системный промпт: шаблон `architect` из библиотеки или встроенный.
+/// Системный промпт: шаблон `architect` из библиотеки или встроенный,
+/// дополненный глобальной md-памятью (`paths.memory_file`, см. `memory`).
 fn system_prompt(cfg: &Config) -> String {
     let dir = cfg.paths.prompts_dir();
-    if let Ok(lib) = prompts::load_library(&dir) {
-        if let Some(tpl) = lib.iter().find(|t| t.name == "architect") {
-            return tpl.body.clone();
-        }
-    }
-    FALLBACK_SYSTEM_PROMPT.into()
+    let base = match prompts::load_library(&dir) {
+        Ok(lib) => match lib.iter().find(|t| t.name == "architect") {
+            Some(tpl) => tpl.body.clone(),
+            None => FALLBACK_SYSTEM_PROMPT.into(),
+        },
+        Err(_) => FALLBACK_SYSTEM_PROMPT.into(),
+    };
+    // Ошибка чтения памяти не фатальна: сессия работает без неё.
+    let memory = crate::memory::load(&cfg.paths.memory_file).ok().flatten();
+    crate::memory::augment_system_prompt(&base, memory.as_deref(), &cfg.paths.memory_file)
 }
 
 /// Заглушки для headless-тестов (без терминала, сети и LLM).
@@ -1826,7 +1831,8 @@ mod tests {
     #[test]
     fn tab_completes_and_stays_on_single_candidate() {
         let mut input = InputState::default();
-        input.set_text("/me".into());
+        // Префикс уникален: "/me" матчит также "/memory", цикл по двум.
+        input.set_text("/merm".into());
         assert!(input.complete_tab());
         assert_eq!(input.text(), "/mermaid");
         assert!(

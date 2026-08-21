@@ -6,7 +6,7 @@
 //! `/rubric list|run <name> <file>` `/bench list|run <name>`
 //! `/kb <query>` `/web <query>` `/fetch <url>` `/sites`
 //! `/handoff <harness> <repo>` `/control <repo>` `/score` (интерактив)
-//! `/mcp list` `/save <file>` `/load <file>` `/worktree` (список).
+//! `/mcp list` `/save <file>` `/load <file>` `/memory [add]` `/worktree` (список).
 //! Неизвестная команда — [`SlashOutcome::Unknown`]; не слэш — [`SlashOutcome::NotSlash`].
 
 use std::collections::BTreeMap;
@@ -107,6 +107,7 @@ pub async fn execute(
         "/distill" => cmd_distill(rest, session, ctx).await,
         "/save" => cmd_save(rest, session, ctx),
         "/load" => cmd_load(rest, session, ctx),
+        "/memory" => cmd_memory(rest, ctx),
         "/agentsmd" => cmd_agentsmd(rest, ctx),
         "/sessions" => Ok(cmd_sessions(ctx)),
         "/resume" => cmd_resume(rest, session, ctx),
@@ -161,6 +162,10 @@ pub fn catalog() -> Vec<(&'static str, &'static str)> {
         ),
         ("/save <file>", "сохранить транскрипт"),
         ("/load <file>", "включить файл в контекст"),
+        (
+            "/memory [add <текст>]",
+            "глобальная md-память (MEMORY.md): показать / дописать",
+        ),
         (
             "/agentsmd <repo>",
             "сгенерировать/проверить AGENTS.md репозитория",
@@ -738,6 +743,40 @@ fn cmd_load(rest: &str, session: &mut AgentSession, ctx: &ToolContext) -> Result
     let n = content.chars().count();
     session.inject_context(rest, &content);
     Ok(SlashOutcome::Handled(format!("включено: {n} символов")))
+}
+
+/// `/memory [add <текст>]`: глобальная md-память харнесса. Без аргумента —
+/// путь к файлу и его содержимое; `add` — дописать заметку в конец файла.
+fn cmd_memory(rest: &str, ctx: &ToolContext) -> Result<SlashOutcome> {
+    let path = &ctx.config.paths.memory_file;
+    match rest.strip_prefix("add") {
+        Some(note) => {
+            let note = note.trim();
+            if note.is_empty() {
+                return Ok(SlashOutcome::Handled(
+                    "использование: /memory add <текст>".into(),
+                ));
+            }
+            crate::memory::append(path, note)?;
+            Ok(SlashOutcome::Handled(format!(
+                "заметка дописана в память: {}",
+                path.display()
+            )))
+        }
+        None if rest.is_empty() => match crate::memory::load(path)? {
+            Some(content) => Ok(SlashOutcome::Handled(format!(
+                "Память ({}):\n{content}",
+                path.display()
+            ))),
+            None => Ok(SlashOutcome::Handled(format!(
+                "память пустая, файл: {} (дописать — /memory add <текст>)",
+                path.display()
+            ))),
+        },
+        None => Ok(SlashOutcome::Handled(
+            "использование: /memory | /memory add <текст>".into(),
+        )),
+    }
 }
 
 /// Провайдер по умолчанию из реестра LLM контекста.
@@ -1520,5 +1559,53 @@ mod tests {
 
         // Несуществующий файл — ошибка подкоманды.
         assert!(execute("/load ghost.md", &mut s, &ctx).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn memory_shows_and_appends_notes() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let (mut s, ctx) = make_fixture(tmp.path());
+        // Память фикстуры — во временном каталоге, не в реальном home.
+        let memory_file = tmp.path().join("MEMORY.md");
+        let mut cfg = (*ctx.config).clone();
+        cfg.paths.memory_file = memory_file.clone();
+        let ctx = ToolContext::new(tmp.path().to_path_buf(), Arc::new(cfg));
+
+        // Пустая память — честное сообщение с путём, без ошибки.
+        match execute("/memory", &mut s, &ctx).await.expect("ok") {
+            SlashOutcome::Handled(text) => {
+                assert!(text.contains("память пустая"), "{text}");
+                assert!(text.contains("MEMORY.md"), "{text}");
+            }
+            other => panic!("ожидался Handled, получено {other:?}"),
+        }
+
+        // Дописка создаёт файл; вторая — отделяется пустой строкой.
+        match execute("/memory add пользователь любит саги", &mut s, &ctx)
+            .await
+            .expect("ok")
+        {
+            SlashOutcome::Handled(text) => assert!(text.contains("дописана"), "{text}"),
+            other => panic!("ожидался Handled, получено {other:?}"),
+        }
+        execute("/memory add отчёты — на русском", &mut s, &ctx)
+            .await
+            .expect("ok");
+        let text = std::fs::read_to_string(&memory_file).expect("read");
+        assert_eq!(text, "пользователь любит саги\n\nотчёты — на русском\n");
+
+        // Просмотр показывает путь и содержимое.
+        match execute("/memory", &mut s, &ctx).await.expect("ok") {
+            SlashOutcome::Handled(text) => {
+                assert!(text.contains("MEMORY.md"), "{text}");
+                assert!(text.contains("пользователь любит саги"), "{text}");
+            }
+            other => panic!("ожидался Handled, получено {other:?}"),
+        }
+        // Мусорный аргумент — подсказка использования.
+        match execute("/memory bogus", &mut s, &ctx).await.expect("ok") {
+            SlashOutcome::Handled(text) => assert!(text.contains("использование"), "{text}"),
+            other => panic!("ожидался Handled, получено {other:?}"),
+        }
     }
 }

@@ -372,3 +372,6 @@ file = "~/.arch-harness/cron.toml"
 assets_dir = "~/.arch-harness/assets"
 reports_dir = "~/.arch-harness/reports"
 sessions_dir = "~/.arch-harness/sessions"
+memory_file = "~/.arch-harness/MEMORY.md"  # глобальная md-память: дописывается
+                                           # в системный промпт каждой сессии
+                                           # (см. /memory и `arch memory`)
